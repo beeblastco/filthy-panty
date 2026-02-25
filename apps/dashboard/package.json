@@ -22,7 +22,8 @@
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "tailwind-merge": "^3.5.0"
+    "tailwind-merge": "^3.5.0",
+    "unique-names-generator": "^4.7.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.1",

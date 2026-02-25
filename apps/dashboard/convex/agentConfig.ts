@@ -9,6 +9,7 @@ import { verifyProjectOwnership } from "./model/ownership/index";
 /**
  * Create a new agent config and add a corresponding agent node to the project canvas.
  * @param projectId The project this agent belongs to
+ * @param environmentId The environment to scope this agent to
  * @param name Display name for the agent
  * @param modelId The AI model identifier
  * @param description Optional description of the agent's purpose
@@ -19,6 +20,7 @@ import { verifyProjectOwnership } from "./model/ownership/index";
 export const create = mutation({
   args: {
     projectId: agentConfigFields.projectId,
+    environmentId: agentConfigFields.environmentId,
     name: agentConfigFields.name,
     modelId: agentConfigFields.modelId,
     description: agentConfigFields.description,
@@ -29,7 +31,7 @@ export const create = mutation({
     nodeId: v.string(),
   }),
   handler: async (ctx, args) => {
-    const { projectId, name, modelId, description, systemPrompt } = args;
+    const { projectId, environmentId, name, modelId, description, systemPrompt } = args;
 
     // Check authenticated user
     const user = await ctx.auth.getUserIdentity();
@@ -44,6 +46,7 @@ export const create = mutation({
     const agentConfigId = await ctx.db.insert("agentConfigs", {
       authId: user.subject,
       projectId: projectId,
+      environmentId: environmentId,
       name: name,
       modelId: modelId,
       description: description,
@@ -53,11 +56,18 @@ export const create = mutation({
       updatedAt: Date.now(),
     });
 
-    // Upsert canvas layout: append a new agent node
-    const existingLayout = await ctx.db
-      .query("canvasLayouts")
-      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
-      .first();
+    // Upsert canvas layout for this environment: append a new agent node
+    const existingLayout = environmentId
+      ? await ctx.db
+          .query("canvasLayouts")
+          .withIndex("by_projectId_and_environmentId", (q) =>
+            q.eq("projectId", projectId).eq("environmentId", environmentId),
+          )
+          .first()
+      : await ctx.db
+          .query("canvasLayouts")
+          .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+          .first();
 
     const existingNodes = existingLayout?.nodes ?? [];
     const existingEdges = existingLayout?.edges ?? [];
@@ -95,6 +105,7 @@ export const create = mutation({
       await ctx.db.insert("canvasLayouts", {
         authId: user.subject,
         projectId: projectId,
+        environmentId: environmentId,
         nodes: [newNode],
         edges: existingEdges,
         updatedAt: Date.now(),

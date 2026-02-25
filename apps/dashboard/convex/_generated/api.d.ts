@@ -10,7 +10,9 @@
 
 import type * as agentConfig from "../agentConfig.js";
 import type * as canvas from "../canvas.js";
+import type * as environment from "../environment.js";
 import type * as model_ownership_agent from "../model/ownership/agent.js";
+import type * as model_ownership_environment from "../model/ownership/environment.js";
 import type * as model_ownership_index from "../model/ownership/index.js";
 import type * as model_ownership_project from "../model/ownership/project.js";
 import type * as model_ownership_session from "../model/ownership/session.js";
@@ -27,7 +29,9 @@ import type {
 declare const fullApi: ApiFromModules<{
   agentConfig: typeof agentConfig;
   canvas: typeof canvas;
+  environment: typeof environment;
   "model/ownership/agent": typeof model_ownership_agent;
+  "model/ownership/environment": typeof model_ownership_environment;
   "model/ownership/index": typeof model_ownership_index;
   "model/ownership/project": typeof model_ownership_project;
   "model/ownership/session": typeof model_ownership_session;

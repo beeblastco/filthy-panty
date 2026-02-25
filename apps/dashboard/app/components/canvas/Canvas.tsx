@@ -20,6 +20,7 @@ import {
     ContextMenuTrigger,
 } from "@/app/components/ui/context-menu";
 import { api } from "@/convex/_generated/api";
+import { useEnvironment } from "@/app/lib/environment-context";
 import {
     addEdge,
     Background,
@@ -55,7 +56,11 @@ const NODE_TEMPLATES = [
 
 /** Inner canvas that consumes ReactFlow context. */
 function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
-    const canvasLayout = useQuery(api.canvas.getByProject, { projectId: projectId });
+    const { environmentId } = useEnvironment();
+    const canvasLayout = useQuery(
+        api.canvas.getByProject,
+        environmentId ? { projectId: projectId, environmentId: environmentId } : "skip",
+    );
     const { theme } = useTheme();
     const isDark = theme === "dark";
 
@@ -220,6 +225,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 
             <CreateAgentConfigDialog
                 projectId={projectId}
+                environmentId={environmentId}
                 open={configDialogOpen}
                 onOpenChange={setConfigDialogOpen}
             />

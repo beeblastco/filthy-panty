@@ -131,10 +131,20 @@ export const projectFields = {
   updatedAt: v.number(),
 };
 
+/** Environment fields for project deployment environments. */
+export const environmentFields = {
+  authId: v.string(),
+  projectId: v.id("projects"),
+  name: v.string(),
+  isDefault: v.boolean(),
+  updatedAt: v.number(),
+};
+
 /** Agent configs table fields. */
 export const agentConfigFields = {
   authId: v.string(),
   projectId: v.id("projects"),
+  environmentId: v.optional(v.id("environments")),
   name: v.string(),
   description: v.optional(v.string()),
   modelId: v.string(),
@@ -241,6 +251,7 @@ export const canvasEdgeValidator = v.object({
 export const canvasLayoutFields = {
   authId: v.string(),
   projectId: v.id("projects"),
+  environmentId: v.optional(v.id("environments")),
   nodes: v.array(canvasNodeValidator),
   edges: v.array(canvasEdgeValidator),
   updatedAt: v.number(),
@@ -263,9 +274,15 @@ export default defineSchema({
     .index("by_authId", ["authId"])
     .index("by_slug", ["slug"]),
 
+  environments: defineTable(environmentFields)
+    .index("by_authId", ["authId"])
+    .index("by_projectId", ["projectId"])
+    .index("by_projectId_and_isDefault", ["projectId", "isDefault"]),
+
   agentConfigs: defineTable(agentConfigFields)
     .index("by_authId", ["authId"])
     .index("by_projectId", ["projectId"])
+    .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
     .index("by_authId_and_name", ["authId", "name"])
     .index("by_isSubAgent_and_authId", ["isSubAgent", "authId"]),
 
@@ -291,7 +308,8 @@ export default defineSchema({
     .index("by_approvalId", ["approvalId"]),
 
   canvasLayouts: defineTable(canvasLayoutFields)
-    .index("by_projectId", ["projectId"]),
+    .index("by_projectId", ["projectId"])
+    .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
 
   agentConnections: defineTable(agentConnectionFields)
     .index("by_agentConfigId", ["agentConfigId"])

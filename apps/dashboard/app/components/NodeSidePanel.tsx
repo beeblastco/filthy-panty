@@ -3,18 +3,7 @@
 import { Separator } from "@/app/components/ui/separator";
 import type { Node } from "@xyflow/react";
 import { X } from "lucide-react";
-
-type AgentNodeData = {
-    label: string;
-    status?: "running" | "idle" | "error";
-    agentConfigId?: string;
-};
-
-const statusConfig = {
-    running: { color: "bg-emerald-500", text: "Running" },
-    idle: { color: "bg-zinc-500", text: "Idle" },
-    error: { color: "bg-red-500", text: "Error" },
-};
+import { type BaseNodeData, statusConfig } from "@/app/components/node/BaseNode";
 
 /** Side panel that displays details for a selected canvas node. */
 export function NodeSidePanel({
@@ -24,8 +13,8 @@ export function NodeSidePanel({
     node: Node | null;
     onClose: () => void;
 }) {
-    const nodeData = node?.data as AgentNodeData | undefined;
-    const status = nodeData?.status ?? "idle";
+    const nodeData = node?.data as BaseNodeData | undefined;
+    const status: keyof typeof statusConfig = nodeData?.status ?? "idle";
     const { color, text } = statusConfig[status];
 
     return (

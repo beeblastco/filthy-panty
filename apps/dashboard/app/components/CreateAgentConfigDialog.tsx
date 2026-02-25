@@ -20,10 +20,12 @@ import { useState } from "react";
 /** Dialog form for creating a new agent config and adding it to the canvas. */
 export function CreateAgentConfigDialog({
     projectId,
+    environmentId,
     open,
     onOpenChange,
 }: {
     projectId: Id<"projects">;
+    environmentId: Id<"environments"> | null;
     open: boolean;
     onOpenChange: (open: boolean) => void;
 }) {
@@ -47,6 +49,7 @@ export function CreateAgentConfigDialog({
         try {
             await createAgentConfig({
                 projectId: projectId,
+                environmentId: environmentId ?? undefined,
                 name: name.trim(),
                 modelId: modelId.trim(),
                 description: description.trim() || undefined,

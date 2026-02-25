@@ -8,7 +8,7 @@ export type BaseNodeData = {
     agentConfigId?: string;
 };
 
-const statusConfig = {
+export const statusConfig = {
     running: { color: "bg-emerald-500", text: "Running" },
     idle: { color: "bg-zinc-500", text: "Idle" },
     error: { color: "bg-red-500", text: "Error" },

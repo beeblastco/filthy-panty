@@ -2,7 +2,7 @@
 
 /** Dropdown selector for switching between user projects with an option to create new ones. */
 import { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
 import { api } from "@/convex/_generated/api";
 import { ChevronDown, Plus, Folder } from "lucide-react";
@@ -14,28 +14,15 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
-    DialogFooter,
-} from "@/app/components/ui/dialog";
-import { Button } from "@/app/components/ui/button";
-import { Input } from "@/app/components/ui/input";
-import { Label } from "@/app/components/ui/label";
+import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
 
 /** Dropdown to list, switch, and create projects. */
 export function ProjectSelector() {
     const projects = useQuery(api.project.list);
     const currentUser = useQuery(api.user.getCurrent);
-    const createProject = useMutation(api.project.create);
     const router = useRouter();
     const params = useParams<{ projectId?: string }>();
     const [dialogOpen, setDialogOpen] = useState(false);
-    const [newName, setNewName] = useState("");
-    const [isCreating, setIsCreating] = useState(false);
 
     // Hide selector entirely when loading or user has no projects (OnboardingGate handles that)
     if (projects === undefined || projects.length === 0) {
@@ -47,19 +34,6 @@ export function ProjectSelector() {
     const displayName = selectedProject?.name ?? projects[0]?.name;
     const userName = currentUser?.name?.split(" ")[0] ?? "";
     const projectsLabel = userName ? `${userName}'s projects` : "Projects";
-
-    async function handleCreate() {
-        if (!newName.trim()) return;
-        setIsCreating(true);
-        try {
-            const id = await createProject({ name: newName.trim(), description: undefined });
-            setDialogOpen(false);
-            setNewName("");
-            router.push(`/${id}`);
-        } finally {
-            setIsCreating(false);
-        }
-    }
 
     return (
         <>
@@ -98,45 +72,7 @@ export function ProjectSelector() {
                 </DropdownMenuContent>
             </DropdownMenu>
 
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent className="sm:max-w-sm">
-                    <DialogHeader>
-                        <DialogTitle>Create Project</DialogTitle>
-                        <DialogDescription>
-                            Give your new project a name to get started.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <form
-                        onSubmit={(e) => {
-                            e.preventDefault();
-                            handleCreate();
-                        }}
-                    >
-                        <div className="grid gap-3 py-4">
-                            <Label htmlFor="project-name">Project name</Label>
-                            <Input
-                                id="project-name"
-                                value={newName}
-                                onChange={(e) => setNewName(e.target.value)}
-                                placeholder="My new project"
-                                autoFocus
-                            />
-                        </div>
-                        <DialogFooter>
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                onClick={() => setDialogOpen(false)}
-                            >
-                                Cancel
-                            </Button>
-                            <Button type="submit" disabled={!newName.trim() || isCreating}>
-                                {isCreating ? "Creating..." : "Create"}
-                            </Button>
-                        </DialogFooter>
-                    </form>
-                </DialogContent>
-            </Dialog>
+            <CreateProjectDialog open={dialogOpen} onOpenChange={setDialogOpen} />
         </>
     );
 }
