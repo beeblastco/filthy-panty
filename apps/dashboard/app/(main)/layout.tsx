@@ -37,7 +37,7 @@ export default function MainLayout({
         <div className="flex h-screen w-screen flex-col bg-background">
             <Header />
             <OnboardingGate>
-                <div className="flex-1">{children}</div>
+                <div className="flex-1 overflow-hidden">{children}</div>
             </OnboardingGate>
         </div>
     );

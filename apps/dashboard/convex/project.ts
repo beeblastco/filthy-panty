@@ -4,7 +4,11 @@
 import { withSystemFields } from "convex-helpers/validators";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { projectFields } from "./schema";
+import {
+  canvasEdgeValidator,
+  canvasNodeValidator,
+  projectFields,
+} from "./schema";
 import { verifyProjectOwnership } from "./model/ownership/index";
 
 /** Validator for project records with system fields. */
@@ -81,7 +85,10 @@ export const getById = query({
   args: {
     projectId: v.id("projects"),
   },
-  returns: v.union(v.object(withSystemFields("projects", projectFields)), v.null()),
+  returns: v.union(
+    v.object(withSystemFields("projects", projectFields)),
+    v.null(),
+  ),
   handler: async (ctx, args) => {
     const { projectId } = args;
 
@@ -126,7 +133,12 @@ export const update = mutation({
 
     await verifyProjectOwnership(ctx, projectId, user.subject);
 
-    const patch: { updatedAt: number; name?: string; slug?: string; description?: string } = {
+    const patch: {
+      updatedAt: number;
+      name?: string;
+      slug?: string;
+      description?: string;
+    } = {
       updatedAt: Date.now(),
     };
 
@@ -145,6 +157,55 @@ export const update = mutation({
     await ctx.db.patch(projectId, patch);
 
     return null;
+  },
+});
+
+/**
+ * List all projects with their canvas preview data for the dashboard.
+ * Fetches the first available canvas layout per project for thumbnail rendering.
+ * @returns Array of projects each with optional nodes/edges canvas data
+ */
+export const listWithPreview = query({
+  args: {},
+  returns: v.array(
+    v.object({
+      ...withSystemFields("projects", projectFields),
+      canvas: v.union(
+        v.object({
+          nodes: v.array(canvasNodeValidator),
+          edges: v.array(canvasEdgeValidator),
+        }),
+        v.null(),
+      ),
+    }),
+  ),
+  handler: async (ctx) => {
+    // Check authenticated user
+    const user = await ctx.auth.getUserIdentity();
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const projects = await ctx.db
+      .query("projects")
+      .withIndex("by_authId", (q) => q.eq("authId", user.subject))
+      .collect();
+
+    const results = await Promise.all(
+      projects.map(async (project) => {
+        const layout = await ctx.db
+          .query("canvasLayouts")
+          .withIndex("by_projectId", (q) => q.eq("projectId", project._id))
+          .first();
+
+        return {
+          ...project,
+          canvas: layout ? { nodes: layout.nodes, edges: layout.edges } : null,
+        };
+      }),
+    );
+
+    return results;
   },
 });
 

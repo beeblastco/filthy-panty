@@ -115,7 +115,7 @@ export default function SettingsPage() {
     }
 
     const DELETE_ENV_PHRASE = "delete this environment";
-    const DELETE_PROJECT_PHRASE = "delete this project";
+    const DELETE_PROJECT_PHRASE = `delete ${project?.name ?? ""}`;
 
     async function handleDeleteEnvironment() {
         if (!deleteEnvTarget || confirmEnvPhrase !== DELETE_ENV_PHRASE) return;

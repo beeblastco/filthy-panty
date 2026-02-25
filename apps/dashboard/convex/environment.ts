@@ -51,14 +51,14 @@ export const list = query({
  * Ensure a default "Production" environment exists for the project.
  * Migrates any existing agentConfigs and canvasLayouts with no environmentId to the production env.
  * @param projectId The project to ensure production environment for
- * @returns The production environment ID
+ * @returns The production environment ID, or null if the project no longer exists
  * @throws Error if user is not authenticated or does not own the project
  */
 export const ensureDefault = mutation({
   args: {
     projectId: v.id("projects"),
   },
-  returns: v.id("environments"),
+  returns: v.union(v.id("environments"), v.null()),
   handler: async (ctx, args) => {
     const { projectId } = args;
 
@@ -68,7 +68,11 @@ export const ensureDefault = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    await verifyProjectOwnership(ctx, projectId, user.subject);
+    // Return null silently if the project was deleted (e.g. user navigated away after delete)
+    const project = await ctx.db.get(projectId);
+    if (!project || project.authId !== user.subject) {
+      return null;
+    }
 
     // Return existing default environment if already created
     const existing = await ctx.db
