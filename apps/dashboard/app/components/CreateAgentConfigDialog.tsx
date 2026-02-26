@@ -1,8 +1,6 @@
 "use client";
 
 /** Dialog form for creating a new agent configuration, deploying it, and showing credentials. */
-import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/app/components/ui/button";
 import {
     Dialog,
@@ -14,9 +12,11 @@ import {
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
-import { useState } from "react";
 import { Check, Copy } from "lucide-react";
+import { useState } from "react";
 
 /** Dialog form for creating a new agent config, auto-deploying, and showing credentials. */
 export function CreateAgentConfigDialog({
@@ -167,7 +167,7 @@ export function CreateAgentConfigDialog({
                                 id="agent-model"
                                 value={modelId}
                                 onChange={(e) => setModelId(e.target.value)}
-                                placeholder="claude-sonnet-4-20250514"
+                                placeholder="anthropic/claude-sonnet-4-6"
                             />
                         </div>
                         <div className="grid gap-2">

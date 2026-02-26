@@ -121,19 +121,41 @@ export const create = mutation({
  * Update an agent config's editable fields.
  * @param configId Agent config ID
  * @param name Optional new display name
+ * @param description Optional description
+ * @param systemPrompt Optional system prompt
+ * @param modelId Optional model identifier
+ * @param temperature Optional temperature value
+ * @param maxTokens Optional max token limit
+ * @param maxTurns Optional max turns limit
+ * @param allowedTools Optional list of allowed tool names
+ * @param disallowedTools Optional list of disallowed tool names
+ * @param outputFormat Optional output format configuration
+ * @param providerOptions Optional provider-specific options
  * @returns null
  * @throws Error if user is not authenticated or does not own the config
  */
 export const update = mutation({
   args: {
     configId: v.id("agentConfigs"),
-    name: v.optional(v.string()),
+    name: v.optional(agentConfigFields.name),
     description: v.optional(v.string()),
     systemPrompt: v.optional(v.string()),
+    modelId: v.optional(agentConfigFields.modelId),
+    temperature: agentConfigFields.temperature,
+    maxTokens: agentConfigFields.maxTokens,
+    maxTurns: agentConfigFields.maxTurns,
+    allowedTools: agentConfigFields.allowedTools,
+    disallowedTools: agentConfigFields.disallowedTools,
+    outputFormat: agentConfigFields.outputFormat,
+    providerOptions: agentConfigFields.providerOptions,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const { configId, name, description, systemPrompt } = args;
+    const {
+      configId, name, description, systemPrompt, modelId,
+      temperature, maxTokens, maxTurns, allowedTools, disallowedTools,
+      outputFormat, providerOptions,
+    } = args;
 
     // Check authenticated user
     const user = await ctx.auth.getUserIdentity();
@@ -150,6 +172,14 @@ export const update = mutation({
     if (name !== undefined) patch.name = name;
     if (description !== undefined) patch.description = description;
     if (systemPrompt !== undefined) patch.systemPrompt = systemPrompt;
+    if (modelId !== undefined) patch.modelId = modelId;
+    if (temperature !== undefined) patch.temperature = temperature;
+    if (maxTokens !== undefined) patch.maxTokens = maxTokens;
+    if (maxTurns !== undefined) patch.maxTurns = maxTurns;
+    if (allowedTools !== undefined) patch.allowedTools = allowedTools;
+    if (disallowedTools !== undefined) patch.disallowedTools = disallowedTools;
+    if (outputFormat !== undefined) patch.outputFormat = outputFormat;
+    if (providerOptions !== undefined) patch.providerOptions = providerOptions;
 
     await ctx.db.patch(configId, patch);
 
