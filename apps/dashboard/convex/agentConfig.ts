@@ -9,6 +9,20 @@ import { resolveConnectedSubAgents } from "./model/agentConfig";
 import { agentConfigFields } from "./schema";
 import { verifyProjectOwnership } from "./model/ownership";
 
+/** Bright color palette for node icons. */
+const BRIGHT_COLORS = [
+  "rgb(249, 115, 22)",  // orange
+  "rgb(234, 179, 8)",   // yellow
+  "rgb(34, 197, 94)",   // green
+  "rgb(6, 182, 212)",   // cyan
+  "rgb(59, 130, 246)",  // blue
+  "rgb(168, 85, 247)",  // purple
+  "rgb(236, 72, 153)",  // pink
+  "rgb(239, 68, 68)",   // red
+  "rgb(20, 184, 166)",  // teal
+  "rgb(132, 204, 22)",  // lime
+];
+
 /** Validator for agent config records with system fields. */
 const agentConfigValidator = v.object(withSystemFields("agentConfigs", agentConfigFields));
 
@@ -86,6 +100,9 @@ export const create = mutation({
       y: 100,
     };
 
+    // Pick a random bright color for the node icon
+    const color = BRIGHT_COLORS[Math.floor(Math.random() * BRIGHT_COLORS.length)];
+
     const newNode = {
       id: nodeId,
       type: "agent" as const,
@@ -94,6 +111,7 @@ export const create = mutation({
         label: name,
         status: "idle" as const,
         agentConfigId: agentConfigId,
+        properties: { color: color },
       },
     };
 
@@ -121,19 +139,41 @@ export const create = mutation({
  * Update an agent config's editable fields.
  * @param configId Agent config ID
  * @param name Optional new display name
+ * @param description Optional description
+ * @param systemPrompt Optional system prompt
+ * @param modelId Optional model identifier
+ * @param temperature Optional temperature value
+ * @param maxTokens Optional max token limit
+ * @param maxTurns Optional max turns limit
+ * @param allowedTools Optional list of allowed tool names
+ * @param disallowedTools Optional list of disallowed tool names
+ * @param outputFormat Optional output format configuration
+ * @param providerOptions Optional provider-specific options
  * @returns null
  * @throws Error if user is not authenticated or does not own the config
  */
 export const update = mutation({
   args: {
     configId: v.id("agentConfigs"),
-    name: v.optional(v.string()),
+    name: v.optional(agentConfigFields.name),
     description: v.optional(v.string()),
     systemPrompt: v.optional(v.string()),
+    modelId: v.optional(agentConfigFields.modelId),
+    temperature: agentConfigFields.temperature,
+    maxTokens: agentConfigFields.maxTokens,
+    maxTurns: agentConfigFields.maxTurns,
+    allowedTools: agentConfigFields.allowedTools,
+    disallowedTools: agentConfigFields.disallowedTools,
+    outputFormat: agentConfigFields.outputFormat,
+    providerOptions: agentConfigFields.providerOptions,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const { configId, name, description, systemPrompt } = args;
+    const {
+      configId, name, description, systemPrompt, modelId,
+      temperature, maxTokens, maxTurns, allowedTools, disallowedTools,
+      outputFormat, providerOptions,
+    } = args;
 
     // Check authenticated user
     const user = await ctx.auth.getUserIdentity();
@@ -150,6 +190,14 @@ export const update = mutation({
     if (name !== undefined) patch.name = name;
     if (description !== undefined) patch.description = description;
     if (systemPrompt !== undefined) patch.systemPrompt = systemPrompt;
+    if (modelId !== undefined) patch.modelId = modelId;
+    if (temperature !== undefined) patch.temperature = temperature;
+    if (maxTokens !== undefined) patch.maxTokens = maxTokens;
+    if (maxTurns !== undefined) patch.maxTurns = maxTurns;
+    if (allowedTools !== undefined) patch.allowedTools = allowedTools;
+    if (disallowedTools !== undefined) patch.disallowedTools = disallowedTools;
+    if (outputFormat !== undefined) patch.outputFormat = outputFormat;
+    if (providerOptions !== undefined) patch.providerOptions = providerOptions;
 
     await ctx.db.patch(configId, patch);
 
