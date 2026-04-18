@@ -1,0 +1,114 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: SST stage to deploy. Defaults to repository variable SST_STAGE or production.
+        required: false
+        type: string
+
+concurrency:
+  group: sst-deploy-${{ github.event.repository.name }}-${{ inputs.stage || vars.SST_STAGE || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      INPUT_STAGE: ${{ inputs.stage }}
+      DEFAULT_STAGE: ${{ vars.SST_STAGE }}
+      SST_SECRET_TelegramBotToken: ${{ secrets.SST_SECRET_TelegramBotToken }}
+      SST_SECRET_TelegramWebhookSecret: ${{ secrets.SST_SECRET_TelegramWebhookSecret }}
+      SST_SECRET_AllowedChatIds: ${{ secrets.SST_SECRET_AllowedChatIds }}
+      CI: "true"
+    steps:
+      - name: Resolve deploy configuration
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          STAGE="${INPUT_STAGE:-${DEFAULT_STAGE:-production}}"
+
+          if [[ -z "${AWS_REGION:-}" ]]; then
+            echo "Missing required repository variable: AWS_REGION" >&2
+            exit 1
+          fi
+
+          if [[ -z "${AWS_ROLE_ARN:-}" ]]; then
+            echo "Missing required repository variable: AWS_ROLE_ARN" >&2
+            exit 1
+          fi
+
+          echo "stage=$STAGE" >> "$GITHUB_OUTPUT"
+          echo "SST_STAGE=$STAGE" >> "$GITHUB_ENV"
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run check
+
+      - name: Build Lambda binaries
+        run: bun run build
+
+      - name: Deploy SST app
+        run: bunx sst deploy --stage "$SST_STAGE"
+
+      - name: Verify Step Functions logging
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          if [[ "$SST_STAGE" == "production" ]]; then
+            SFN_NAME="filthy-panty-agent-workflow-${AWS_REGION}-${ACCOUNT_ID}"
+          else
+            SFN_NAME="${SST_STAGE}-filthy-panty-agent-workflow-${AWS_REGION}-${ACCOUNT_ID}"
+          fi
+          STATE_MACHINE_ARN="arn:aws:states:${AWS_REGION}:${ACCOUNT_ID}:stateMachine:${SFN_NAME}"
+
+          echo "Checking Step Functions logging for ${STATE_MACHINE_ARN}"
+
+          LOG_LEVEL="$(aws stepfunctions describe-state-machine \
+            --state-machine-arn "$STATE_MACHINE_ARN" \
+            --query 'loggingConfiguration.level' \
+            --output text)"
+          INCLUDE_DATA="$(aws stepfunctions describe-state-machine \
+            --state-machine-arn "$STATE_MACHINE_ARN" \
+            --query 'loggingConfiguration.includeExecutionData' \
+            --output text)"
+          DESTINATION="$(aws stepfunctions describe-state-machine \
+            --state-machine-arn "$STATE_MACHINE_ARN" \
+            --query 'loggingConfiguration.destinations[0].cloudWatchLogsLogGroup.logGroupArn' \
+            --output text)"
+
+          echo "Log level: ${LOG_LEVEL}"
+          echo "Include execution data: ${INCLUDE_DATA}"
+          echo "Log destination: ${DESTINATION}"
+
+          if [[ "${LOG_LEVEL}" == "OFF" || "${LOG_LEVEL}" == "None" || -z "${DESTINATION}" || "${DESTINATION}" == "None" ]]; then
+            echo "Step Functions logging is not enabled as expected" >&2
+            exit 1
+          fi
