@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useParams } from "next/navigation";
 import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { ChevronDown, Circle, Copy, Plus } from "lucide-react";
 import {
@@ -57,7 +57,7 @@ export function EnvironmentSelector() {
     const environments = useQuery(
         api.environment.list,
         projectId ? { projectId: projectId } : "skip",
-    );
+    ) as Doc<"environments">[] | undefined;
     const ensureDefault = useMutation(api.environment.ensureDefault);
     const createEnvironment = useMutation(api.environment.create);
 
@@ -78,9 +78,9 @@ export function EnvironmentSelector() {
     // Auto-select the default environment when environments load or selection becomes invalid
     useEffect(() => {
         if (!environments || environments.length === 0) return;
-        const currentValid = environments.some((e) => e._id === environmentId);
+        const currentValid = environments.some((e: Doc<"environments">) => e._id === environmentId);
         if (!currentValid) {
-            const defaultEnv = environments.find((e) => e.isDefault) ?? environments[0];
+            const defaultEnv = environments.find((e: Doc<"environments">) => e.isDefault) ?? environments[0];
             setEnvironmentId(defaultEnv._id);
         }
     }, [environments, environmentId, setEnvironmentId]);
@@ -89,7 +89,7 @@ export function EnvironmentSelector() {
         return null;
     }
 
-    const selectedEnv = environments.find((e) => e._id === environmentId);
+    const selectedEnv = environments.find((e: Doc<"environments">) => e._id === environmentId);
 
     async function handleCreate() {
         if (!newName.trim() || !projectId) return;
@@ -125,7 +125,7 @@ export function EnvironmentSelector() {
                     <DropdownMenuLabel>Environments</DropdownMenuLabel>
                     <DropdownMenuSeparator />
 
-                    {environments.map((env) => (
+                    {environments.map((env: Doc<"environments">) => (
                         <DropdownMenuItem
                             key={env._id}
                             className={cn(
@@ -235,7 +235,7 @@ export function EnvironmentSelector() {
                                             <SelectValue placeholder="Select environment…" />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            {environments.map((env) => (
+                                            {environments.map((env: Doc<"environments">) => (
                                                 <SelectItem key={env._id} value={env._id}>
                                                     {env.name}
                                                 </SelectItem>

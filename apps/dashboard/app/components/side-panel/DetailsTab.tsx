@@ -8,7 +8,7 @@ import { Separator } from "@/app/components/ui/separator";
 import { Switch } from "@/app/components/ui/switch";
 import { Textarea } from "@/app/components/ui/textarea";
 import type { Doc } from "@/convex/_generated/dataModel";
-import { Check, Copy, Eye, EyeOff } from "lucide-react";
+import { Check, Copy, Eye, EyeOff, Globe, Slash, Wifi } from "lucide-react";
 import { useRef, useState } from "react";
 
 /** Tavily search tool configuration. */
@@ -25,13 +25,31 @@ type OutputFormatConfig = {
     description?: string;
 };
 
+type AgentProvider = "openai" | "google" | "bedrock" | "anthropic";
+type RuntimeVariable = { key: string; value: string };
+
+const providerOptions: Array<{ value: AgentProvider; label: string }> = [
+    { value: "openai", label: "OpenAI" },
+    { value: "google", label: "Google" },
+    { value: "bedrock", label: "Bedrock" },
+    { value: "anthropic", label: "Anthropic" },
+];
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toWebSocketBaseUrl(gatewayUrl: string): string {
+    const url = new URL(gatewayUrl);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+
+    return url.toString().replace(/\/$/, "");
 }
 
 export function DetailsTab({
     agentConfig,
     activeDeployment,
+    deploymentApiKey,
     editName,
     setEditName,
     onSaveName,
@@ -41,9 +59,20 @@ export function DetailsTab({
     onToggleSearchTool,
     onUpdateSearchToolConfig,
     onUpdateOutputFormat,
+    publicAccessEnabled,
+    webSocketEnabled,
+    onTogglePublicAccess,
+    onToggleWebSocket,
+    isSavingPublicAccess,
+    isSavingWebSocket,
+    selectedProvider,
+    runtimeVariables,
+    onSaveModelSettings,
+    isSavingModelSettings,
 }: {
     agentConfig: Doc<"agentConfigs"> | null | undefined;
     activeDeployment: Doc<"agentDeployments"> | undefined;
+    deploymentApiKey?: string;
     editName: string;
     setEditName: (name: string) => void;
     onSaveName: () => void;
@@ -53,18 +82,33 @@ export function DetailsTab({
     onToggleSearchTool?: (enabled: boolean) => void;
     onUpdateSearchToolConfig?: (config: SearchToolConfig) => void;
     onUpdateOutputFormat?: (outputFormat: Record<string, unknown> | null) => void;
+    publicAccessEnabled: boolean;
+    webSocketEnabled: boolean;
+    onTogglePublicAccess?: (enabled: boolean) => Promise<void> | void;
+    onToggleWebSocket?: (enabled: boolean) => Promise<void> | void;
+    isSavingPublicAccess?: boolean;
+    isSavingWebSocket?: boolean;
+    selectedProvider: AgentProvider;
+    runtimeVariables: RuntimeVariable[];
+    onSaveModelSettings?: (next: { provider: AgentProvider; modelId: string }) => Promise<void>;
+    isSavingModelSettings?: boolean;
 }) {
     const [showApiKey, setShowApiKey] = useState(false);
     const [copiedField, setCopiedField] = useState<string | null>(null);
     const [outputSchemaText, setOutputSchemaText] = useState("");
     const [hasEditedOutputSchema, setHasEditedOutputSchema] = useState(false);
     const [outputSchemaError, setOutputSchemaError] = useState<string | null>(null);
+    const [editProvider, setEditProvider] = useState<AgentProvider>(selectedProvider);
+    const [editModelId, setEditModelId] = useState(agentConfig?.modelId ?? "");
+    const [modelSettingsSaved, setModelSettingsSaved] = useState(false);
     const schemaFileInputRef = useRef<HTMLInputElement | null>(null);
 
     const gatewayUrl = process.env.NEXT_PUBLIC_AGENT_GATEWAY_URL ?? "http://localhost:8080";
+    const websocketBaseUrl = toWebSocketBaseUrl(gatewayUrl);
     const envPrefix = activeDeployment?.environmentSlug ? `/${activeDeployment.environmentSlug}` : "";
     const projectPrefix = activeDeployment?.projectSlug ? `/${activeDeployment.projectSlug}` : "";
     const endpointUrl = activeDeployment ? `${gatewayUrl}/v1${projectPrefix}/agents${envPrefix}/${activeDeployment.endpointId}` : "";
+    const websocketUrl = activeDeployment ? `${websocketBaseUrl}/v1${projectPrefix}/agents${envPrefix}/${activeDeployment.endpointId}/ws` : "";
 
     const searchConfig = agentConfig?.searchToolConfig as SearchToolConfig | undefined;
     const outputFormat = agentConfig?.outputFormat as OutputFormatConfig | undefined;
@@ -75,6 +119,16 @@ export function DetailsTab({
     const displayOutputSchemaText = hasEditedOutputSchema
         ? outputSchemaText
         : schemaFromConfigText;
+    const hasOpenAiApiKeyVariable = runtimeVariables.some((entry) => {
+        const normalized = entry.key.trim().toUpperCase();
+
+        return normalized === "OPENAI_API_KEY" || normalized === "API_KEY";
+    });
+    const openAiVariableRequired = editProvider === "openai" && !hasOpenAiApiKeyVariable;
+    const modelSettingsChanged = !!agentConfig && (
+        editProvider !== selectedProvider ||
+        editModelId.trim() !== agentConfig.modelId
+    );
 
     function buildOutputFormatPayload(schema: Record<string, unknown>): Record<string, unknown> {
         const next: Record<string, unknown> = {
@@ -172,6 +226,17 @@ export function DetailsTab({
         setTimeout(() => setCopiedField(null), 2000);
     }
 
+    async function handleSaveModelSettings() {
+        if (!agentConfig) return;
+        const trimmedModelId = editModelId.trim();
+        if (!trimmedModelId) {
+            return;
+        }
+        await onSaveModelSettings?.({ provider: editProvider, modelId: trimmedModelId });
+        setModelSettingsSaved(true);
+        setTimeout(() => setModelSettingsSaved(false), 2000);
+    }
+
     return (
         <div className="flex flex-1 flex-col gap-5 p-4">
             {/* Editable name */}
@@ -209,80 +274,209 @@ export function DetailsTab({
                             <p className="text-xs text-foreground">{agentConfig.description}</p>
                         </div>
                     )}
-                    <div className="flex flex-col gap-1.5">
-                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Model</span>
-                        <code className="text-xs text-foreground">{agentConfig.modelId}</code>
+                    <div className="flex flex-col gap-2">
+                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Provider & Model</span>
+                        <Select
+                            value={editProvider}
+                            onValueChange={(value) => {
+                                setEditProvider(value as AgentProvider);
+                                setModelSettingsSaved(false);
+                            }}
+                        >
+                            <SelectTrigger className="h-8 w-full text-xs">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {providerOptions.map((providerOption) => (
+                                    <SelectItem key={providerOption.value} value={providerOption.value}>
+                                        {providerOption.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        <Input
+                            value={editModelId}
+                            onChange={(event) => {
+                                setEditModelId(event.target.value);
+                                setModelSettingsSaved(false);
+                            }}
+                            className="h-8 text-xs"
+                            placeholder="Model ID"
+                            onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                    void handleSaveModelSettings();
+                                }
+                            }}
+                        />
+                        <div className="flex items-center gap-2">
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 text-xs"
+                                disabled={!modelSettingsChanged || !editModelId.trim() || isSavingModelSettings}
+                                onClick={() => void handleSaveModelSettings()}
+                            >
+                                {isSavingModelSettings ? "Saving…" : "Save Model"}
+                            </Button>
+                            {modelSettingsSaved && (
+                                <span className="flex items-center gap-1 text-xs text-emerald-500">
+                                    <Check className="size-3" /> Saved
+                                </span>
+                            )}
+                        </div>
+                        {openAiVariableRequired && (
+                            <p className="text-xs text-destructive">
+                                Add <code>OPENAI_API_KEY</code> in the Variables tab before running the agent.
+                            </p>
+                        )}
                     </div>
                 </>
             )}
 
-            {/* Deployment credentials */}
-            {activeDeployment && (
-                <>
-                    <Separator />
+            <Separator />
 
-                    {/* Endpoint URL */}
-                    <div className="flex flex-col gap-1.5">
-                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Endpoint URL</span>
-                        <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
-                            <code className="flex-1 text-xs text-foreground break-all">{endpointUrl}</code>
-                            <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                className="shrink-0 text-muted-foreground"
-                                onClick={() => handleCopy(endpointUrl, "url")}
-                            >
-                                {copiedField === "url" ? <Check className="size-3" /> : <Copy className="size-3" />}
-                            </Button>
+            {/* Public access controls */}
+            <div className="flex flex-col gap-3">
+                <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Access & Deployment</span>
+                <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
+                    <div className="flex flex-col gap-3">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="flex flex-col gap-0.5">
+                                <span className="text-xs font-medium text-foreground">Public Access</span>
+                                <span className="text-[11px] text-muted-foreground">Create a cloud endpoint for external users.</span>
+                            </div>
+                            <Switch
+                                checked={publicAccessEnabled}
+                                disabled={isSavingPublicAccess}
+                                onCheckedChange={(checked) => {
+                                    void onTogglePublicAccess?.(checked);
+                                }}
+                            />
                         </div>
-                    </div>
 
-                    {/* Endpoint ID */}
-                    <div className="flex flex-col gap-1.5">
-                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Endpoint ID</span>
-                        <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
-                            <code className="flex-1 text-xs text-foreground break-all">{activeDeployment.endpointId}</code>
-                            <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                className="shrink-0 text-muted-foreground"
-                                onClick={() => handleCopy(activeDeployment.endpointId, "endpoint")}
-                            >
-                                {copiedField === "endpoint" ? <Check className="size-3" /> : <Copy className="size-3" />}
-                            </Button>
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="flex flex-col gap-0.5">
+                                <span className="text-xs font-medium text-foreground">WebSocket</span>
+                                <span className="text-[11px] text-muted-foreground">Enable real-time `/ws` transport for this agent.</span>
+                            </div>
+                            <Switch
+                                checked={webSocketEnabled}
+                                disabled={!publicAccessEnabled || isSavingPublicAccess || isSavingWebSocket}
+                                onCheckedChange={(checked) => {
+                                    void onToggleWebSocket?.(checked);
+                                }}
+                            />
                         </div>
-                    </div>
 
-                    {/* API Key with show/hide */}
-                    {activeDeployment.apiKey && (
+                        {!publicAccessEnabled && (
+                            <div className="flex items-start gap-2 rounded-md border border-dashed border-border/70 bg-muted/40 p-2">
+                                <span className="relative mt-0.5 inline-flex size-4 items-center justify-center text-muted-foreground">
+                                    <Globe className="size-3.5" />
+                                    <Slash className="absolute size-3.5" />
+                                </span>
+                                <p className="text-[11px] text-muted-foreground">
+                                    This agent is private by default. Enable public access to generate endpoint credentials.
+                                </p>
+                            </div>
+                        )}
+
+                        {publicAccessEnabled && !activeDeployment && (
+                            <p className="text-[11px] text-muted-foreground">
+                                Creating deployment endpoint…
+                            </p>
+                        )}
+                    </div>
+                </div>
+
+                {publicAccessEnabled && activeDeployment && (
+                    <div className="flex flex-col gap-2.5">
                         <div className="flex flex-col gap-1.5">
-                            <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">API Key</span>
+                            <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Endpoint URL</span>
                             <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
-                                <code className="flex-1 text-xs text-foreground break-all">
-                                    {showApiKey ? activeDeployment.apiKey : "\u2022".repeat(20)}
-                                </code>
+                                <code className="flex-1 text-xs text-foreground break-all">{endpointUrl}</code>
                                 <Button
                                     variant="ghost"
                                     size="icon-xs"
                                     className="shrink-0 text-muted-foreground"
-                                    onClick={() => setShowApiKey(!showApiKey)}
-                                    aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                                    onClick={() => handleCopy(endpointUrl, "url")}
                                 >
-                                    {showApiKey ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
-                                </Button>
-                                <Button
-                                    variant="ghost"
-                                    size="icon-xs"
-                                    className="shrink-0 text-muted-foreground"
-                                    onClick={() => handleCopy(activeDeployment.apiKey!, "apikey")}
-                                >
-                                    {copiedField === "apikey" ? <Check className="size-3" /> : <Copy className="size-3" />}
+                                    {copiedField === "url" ? <Check className="size-3" /> : <Copy className="size-3" />}
                                 </Button>
                             </div>
                         </div>
-                    )}
-                </>
-            )}
+
+                        <div className="flex flex-col gap-1.5">
+                            <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">Endpoint ID</span>
+                            <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
+                                <code className="flex-1 text-xs text-foreground break-all">{activeDeployment.endpointId}</code>
+                                <Button
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    className="shrink-0 text-muted-foreground"
+                                    onClick={() => handleCopy(activeDeployment.endpointId, "endpoint")}
+                                >
+                                    {copiedField === "endpoint" ? <Check className="size-3" /> : <Copy className="size-3" />}
+                                </Button>
+                            </div>
+                        </div>
+
+                        {webSocketEnabled && (
+                            <div className="flex flex-col gap-1.5">
+                                <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground/70">
+                                    <Wifi className="size-3" />
+                                    WebSocket URL
+                                </span>
+                                <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
+                                    <code className="flex-1 text-xs text-foreground break-all">{websocketUrl}</code>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon-xs"
+                                        className="shrink-0 text-muted-foreground"
+                                        onClick={() => handleCopy(websocketUrl, "websocket")}
+                                    >
+                                        {copiedField === "websocket" ? <Check className="size-3" /> : <Copy className="size-3" />}
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+
+                        {deploymentApiKey ? (
+                            <div className="flex flex-col gap-1.5">
+                                <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">API Key</span>
+                                <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
+                                    <code className="flex-1 text-xs text-foreground break-all">
+                                        {showApiKey ? deploymentApiKey : "\u2022".repeat(20)}
+                                    </code>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon-xs"
+                                        className="shrink-0 text-muted-foreground"
+                                        onClick={() => setShowApiKey(!showApiKey)}
+                                        aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                                    >
+                                        {showApiKey ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon-xs"
+                                        className="shrink-0 text-muted-foreground"
+                                        onClick={() => handleCopy(deploymentApiKey, "apikey")}
+                                    >
+                                        {copiedField === "apikey" ? <Check className="size-3" /> : <Copy className="size-3" />}
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col gap-1.5">
+                                <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">API Key</span>
+                                <p className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
+                                    This deployment does not expose a stored API key. Save the key when the deployment is created, or reissue one from the backend if needed.
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
 
             {/* Built-in tool toggles */}
             {agentConfig && (

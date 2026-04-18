@@ -3,6 +3,7 @@
 /** Wraps the app with ConvexProviderWithAuth using Shoo for authentication. */
 import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
 import type { ReactNode } from "react";
+import { ShooSessionMonitor } from "@/app/components/ShooSessionMonitor";
 import { useAuth } from "@/lib/shoo";
 
 const convex = new ConvexReactClient(
@@ -12,6 +13,7 @@ const convex = new ConvexReactClient(
 export function ConvexClientProvider({ children }: { children: ReactNode }) {
   return (
     <ConvexProviderWithAuth client={convex} useAuth={useAuth}>
+      <ShooSessionMonitor />
       {children}
     </ConvexProviderWithAuth>
   );

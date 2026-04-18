@@ -2,7 +2,6 @@
 
 /** Account settings for profile, preferences, and account lifecycle actions. */
 import { useEffect, useRef, useState } from "react";
-import { useShooAuth } from "@shoojs/react";
 import { useMutation, useQuery } from "convex/react";
 import { useTheme } from "next-themes";
 import { api } from "@/convex/_generated/api";
@@ -10,6 +9,7 @@ import { ArrowUpRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { resolvePlan, isMaxPlan, PLAN_CONFIGS, UPGRADE_URL } from "@/lib/pricing";
 import type { PlanTier } from "@/lib/pricing";
+import { AccountTabs } from "@/app/components/AccountTabs";
 import { Section } from "@/app/components/Section";
 import { Avatar, AvatarFallback, AvatarImage } from "@/app/components/ui/avatar";
 import { Badge } from "@/app/components/ui/badge";
@@ -25,12 +25,13 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/app/components/ui/dialog";
+import { useShooSession } from "@/lib/shoo";
 
 const DELETE_CONFIRM_PHRASE = "delete my account";
 const HANDLE_REGEX = /^[a-z0-9_-]{3,32}$/;
 
 export default function AccountSettingsPage() {
-    const { identity, claims } = useShooAuth();
+    const { identity, claims } = useShooSession();
     const { theme, setTheme } = useTheme();
     const currentUser = useQuery(api.user.getCurrent);
     const updateProfile = useMutation(api.user.updateProfile);
@@ -161,11 +162,12 @@ export default function AccountSettingsPage() {
     }
 
     return (
-        <div className="mx-auto max-w-2xl px-6 py-10">
+        <div className="mx-auto w-full max-w-2xl px-6 py-10">
             <h1 className="mb-2 text-xl font-semibold text-foreground">Account Settings</h1>
             <p className="mb-8 text-sm text-muted-foreground">
                 Update your account attributes, preferences, and lifecycle settings.
             </p>
+            <AccountTabs />
 
             <div className="grid gap-8">
                 <Section title="Profile" description="Editable attributes for your account.">

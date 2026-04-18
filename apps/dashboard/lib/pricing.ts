@@ -22,8 +22,9 @@ export const DEFAULT_PLAN: PlanTier = "hobby";
 /** Highest tier — users on this plan see no upgrade button. */
 export const MAX_PLAN: PlanTier = "pro";
 
-/** External URL for plan upgrades. */
-export const UPGRADE_URL = "https://clonee.dev/pricing";
+/** External URL for plan upgrades or plan information. */
+export const UPGRADE_URL =
+  process.env.NEXT_PUBLIC_UPGRADE_URL ?? "https://github.com/beeblastco/pnzu-frontend";
 
 /** Tier metadata keyed by plan identifier. */
 export const PLAN_CONFIGS: Record<PlanTier, PlanConfig> = {

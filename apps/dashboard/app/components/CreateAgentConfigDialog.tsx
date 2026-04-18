@@ -1,6 +1,6 @@
 "use client";
 
-/** Dialog form for creating a new agent configuration, deploying it, and showing credentials. */
+/** Dialog form for creating a new private agent configuration. */
 import { Button } from "@/app/components/ui/button";
 import {
     Dialog,
@@ -12,55 +12,56 @@ import {
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/app/components/ui/select";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
-import { Check, Copy } from "lucide-react";
 import { useState } from "react";
 
-/** Dialog form for creating a new agent config, auto-deploying, and showing credentials. */
+type AgentProvider = "openai" | "google" | "bedrock" | "anthropic";
+
+const providerOptions: Array<{ value: AgentProvider; label: string; modelPlaceholder: string }> = [
+    { value: "openai", label: "OpenAI", modelPlaceholder: "gpt-4.1-mini" },
+    { value: "google", label: "Google", modelPlaceholder: "gemini-2.5-flash" },
+    { value: "bedrock", label: "Bedrock", modelPlaceholder: "anthropic.claude-sonnet-4-5-20250929-v1:0" },
+    { value: "anthropic", label: "Anthropic", modelPlaceholder: "claude-sonnet-4-5-20250929" },
+];
+
 export function CreateAgentConfigDialog({
     projectId,
     environmentId,
     open,
     onOpenChange,
+    initialCanvasPosition,
 }: {
     projectId: Id<"projects">;
     environmentId: Id<"environments"> | null;
     open: boolean;
     onOpenChange: (open: boolean) => void;
+    initialCanvasPosition?: { x: number; y: number } | null;
 }) {
     const createAgentConfig = useMutation(api.agentConfig.create);
-    const createDeployment = useMutation(api.agentDeployments.create);
 
     const [name, setName] = useState("");
+    const [provider, setProvider] = useState<AgentProvider>("openai");
     const [modelId, setModelId] = useState("");
     const [description, setDescription] = useState("");
     const [systemPrompt, setSystemPrompt] = useState("");
     const [isCreating, setIsCreating] = useState(false);
 
-    // Credentials shown after successful creation
-    const [credentials, setCredentials] = useState<{
-        endpointId: string;
-        rawApiKey: string;
-        projectSlug?: string;
-        environmentSlug?: string;
-    } | null>(null);
-    const [copiedField, setCopiedField] = useState<string | null>(null);
-
     function resetForm() {
         setName("");
+        setProvider("openai");
         setModelId("");
         setDescription("");
         setSystemPrompt("");
-        setCredentials(null);
-        setCopiedField(null);
-    }
-
-    function handleCopy(text: string, field: string) {
-        navigator.clipboard.writeText(text);
-        setCopiedField(field);
-        setTimeout(() => setCopiedField(null), 2000);
+        setIsCreating(false);
     }
 
     function handleClose() {
@@ -70,78 +71,36 @@ export function CreateAgentConfigDialog({
 
     async function handleCreate() {
         if (!name.trim() || !modelId.trim() || !environmentId) return;
+
         setIsCreating(true);
         try {
-            const { agentConfigId } = await createAgentConfig({
+            await createAgentConfig({
                 projectId: projectId,
                 environmentId: environmentId,
                 name: name.trim(),
+                provider: provider,
                 modelId: modelId.trim(),
                 description: description.trim() || undefined,
                 systemPrompt: systemPrompt.trim() || undefined,
+                position: initialCanvasPosition ?? undefined,
             });
 
-            // Auto-deploy the newly created agent
-            const deployment = await createDeployment({
-                agentConfigId: agentConfigId,
-            });
-
-            setCredentials(deployment);
+            handleClose();
         } finally {
             setIsCreating(false);
         }
     }
 
-    // Show credentials view after successful creation
-    if (credentials) {
-        const gatewayUrl = process.env.NEXT_PUBLIC_AGENT_GATEWAY_URL ?? "http://localhost:8080";
-        const envPrefix = credentials.environmentSlug ? `/${credentials.environmentSlug}` : "";
-        const projectPrefix = credentials.projectSlug ? `/${credentials.projectSlug}` : "";
-        const curlCommand = `curl -X POST ${gatewayUrl}/v1${projectPrefix}/agents${envPrefix}/${credentials.endpointId} \\\n  -H "Authorization: Bearer ${credentials.rawApiKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"message":"hello","stream":false}'`;
-
-        return (
-            <Dialog open={open} onOpenChange={() => handleClose()}>
-                <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>Agent deployed</DialogTitle>
-                        <DialogDescription>
-                            Your agent is ready. These credentials are also available in the node detail panel.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="grid gap-4 py-2">
-                        <CredentialField
-                            label="Endpoint ID"
-                            value={credentials.endpointId}
-                            field="endpoint"
-                            copiedField={copiedField}
-                            onCopy={handleCopy}
-                        />
-                        <CredentialField
-                            label="API Key"
-                            value={credentials.rawApiKey}
-                            field="apikey"
-                            copiedField={copiedField}
-                            onCopy={handleCopy}
-                        />
-                        <CredentialField
-                            label="Example curl"
-                            value={curlCommand}
-                            field="curl"
-                            copiedField={copiedField}
-                            onCopy={handleCopy}
-                            small
-                        />
-                    </div>
-                    <DialogFooter>
-                        <Button onClick={handleClose}>Done</Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-        );
-    }
-
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog
+            open={open}
+            onOpenChange={(nextOpen) => {
+                if (!nextOpen) {
+                    resetForm();
+                }
+                onOpenChange(nextOpen);
+            }}
+        >
             <DialogContent className="sm:max-w-md">
                 <DialogHeader>
                     <DialogTitle>Create Agent Config</DialogTitle>
@@ -150,9 +109,9 @@ export function CreateAgentConfigDialog({
                     </DialogDescription>
                 </DialogHeader>
                 <form
-                    onSubmit={(e) => {
-                        e.preventDefault();
-                        handleCreate();
+                    onSubmit={(event) => {
+                        event.preventDefault();
+                        void handleCreate();
                     }}
                 >
                     <div className="grid gap-4 py-4">
@@ -161,39 +120,53 @@ export function CreateAgentConfigDialog({
                             <Input
                                 id="agent-name"
                                 value={name}
-                                onChange={(e) => setName(e.target.value)}
+                                onChange={(event) => setName(event.target.value)}
                                 placeholder="My Agent"
                                 autoFocus
                             />
+                        </div>
+                        <div className="grid gap-2">
+                            <Label htmlFor="agent-provider">Provider</Label>
+                            <Select value={provider} onValueChange={(value) => setProvider(value as AgentProvider)}>
+                                <SelectTrigger id="agent-provider" className="w-full">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {providerOptions.map((option) => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                            {option.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                         </div>
                         <div className="grid gap-2">
                             <Label htmlFor="agent-model">Model ID</Label>
                             <Input
                                 id="agent-model"
                                 value={modelId}
-                                onChange={(e) => setModelId(e.target.value)}
-                                placeholder="anthropic/claude-sonnet-4-6"
+                                onChange={(event) => setModelId(event.target.value)}
+                                placeholder={providerOptions.find((option) => option.value === provider)?.modelPlaceholder ?? "gpt-4.1-mini"}
                             />
                         </div>
+                        <p className="text-xs text-muted-foreground">
+                            Agents are private by default. Enable public access later in the Details tab when you are ready to deploy.
+                        </p>
                         <div className="grid gap-2">
-                            <Label htmlFor="agent-description">
-                                Description (optional)
-                            </Label>
+                            <Label htmlFor="agent-description">Description (optional)</Label>
                             <Input
                                 id="agent-description"
                                 value={description}
-                                onChange={(e) => setDescription(e.target.value)}
+                                onChange={(event) => setDescription(event.target.value)}
                                 placeholder="What does this agent do?"
                             />
                         </div>
                         <div className="grid gap-2">
-                            <Label htmlFor="agent-prompt">
-                                System Prompt (optional)
-                            </Label>
+                            <Label htmlFor="agent-prompt">System Prompt (optional)</Label>
                             <Input
                                 id="agent-prompt"
                                 value={systemPrompt}
-                                onChange={(e) => setSystemPrompt(e.target.value)}
+                                onChange={(event) => setSystemPrompt(event.target.value)}
                                 placeholder="You are a helpful assistant..."
                             />
                         </div>
@@ -202,7 +175,7 @@ export function CreateAgentConfigDialog({
                         <Button
                             type="button"
                             variant="ghost"
-                            onClick={() => onOpenChange(false)}
+                            onClick={handleClose}
                         >
                             Cancel
                         </Button>
@@ -216,39 +189,5 @@ export function CreateAgentConfigDialog({
                 </form>
             </DialogContent>
         </Dialog>
-    );
-}
-
-/** Copyable credential row used in the credentials view. */
-function CredentialField({
-    label,
-    value,
-    field,
-    copiedField,
-    onCopy,
-    small,
-}: {
-    label: string;
-    value: string;
-    field: string;
-    copiedField: string | null;
-    onCopy: (text: string, field: string) => void;
-    small?: boolean;
-}) {
-    return (
-        <div className="grid gap-1.5">
-            <Label>{label}</Label>
-            <div className="flex items-center gap-2 rounded-md border border-border bg-muted px-3 py-2">
-                <code className={`flex-1 break-all ${small ? "text-xs" : "text-sm"}`}>
-                    {value}
-                </code>
-                <button
-                    onClick={() => onCopy(value, field)}
-                    className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                    {copiedField === field ? <Check className="size-4" /> : <Copy className="size-4" />}
-                </button>
-            </div>
-        </div>
     );
 }

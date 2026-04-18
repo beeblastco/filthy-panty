@@ -1,9 +1,9 @@
 <!-- BEGIN:nextjs-agent-rules -->
- 
+
 # Next.js: ALWAYS read docs before coding
- 
+
 Before any Next.js work, find and read the relevant doc in `node_modules/next/dist/docs/`. Your training data is outdated — the docs are the source of truth.
- 
+
 <!-- END:nextjs-agent-rules -->
 
 ## Commands
@@ -20,6 +20,7 @@ Before any Next.js work, find and read the relevant doc in `node_modules/next/di
 ## Authentication
 
 WorkOS AuthKit handles SSO. Two user tables exist:
+
 1. WorkOS-synced user (auth source of truth)
 2. App-specific user (custom fields)
 
@@ -28,12 +29,12 @@ WorkOS events trigger webhooks → Convex handlers sync data. See auth-related f
 ## Workflows
 
 Cited workflow orchestration pattern:
+
 - Main coordinator in `convex/workflow.ts`, this file include all the API function to run the workflow, when you want to trigger test api workflow, create test api and from here only.
 - Domain workflows export a `start()` function
 - Coordinator calls domain `start()` function
 
 This keeps workflow logic discoverable and composable.
-
 
 ## Args Handling
 
@@ -91,6 +92,7 @@ Do not create new function unless it is completely different from and cannot reu
 
 - Each return clause have to seperate 1 line before the return statement.
 - Each public api that need authenticated user must include these line (must also have comments)
+
 ```typescript
 // Check authenticated user
 const user = await authKit.getAuthUser(ctx);
@@ -102,3 +104,10 @@ if (!user) {
 When create function name for update, create or list all the value from the database, use "create", "update", "list", "remove", "getById", "get..." instead of other name. If the function is using internally, add internal at the end, "createInternal, updateInternal, ..."
 
 Only use custom function if the function is out of scope from the CRUD basic operation or doing multiple different database query or action.
+
+UI/UX cursor rules — every interactive element must have an explicit cursor class:
+
+- Clickable buttons, links, triggers → `cursor-pointer`
+- Disabled elements → `cursor-not-allowed`
+- Plain `<button>` and `<a>` elements default to `cursor-default` in some resets, so always set it explicitly.
+- Apply this to all custom components and any shadcn/ui component overrides in `components/ui/`.

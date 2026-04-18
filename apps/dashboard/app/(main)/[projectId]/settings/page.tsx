@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { EnvironmentDot } from "@/app/components/EnvironmentSelector";
 import { Trash2 } from "lucide-react";
@@ -32,8 +32,8 @@ export default function SettingsPage() {
     const router = useRouter();
     const { setEnvironmentId } = useEnvironment();
 
-    const project = useQuery(api.project.getById, { projectId: projectId });
-    const environments = useQuery(api.environment.list, { projectId: projectId });
+    const project = useQuery(api.project.getById, { projectId: projectId }) as Doc<"projects"> | null | undefined;
+    const environments = useQuery(api.environment.list, { projectId: projectId }) as Doc<"environments">[] | undefined;
 
     const updateProject = useMutation(api.project.update);
     const deleteEnvironment = useMutation(api.environment.remove);
@@ -177,7 +177,7 @@ export default function SettingsPage() {
                         {environments.length === 0 && (
                             <p className="px-4 py-3 text-sm text-muted-foreground">No environments yet.</p>
                         )}
-                        {environments.map((env) => (
+                        {environments.map((env: Doc<"environments">) => (
                             <div key={env._id} className="flex items-center gap-3 px-4 py-3">
                                 <EnvironmentDot isDefault={env.isDefault} />
                                 <span className="flex-1 text-sm font-medium text-foreground">

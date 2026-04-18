@@ -4,8 +4,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-    title: "Clonee",
-    description: "Fast deploy your agent any time, anywhere",
+    title: "pnzu-frontend",
+    description: "Frontend UX/UI for pnzu, backed by pnzu cloud services.",
 };
 
 export default function RootLayout({

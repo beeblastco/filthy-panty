@@ -1,7 +1,7 @@
 "use client";
 
 /** Settings tab with danger zone for node deletion. */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
@@ -47,10 +47,12 @@ const NODE_TYPE_LABELS: Record<NodeType, string> = {
 export function SettingsTab({
     nodeType,
     nodeName,
+    openDeleteDialogToken,
     onDelete,
 }: {
     nodeType: NodeType;
     nodeName: string;
+    openDeleteDialogToken: number;
     onDelete: () => Promise<void>;
 }) {
     const [deleteOpen, setDeleteOpen] = useState(false);
@@ -60,6 +62,12 @@ export function SettingsTab({
     const deletePhrase = `delete ${nodeName}`;
     const descriptions = DELETE_DESCRIPTIONS[nodeType];
     const typeLabel = NODE_TYPE_LABELS[nodeType];
+
+    useEffect(() => {
+        if (openDeleteDialogToken <= 0) return;
+        setConfirmPhrase("");
+        setDeleteOpen(true);
+    }, [openDeleteDialogToken]);
 
     async function handleDelete() {
         if (confirmPhrase !== deletePhrase) return;

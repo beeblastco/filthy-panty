@@ -9,9 +9,24 @@ import { useQuery } from "convex/react";
 import { Plus } from "lucide-react";
 import { useState } from "react";
 
+type ProjectPreview = {
+    _id: string;
+    name: string;
+    canvas: {
+        nodes: Array<{
+            id: string;
+            type: "agent" | "database" | "workspace" | "tool";
+            position: { x: number; y: number };
+            data: { label: string; status?: "running" | "idle" | "error" };
+        }>;
+        edges: Array<{ id: string; source: string; target: string }>;
+    } | null;
+    deployedAgentCount: number;
+};
+
 /** Main projects dashboard page. */
 export default function ProjectsDashboard() {
-    const projects = useQuery(api.project.listWithPreview);
+    const projects = useQuery(api.project.listWithPreview) as ProjectPreview[] | undefined;
     const [createOpen, setCreateOpen] = useState(false);
 
     if (projects === undefined) {
@@ -45,7 +60,7 @@ export default function ProjectsDashboard() {
             <div className="flex-1 overflow-auto p-6">
                 <div className="mx-auto max-w-5xl">
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                        {projects.map((project) => (
+                        {projects.map((project: ProjectPreview) => (
                             <ProjectCard
                                 key={project._id}
                                 name={project.name}

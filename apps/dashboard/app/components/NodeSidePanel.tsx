@@ -5,24 +5,48 @@ import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { agentStatusConfig } from "@/app/components/node/BaseNode";
 import { ConfigTab } from "@/app/components/side-panel/ConfigTab";
 import { DetailsTab } from "@/app/components/side-panel/DetailsTab";
+import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
 import { ToolConfigTab } from "@/app/components/side-panel/ToolConfigTab";
 import { ToolDetailsTab } from "@/app/components/side-panel/ToolDetailsTab";
-import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
-import { useEnvironment } from "@/app/hooks/useEnvironment";
-import { useAgentHealth, type AgentHealthStatus } from "@/app/hooks/useAgentHealth";
+import { VariablesTab } from "@/app/components/side-panel/VariablesTab";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
+import { useAgentHealth, type AgentHealthStatus } from "@/app/hooks/useAgentHealth";
+import { useEnvironment } from "@/app/hooks/useEnvironment";
+import {
+    forgetDeploymentCredential,
+    getRememberedDeploymentApiKey,
+    rememberDeploymentCredential,
+} from "@/app/lib/deploymentCredentials";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import type { Node } from "@xyflow/react";
+import { useStore, type Node } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
 import { X } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
+
+const nodeStatusBadgeVariant: Record<"running" | "idle" | "error", "success" | "secondary" | "destructive"> = {
+    running: "success",
+    idle: "secondary",
+    error: "destructive",
+};
+
+const nodeStatusBadgeColor: Record<"running" | "idle" | "error", string> = {
+    running: "bg-emerald-500",
+    idle: "bg-zinc-500",
+    error: "bg-red-500",
+};
+
+const nodeStatusBadgeText: Record<"running" | "idle" | "error", string> = {
+    running: "Running",
+    idle: "Idle",
+    error: "Error",
+};
 
 /** Maps agent health status to Badge variant. */
 const healthBadgeVariant: Record<AgentHealthStatus, "success" | "warning" | "secondary" | "destructive"> = {
@@ -32,8 +56,14 @@ const healthBadgeVariant: Record<AgentHealthStatus, "success" | "warning" | "sec
     unhealthy: "destructive",
 };
 
+const loadAgentTestTab = () =>
+    import("@/app/components/side-panel/TestTab").then((mod) => mod.TestTab);
+
+const loadToolTestTab = () =>
+    import("@/app/components/side-panel/ToolTestTab").then((mod) => mod.ToolTestTab);
+
 const TestTab = dynamic(
-    () => import("@/app/components/side-panel/TestTab").then((mod) => mod.TestTab),
+    loadAgentTestTab,
     {
         loading: () => (
             <div className="flex flex-1 items-center justify-center p-4">
@@ -44,7 +74,7 @@ const TestTab = dynamic(
 );
 
 const ToolTestTab = dynamic(
-    () => import("@/app/components/side-panel/ToolTestTab").then((mod) => mod.ToolTestTab),
+    loadToolTestTab,
     {
         loading: () => (
             <div className="flex flex-1 items-center justify-center p-4">
@@ -55,6 +85,13 @@ const ToolTestTab = dynamic(
 );
 
 type NodeType = "agent" | "database" | "tool" | "workspace";
+type AgentProvider = "openai" | "google" | "bedrock" | "anthropic";
+type RuntimeVariable = { key: string; value: string };
+type HeaderStatusBadge = {
+    text: string;
+    color: string;
+    variant: "success" | "warning" | "secondary" | "destructive";
+};
 
 /** Panel header labels per node type. */
 const PANEL_TITLES: Record<NodeType, string> = {
@@ -66,6 +103,7 @@ const PANEL_TITLES: Record<NodeType, string> = {
 
 /** Config fields extracted from the agent config for JSON editing. */
 const CONFIG_KEYS = [
+    "provider",
     "modelId",
     "description",
     "systemPrompt",
@@ -76,6 +114,8 @@ const CONFIG_KEYS = [
     "providerOptions",
     "temperature",
     "maxTokens",
+    "publicAccessEnabled",
+    "webSocketEnabled",
     "memoryToolEnabled",
     "searchToolEnabled",
     "searchToolConfig",
@@ -93,13 +133,50 @@ function extractConfigJson(config: Record<string, unknown>): Record<string, unkn
     return result;
 }
 
+function inferProviderFromModelId(modelId: string): AgentProvider {
+    const normalized = modelId.trim().toLowerCase();
+
+    if (
+        normalized.startsWith("bedrock/") ||
+        normalized.startsWith("anthropic.") ||
+        normalized.startsWith("amazon.") ||
+        normalized.startsWith("cohere.") ||
+        normalized.startsWith("mistral.") ||
+        normalized.startsWith("meta.") ||
+        normalized.startsWith("us.")
+    ) {
+        return "bedrock";
+    }
+    if (normalized.startsWith("google/") || normalized.includes("gemini")) {
+        return "google";
+    }
+    if (normalized.startsWith("anthropic/") || normalized.includes("claude")) {
+        return "anthropic";
+    }
+
+    return "openai";
+}
+
+function isRuntimeVariable(value: unknown): value is RuntimeVariable {
+    return (
+        typeof value === "object" &&
+        value !== null &&
+        "key" in value &&
+        typeof (value as { key: unknown }).key === "string" &&
+        "value" in value &&
+        typeof (value as { value: unknown }).value === "string"
+    );
+}
+
 export const NodeSidePanel = memo(function NodeSidePanel({
     node,
+    deleteRequestToken,
     onClose,
     onRemoveNode,
     onUpdateNodeLabel,
 }: {
     node: Node | null;
+    deleteRequestToken: number;
     onClose: () => void;
     onRemoveNode: (nodeId: string) => void;
     onUpdateNodeLabel: (nodeId: string, label: string) => void;
@@ -112,9 +189,36 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const params = useParams<{ projectId: string }>();
     const projectId = params.projectId as Id<"projects"> | undefined;
     const agentConfigId = nodeData?.agentConfigId as Id<"agentConfigs"> | undefined;
+    const nodeId = node?.id;
+    const canQueryToolStatus = isTool && !!projectId && !!environmentId && !!nodeId;
 
     // Agent health status (agent nodes only)
     const healthStatus = useAgentHealth(isAgent ? agentConfigId : undefined);
+
+    const isConnectedToAgent = useStore(
+        useCallback(
+            (state: Record<string, unknown>) => {
+                if (nodeType === "agent" || !nodeId) return true;
+
+                const edges = state.edges as Array<{ source: string; target: string }>;
+                const nodeLookup = state.nodeLookup as Map<string, { type?: string }>;
+                if (!edges || !nodeLookup) return false;
+
+                for (const edge of edges) {
+                    if (edge.source !== nodeId && edge.target !== nodeId) continue;
+
+                    const otherNodeId = edge.source === nodeId ? edge.target : edge.source;
+                    const otherNode = nodeLookup.get(otherNodeId);
+                    if (otherNode?.type === "agent") {
+                        return true;
+                    }
+                }
+
+                return false;
+            },
+            [nodeId, nodeType],
+        ),
+    );
 
     // Agent config for editable name (agent nodes only)
     const agentConfig = useQuery(
@@ -123,13 +227,30 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     );
     const updateConfig = useMutation(api.agentConfig.update);
     const removeConfig = useMutation(api.agentConfig.remove);
+    const createDeployment = useMutation(api.agentDeployments.create);
+    const revokeDeployment = useMutation(api.agentDeployments.revoke);
 
     // Deployment credentials (agent nodes only)
     const deployments = useQuery(
         api.agentDeployments.list,
         isAgent && agentConfigId ? { agentConfigId: agentConfigId } : "skip",
     );
-    const activeDeployment = deployments?.find((d) => d.status === "active");
+    const activeDeployment = deployments?.find((d: { status?: string }) => d.status === "active");
+    const legacyDeploymentApiKey =
+        typeof (activeDeployment as { apiKey?: unknown } | undefined)?.apiKey === "string"
+            ? (activeDeployment as { apiKey: string }).apiKey
+            : undefined;
+
+    const toolService = useQuery(
+        api.toolService.getByNode,
+        canQueryToolStatus
+            ? {
+                projectId: projectId,
+                environmentId: environmentId,
+                nodeId: nodeId,
+            }
+            : "skip",
+    );
 
     // Editable name (agent uses agentConfig, others use canvas label)
     const [editName, setEditName] = useState("");
@@ -140,6 +261,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const [configError, setConfigError] = useState<string | null>(null);
     const [isSavingConfig, setIsSavingConfig] = useState(false);
     const [configSaved, setConfigSaved] = useState(false);
+    const [isSavingModelSettings, setIsSavingModelSettings] = useState(false);
+    const [isSavingVariables, setIsSavingVariables] = useState(false);
+    const [isSavingPublicAccess, setIsSavingPublicAccess] = useState(false);
+    const [isSavingWebSocket, setIsSavingWebSocket] = useState(false);
+    const [deploymentApiKey, setDeploymentApiKey] = useState<string | undefined>(undefined);
+    const [activeTab, setActiveTab] = useState("details");
 
     // Sync name and config when config loads or node changes
     useEffect(() => {
@@ -153,6 +280,24 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         }
     }, [agentConfig, node?.id, isAgent, nodeData]);
 
+    useEffect(() => {
+        setActiveTab("details");
+    }, [node?.id]);
+
+    useEffect(() => {
+        setDeploymentApiKey(
+            getRememberedDeploymentApiKey(
+                activeDeployment?.endpointId,
+                legacyDeploymentApiKey,
+            ),
+        );
+    }, [activeDeployment?.endpointId, legacyDeploymentApiKey]);
+
+    useEffect(() => {
+        if (deleteRequestToken <= 0) return;
+        setActiveTab("settings");
+    }, [deleteRequestToken]);
+
     const nameChanged = isAgent
         ? agentConfig && editName.trim() !== agentConfig.name
         : nodeData && editName.trim() !== nodeData.label;
@@ -165,6 +310,93 @@ export const NodeSidePanel = memo(function NodeSidePanel({
 
     /** Whether the config JSON has been modified from the server value. */
     const configChanged = agentConfig && configJson !== serverConfigJson;
+    const selectedProvider = useMemo<AgentProvider>(() => {
+        if (!agentConfig) return "openai";
+
+        const provider = agentConfig.provider as AgentProvider | undefined;
+        if (provider) {
+            return provider;
+        }
+
+        return inferProviderFromModelId(agentConfig.modelId);
+    }, [agentConfig]);
+    const runtimeVariables = useMemo<RuntimeVariable[]>(
+        () =>
+            Array.isArray(agentConfig?.runtimeVariables)
+                ? agentConfig.runtimeVariables.filter((value: unknown): value is RuntimeVariable => isRuntimeVariable(value))
+                : [],
+        [agentConfig],
+    );
+    const publicAccessEnabled = useMemo(() => {
+        if (!isAgent) return false;
+        if (agentConfig?.publicAccessEnabled !== undefined) {
+            return agentConfig.publicAccessEnabled === true;
+        }
+
+        return !!activeDeployment;
+    }, [isAgent, agentConfig?.publicAccessEnabled, activeDeployment]);
+    const webSocketEnabled = useMemo(() => {
+        if (!publicAccessEnabled) return false;
+        if (agentConfig?.webSocketEnabled !== undefined) {
+            return agentConfig.webSocketEnabled === true;
+        }
+
+        // Preserve behavior for legacy deployments that predate this flag.
+        return !!activeDeployment;
+    }, [publicAccessEnabled, agentConfig?.webSocketEnabled, activeDeployment]);
+    const headerStatus = useMemo<HeaderStatusBadge | null>(() => {
+        if (isAgent) {
+            const config = agentStatusConfig[healthStatus];
+
+            return {
+                text: config.text,
+                color: config.color,
+                variant: healthBadgeVariant[healthStatus],
+            };
+        }
+
+        if (isTool) {
+            if (!canQueryToolStatus || toolService === undefined) {
+                return {
+                    text: "Loading",
+                    color: "bg-zinc-500",
+                    variant: "secondary",
+                };
+            }
+
+            const isToolEnabled = toolService?.status !== "disabled";
+
+            return {
+                text: isToolEnabled ? "Enabled" : "Disabled",
+                color: isToolEnabled ? "bg-emerald-500" : "bg-zinc-500",
+                variant: isToolEnabled ? "success" : "secondary",
+            };
+        }
+
+        if (nodeType === "database") {
+            return {
+                text: isConnectedToAgent ? "Connected" : "Disconnected",
+                color: isConnectedToAgent ? "bg-emerald-500" : "bg-red-400",
+                variant: isConnectedToAgent ? "success" : "destructive",
+            };
+        }
+
+        if (!isConnectedToAgent) {
+            return {
+                text: "Unconnected",
+                color: "bg-red-400",
+                variant: "destructive",
+            };
+        }
+
+        const nodeStatus = nodeData?.status ?? "idle";
+
+        return {
+            text: nodeStatusBadgeText[nodeStatus],
+            color: nodeStatusBadgeColor[nodeStatus],
+            variant: nodeStatusBadgeVariant[nodeStatus],
+        };
+    }, [isAgent, healthStatus, isTool, canQueryToolStatus, toolService, nodeType, isConnectedToAgent, nodeData?.status]);
 
     async function handleSaveName() {
         if (!editName.trim() || !nameChanged) return;
@@ -198,6 +430,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         try {
             await updateConfig({
                 configId: agentConfigId,
+                provider: parsed.provider as AgentProvider | undefined,
                 modelId: parsed.modelId as string | undefined,
                 description: parsed.description as string | undefined,
                 systemPrompt: parsed.systemPrompt as string | undefined,
@@ -207,6 +440,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 allowedTools: parsed.allowedTools as string[] | undefined,
                 outputFormat: parsed.outputFormat,
                 providerOptions: parsed.providerOptions,
+                publicAccessEnabled: parsed.publicAccessEnabled as boolean | undefined,
+                webSocketEnabled: parsed.webSocketEnabled as boolean | undefined,
                 memoryToolEnabled: parsed.memoryToolEnabled as boolean | undefined,
                 searchToolEnabled: parsed.searchToolEnabled as boolean | undefined,
                 searchToolConfig: parsed.searchToolConfig as { searchDepth?: string; topic?: string; maxResults?: number } | undefined,
@@ -215,6 +450,35 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             setTimeout(() => setConfigSaved(false), 2000);
         } finally {
             setIsSavingConfig(false);
+        }
+    }
+
+    async function handleSaveModelSettings(next: { provider: AgentProvider; modelId: string }) {
+        if (!agentConfigId) return;
+
+        setIsSavingModelSettings(true);
+        try {
+            await updateConfig({
+                configId: agentConfigId,
+                provider: next.provider,
+                modelId: next.modelId,
+            });
+        } finally {
+            setIsSavingModelSettings(false);
+        }
+    }
+
+    async function handleSaveVariables(next: RuntimeVariable[]) {
+        if (!agentConfigId) return;
+
+        setIsSavingVariables(true);
+        try {
+            await updateConfig({
+                configId: agentConfigId,
+                runtimeVariables: next,
+            });
+        } finally {
+            setIsSavingVariables(false);
         }
     }
 
@@ -264,20 +528,108 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         [agentConfigId, updateConfig],
     );
 
+    const handleTogglePublicAccess = useCallback(
+        async (enabled: boolean) => {
+            if (!agentConfigId) return;
+
+            setIsSavingPublicAccess(true);
+            try {
+                if (enabled) {
+                    if (!activeDeployment) {
+                        const createdDeployment = await createDeployment({ agentConfigId: agentConfigId });
+                        if (
+                            createdDeployment &&
+                            typeof createdDeployment.endpointId === "string" &&
+                            typeof createdDeployment.rawApiKey === "string"
+                        ) {
+                            rememberDeploymentCredential({
+                                endpointId: createdDeployment.endpointId,
+                                apiKey: createdDeployment.rawApiKey,
+                                projectSlug: createdDeployment.projectSlug,
+                                environmentSlug: createdDeployment.environmentSlug,
+                            });
+                            setDeploymentApiKey(createdDeployment.rawApiKey);
+                        }
+                    }
+                    await updateConfig({
+                        configId: agentConfigId,
+                        publicAccessEnabled: true,
+                    });
+                    return;
+                }
+
+                if (activeDeployment) {
+                    forgetDeploymentCredential(activeDeployment.endpointId);
+                    setDeploymentApiKey(undefined);
+                    await revokeDeployment({ deploymentId: activeDeployment._id });
+                }
+                await updateConfig({
+                    configId: agentConfigId,
+                    publicAccessEnabled: false,
+                    webSocketEnabled: false,
+                });
+            } finally {
+                setIsSavingPublicAccess(false);
+            }
+        },
+        [agentConfigId, activeDeployment, createDeployment, revokeDeployment, updateConfig],
+    );
+
+    const handleToggleWebSocket = useCallback(
+        async (enabled: boolean) => {
+            if (!agentConfigId || !publicAccessEnabled) return;
+
+            setIsSavingWebSocket(true);
+            try {
+                await updateConfig({
+                    configId: agentConfigId,
+                    webSocketEnabled: enabled,
+                });
+            } finally {
+                setIsSavingWebSocket(false);
+            }
+        },
+        [agentConfigId, publicAccessEnabled, updateConfig],
+    );
+
     /** Resolved name for the SettingsTab delete confirmation. */
     const resolvedName = isAgent ? (agentConfig?.name ?? "") : (nodeData?.label ?? "");
+    const warmTestTab = useCallback(() => {
+        if (isAgent) {
+            void loadAgentTestTab();
+            return;
+        }
+
+        if (isTool) {
+            void loadToolTestTab();
+        }
+    }, [isAgent, isTool]);
+
+    useEffect(() => {
+        if (!nodeData || (!isAgent && !isTool)) return;
+
+        if (typeof window !== "undefined" && window.requestIdleCallback) {
+            const idleId = window.requestIdleCallback(warmTestTab, { timeout: 1200 });
+
+            return () => window.cancelIdleCallback(idleId);
+        }
+
+        const timeoutId = window.setTimeout(warmTestTab, 100);
+
+        return () => window.clearTimeout(timeoutId);
+    }, [nodeData, isAgent, isTool, warmTestTab]);
 
     return (
         <div
-            className={`absolute right-0 top-0 z-10 flex h-full w-1/3 flex-col border-l border-border bg-card transition-transform duration-200 ease-out ${node ? "translate-x-0" : "translate-x-full"}`}
+            className={`absolute right-0 top-0 z-10 flex h-full w-2/5 flex-col border-l border-border bg-card transition-transform duration-200 ease-out ${node ? "translate-x-0" : "translate-x-full"}`}
         >
             <div className="flex items-center justify-between px-4 py-3">
                 <div className="flex items-center gap-2">
                     <h2 className="text-sm font-medium text-foreground">{PANEL_TITLES[nodeType]}</h2>
-                    {isAgent && (
-                        <Badge variant={healthBadgeVariant[healthStatus]} className="gap-1.5 text-[10px] py-0">
-                            <span className={`size-1.5 rounded-full ${agentStatusConfig[healthStatus].color}`} />
-                            {agentStatusConfig[healthStatus].text}
+                    {headerStatus && (
+                        <Badge variant={headerStatus.variant} className="gap-1.5 py-0 text-[10px]">
+                            <span className={`size-1.5 rounded-full ${headerStatus.color}`} />
+                            {headerStatus.text}
                         </Badge>
                     )}
                 </div>
@@ -289,12 +641,24 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             <Separator />
 
             {nodeData && (
-                <Tabs defaultValue="details" className="flex flex-1 flex-col overflow-hidden">
+                <Tabs
+                    value={activeTab}
+                    onValueChange={setActiveTab}
+                    className="flex flex-1 flex-col overflow-hidden"
+                >
                     <TabsList variant="line" className="w-full shrink-0 px-4 pt-2">
                         <TabsTrigger value="details">Details</TabsTrigger>
+                        {isAgent && <TabsTrigger value="variables">Variables</TabsTrigger>}
                         {(isAgent || isTool) && <TabsTrigger value="config">Config</TabsTrigger>}
                         {(isAgent || nodeType === "tool") && (
-                            <TabsTrigger value="test">Test</TabsTrigger>
+                            <TabsTrigger
+                                value="test"
+                                onMouseEnter={warmTestTab}
+                                onFocus={warmTestTab}
+                                onPointerDown={warmTestTab}
+                            >
+                                Test
+                            </TabsTrigger>
                         )}
                         <TabsTrigger value="settings">Settings</TabsTrigger>
                     </TabsList>
@@ -303,9 +667,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                     <TabsContent value="details" className="flex flex-col overflow-y-auto">
                         {isAgent ? (
                             <DetailsTab
-                                key={agentConfigId ?? "agent-details"}
+                                key={`${agentConfigId ?? "agent-details"}-${selectedProvider}-${agentConfig?.modelId ?? ""}`}
                                 agentConfig={agentConfig}
                                 activeDeployment={activeDeployment}
+                                deploymentApiKey={deploymentApiKey}
                                 editName={editName}
                                 setEditName={setEditName}
                                 onSaveName={handleSaveName}
@@ -315,6 +680,16 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                                 onToggleSearchTool={handleToggleSearchTool}
                                 onUpdateSearchToolConfig={handleUpdateSearchToolConfig}
                                 onUpdateOutputFormat={handleUpdateOutputFormat}
+                                publicAccessEnabled={publicAccessEnabled}
+                                webSocketEnabled={webSocketEnabled}
+                                onTogglePublicAccess={handleTogglePublicAccess}
+                                onToggleWebSocket={handleToggleWebSocket}
+                                isSavingPublicAccess={isSavingPublicAccess}
+                                isSavingWebSocket={isSavingWebSocket}
+                                selectedProvider={selectedProvider}
+                                runtimeVariables={runtimeVariables}
+                                onSaveModelSettings={handleSaveModelSettings}
+                                isSavingModelSettings={isSavingModelSettings}
                             />
                         ) : isTool && node ? (
                             <ToolDetailsTab
@@ -338,6 +713,18 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                             />
                         )}
                     </TabsContent>
+
+                    {/* Variables tab — agent only */}
+                    {isAgent && (
+                        <TabsContent value="variables" className="flex flex-col overflow-hidden">
+                            <VariablesTab
+                                key={`${agentConfigId ?? "agent"}-${JSON.stringify(runtimeVariables)}`}
+                                runtimeVariables={runtimeVariables}
+                                isSaving={isSavingVariables}
+                                onSave={handleSaveVariables}
+                            />
+                        </TabsContent>
+                    )}
 
                     {/* Config tab — agent and tool */}
                     {isAgent && (
@@ -372,6 +759,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                             {isAgent ? (
                                 <TestTab
                                     activeDeployment={activeDeployment}
+                                    deploymentApiKey={deploymentApiKey}
+                                    publicAccessEnabled={publicAccessEnabled}
+                                    webSocketEnabled={webSocketEnabled}
                                     nodeColor={nodeData?.properties?.color}
                                 />
                             ) : node ? (
@@ -389,6 +779,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                         <SettingsTab
                             nodeType={nodeType}
                             nodeName={resolvedName}
+                            openDeleteDialogToken={deleteRequestToken}
                             onDelete={handleDelete}
                         />
                     </TabsContent>

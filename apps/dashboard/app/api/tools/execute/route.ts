@@ -13,6 +13,12 @@ type ExecuteRequestBody = {
     timeoutMs?: number;
 };
 
+type ExecutorConfig = {
+    url: string;
+    secret: string;
+    secretHeaderName: string;
+};
+
 /** Verify the Shoo JWT from the Authorization header per https://docs.shoo.dev/docs/server-verification. */
 async function verifyAuthToken(request: Request): Promise<boolean> {
     const authHeader = request.headers.get("Authorization");
@@ -64,16 +70,49 @@ function parseExecuteBody(payload: unknown): ExecuteRequestBody {
     };
 }
 
-export async function POST(request: Request) {
-    const sandboxUrl = (process.env.SANDBOX_SERVICE_URL ?? "http://localhost:8971").replace(
-        /\/+$/,
-        "",
-    );
-    const sandboxSecret = process.env.SANDBOX_SHARED_SECRET;
+function resolveExecutorConfig(): ExecutorConfig | null {
+    const url = process.env.CUSTOM_TOOL_EXECUTOR_URL?.trim().replace(/\/+$/, "") ?? "";
+    const secret = process.env.CUSTOM_TOOL_EXECUTOR_SECRET?.trim() ?? "";
 
-    if (!sandboxSecret) {
+    if (!url && !secret) {
+        return null;
+    }
+
+    if (!url || !secret) {
+        throw new Error(
+            "CUSTOM_TOOL_EXECUTOR_URL and CUSTOM_TOOL_EXECUTOR_SECRET must both be configured on the web server.",
+        );
+    }
+
+    return {
+        url,
+        secret,
+        secretHeaderName:
+            process.env.CUSTOM_TOOL_EXECUTOR_SECRET_HEADER?.trim() || "X-Executor-Secret",
+    };
+}
+
+export async function POST(request: Request) {
+    let executorConfig: ExecutorConfig | null;
+    try {
+        executorConfig = resolveExecutorConfig();
+    } catch (error) {
         return NextResponse.json(
-            { error: "SANDBOX_SHARED_SECRET is not configured on the web server." },
+            {
+                error:
+                    error instanceof Error
+                        ? error.message
+                        : "Invalid custom tool executor configuration.",
+            },
+            { status: 500 },
+        );
+    }
+    if (!executorConfig) {
+        return NextResponse.json(
+            {
+                error:
+                    "CUSTOM_TOOL_EXECUTOR_URL and CUSTOM_TOOL_EXECUTOR_SECRET are not configured on the web server.",
+            },
             { status: 500 },
         );
     }
@@ -108,12 +147,12 @@ export async function POST(request: Request) {
 
     try {
         const upstream = await fetch(
-            `${sandboxUrl}/sandbox/execute`,
+            executorConfig.url,
             {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    "X-Sandbox-Secret": sandboxSecret,
+                    [executorConfig.secretHeaderName]: executorConfig.secret,
                 },
                 body: JSON.stringify(parsed),
             },
@@ -130,7 +169,7 @@ export async function POST(request: Request) {
                 {
                     error:
                         body.error
-                        ?? `Sandbox request failed with status ${upstream.status}.`,
+                        ?? `Executor request failed with status ${upstream.status}.`,
                 },
                 { status: upstream.status },
             );
@@ -143,7 +182,7 @@ export async function POST(request: Request) {
                 error:
                     error instanceof Error
                         ? error.message
-                        : "Failed to reach sandbox service.",
+                        : "Failed to reach the configured custom tool executor.",
             },
             { status: 502 },
         );

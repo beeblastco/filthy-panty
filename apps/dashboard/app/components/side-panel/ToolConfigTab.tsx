@@ -12,7 +12,7 @@ import { useEffect, useState } from "react";
 
 const DEFAULT_SOURCE = [
     "export async function handler(input) {",
-    "  // Sandbox entrypoint: this function is called as handler(input).",
+    "  // Executor entrypoint: this function is called as handler(input).",
     "  // The return structure is aligned with the vercel AI SDK tool output formats",
     "  //",
     "  // You can return either:",
@@ -35,7 +35,7 @@ const DEFAULT_SOURCE = [
     "    value: {",
     '      tool: "custom_tool",',
     "      received: input,",
-    '      message: "Tool executed inside sandbox process.",',
+    '      message: "Tool executed by the configured executor.",',
     "    },",
     "  };",
     "}",

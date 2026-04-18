@@ -6,11 +6,13 @@ import { NextResponse } from "next/server";
  */
 export async function GET() {
     const gatewayUrl = process.env.NEXT_PUBLIC_AGENT_GATEWAY_URL!;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
 
     try {
         const response = await fetch(`${gatewayUrl}/healthz`, {
             method: "GET",
-            signal: AbortSignal.timeout(5000),
+            signal: controller.signal,
         });
 
         if (response.ok) {
@@ -20,5 +22,7 @@ export async function GET() {
         return NextResponse.json({ status: "unhealthy" }, { status: 502 });
     } catch {
         return NextResponse.json({ status: "unhealthy" }, { status: 502 });
+    } finally {
+        clearTimeout(timeoutId);
     }
 }

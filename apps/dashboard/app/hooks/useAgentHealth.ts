@@ -1,12 +1,10 @@
 "use client";
 
 /**
- * Derives agent health status from deployment state and gateway reachability.
+ * Derives agent health status from gateway/server reachability.
  * Uses a shared module-level cache so multiple agent nodes don't duplicate health requests.
  */
-import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { useQuery } from "convex/react";
 import { useEffect, useState } from "react";
 
 /** Possible agent health statuses for display. */
@@ -21,6 +19,18 @@ let pendingCheck: Promise<boolean> | null = null;
 let listenerCount = 0;
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
 const listeners = new Set<() => void>();
+
+/** Browser-safe fetch timeout helper (works even when AbortSignal.timeout is unavailable). */
+async function fetchHealthWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        return await fetch(url, { signal: controller.signal });
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
+}
 
 /** Notify all active hook instances of a health update. */
 function notifyListeners() {
@@ -38,7 +48,7 @@ async function checkGatewayHealth(): Promise<boolean> {
 
     if (pendingCheck) return pendingCheck;
 
-    pendingCheck = fetch("/api/agents/health", { signal: AbortSignal.timeout(5000) })
+    pendingCheck = fetchHealthWithTimeout("/api/agents/health", 5000)
         .then((res) => {
             healthCache = { healthy: res.ok, checkedAt: Date.now() };
             pendingCheck = null;
@@ -62,7 +72,7 @@ function subscribe(listener: () => void) {
     listeners.add(listener);
     listenerCount++;
     if (listenerCount === 1) {
-        checkGatewayHealth();
+        void checkGatewayHealth();
         pollingInterval = setInterval(checkGatewayHealth, HEALTH_CHECK_INTERVAL);
     }
 
@@ -93,28 +103,22 @@ export function useGatewayHealth(): boolean | null {
 }
 
 /**
- * Returns the health status of an agent based on its deployment and gateway reachability.
+ * Returns the health status of an agent based on gateway/server reachability.
  * @param agentConfigId agent config to check health for
  * @returns AgentHealthStatus: healthy, deploying, idle, or unhealthy
  */
 export function useAgentHealth(agentConfigId: Id<"agentConfigs"> | undefined): AgentHealthStatus {
-    const deployments = useQuery(
-        api.agentDeployments.list,
-        agentConfigId ? { agentConfigId: agentConfigId } : "skip",
-    );
-    const activeDeployment = deployments?.find((d) => d.status === "active");
-
     const [, forceUpdate] = useState(0);
 
     useEffect(() => {
-        if (!activeDeployment) return;
+        if (!agentConfigId) return;
 
         const unsubscribe = subscribe(() => forceUpdate((n) => n + 1));
 
         return unsubscribe;
-    }, [activeDeployment]);
+    }, [agentConfigId]);
 
-    if (!activeDeployment) {
+    if (!agentConfigId) {
         return "idle";
     }
 

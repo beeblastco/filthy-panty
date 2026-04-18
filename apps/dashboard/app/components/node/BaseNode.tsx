@@ -4,6 +4,7 @@ import { JavaScript } from "@/app/components/icons/JavaScript";
 import { Python } from "@/app/components/icons/Python";
 import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
 import { Handle, Position, useStore } from "@xyflow/react";
+import { Globe, Slash } from "lucide-react";
 import { useCallback } from "react";
 
 export type BaseNodeData = {
@@ -34,6 +35,11 @@ export type ToolMeta = {
     status: "enabled" | "disabled";
 };
 
+export type AgentConnectivityMeta = {
+    publicAccessEnabled: boolean;
+    webSocketEnabled: boolean;
+};
+
 /** Shared node shell with handles, label, and status indicator. */
 export function BaseNode({
     id,
@@ -41,6 +47,7 @@ export function BaseNode({
     data,
     icon,
     agentStatus,
+    agentConnectivity,
     toolMeta,
 }: {
     id: string;
@@ -48,6 +55,7 @@ export function BaseNode({
     data: BaseNodeData;
     icon: React.ReactNode;
     agentStatus?: AgentHealthStatus;
+    agentConnectivity?: AgentConnectivityMeta;
     toolMeta?: ToolMeta;
 }) {
     const zoom = useStore(zoomSelector);
@@ -125,6 +133,15 @@ export function BaseNode({
                         <Python className="size-3.5" />
                     ) : (
                         <JavaScript className="size-3.5" />
+                    )}
+                </span>
+            )}
+
+            {nodeType === "agent" && (
+                <span className="absolute top-2 right-2.5 z-10 inline-flex size-5 items-center justify-center rounded-full border border-border/70 bg-background/90">
+                    <Globe className={`size-3.5 ${agentConnectivity?.publicAccessEnabled ? "text-emerald-500" : "text-muted-foreground"}`} />
+                    {!agentConnectivity?.publicAccessEnabled && (
+                        <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground/80" />
                     )}
                 </span>
             )}

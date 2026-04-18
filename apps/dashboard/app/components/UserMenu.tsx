@@ -1,9 +1,8 @@
 "use client";
 
 /** Displays the authenticated user avatar with a dropdown menu for account actions. */
-import { LogOut, Moon, Sun, User, FileText, HelpCircle } from "lucide-react";
-import { useShooAuth } from "@shoojs/react";
-import { signOut } from "@/lib/shoo";
+import { LogOut, Moon, Sun, User, FileText, HelpCircle, Route } from "lucide-react";
+import { signOut, useShooSession } from "@/lib/shoo";
 import { useConvexAuth } from "convex/react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
@@ -19,10 +18,7 @@ import {
 
 export function UserMenu() {
     const { isLoading, isAuthenticated } = useConvexAuth();
-    const { identity, claims } = useShooAuth({
-        callbackPath: "/auth/callback",
-        autoSessionMonitor: false,
-    });
+    const { identity, claims } = useShooSession();
     const { theme, setTheme } = useTheme();
     const router = useRouter();
 
@@ -102,6 +98,11 @@ export function UserMenu() {
                 <DropdownMenuItem>
                     <FileText />
                     Documents
+                </DropdownMenuItem>
+
+                <DropdownMenuItem onClick={() => router.push("/roadmap")}>
+                    <Route />
+                    Roadmap
                 </DropdownMenuItem>
 
                 <DropdownMenuItem>

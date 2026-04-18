@@ -2,21 +2,41 @@
 
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
 import { useAgentHealth } from "@/app/hooks/useAgentHealth";
+import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { useQuery } from "convex/react";
 import type { NodeProps } from "@xyflow/react";
 
 /** Default color for agent nodes that were created before the color property existed. */
 const DEFAULT_AGENT_COLOR = "rgb(168, 85, 247)";
 
-/** Agent node representing an AI agent on the canvas with live health status. */
+/** Agent node representing an AI agent on the canvas. */
 export function AgentNode({ id, data }: NodeProps) {
     const nodeData = data as BaseNodeData;
     const agentConfigId = nodeData.agentConfigId as Id<"agentConfigs"> | undefined;
     const healthStatus = useAgentHealth(agentConfigId);
+    const agentConfig = useQuery(
+        api.agentConfig.getById,
+        agentConfigId ? { configId: agentConfigId } : "skip",
+    );
+    const publicAccessEnabled = agentConfig?.publicAccessEnabled === true;
+    const webSocketEnabled = publicAccessEnabled && agentConfig?.webSocketEnabled === true;
     const withColor: BaseNodeData = {
         ...nodeData,
         properties: nodeData.properties ?? { color: DEFAULT_AGENT_COLOR },
     };
 
-    return <BaseNode id={id} nodeType="agent" data={withColor} icon={null} agentStatus={healthStatus} />;
+    return (
+        <BaseNode
+            id={id}
+            nodeType="agent"
+            data={withColor}
+            icon={null}
+            agentStatus={healthStatus}
+            agentConnectivity={{
+                publicAccessEnabled: publicAccessEnabled,
+                webSocketEnabled: webSocketEnabled,
+            }}
+        />
+    );
 }

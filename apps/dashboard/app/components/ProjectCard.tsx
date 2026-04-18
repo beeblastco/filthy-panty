@@ -12,6 +12,7 @@ import {
 import { Bot } from "lucide-react";
 import { memo, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 
 // Defer loading React Flow preview code until cards render on the client.
 const CanvasPreview = dynamic(
@@ -66,13 +67,18 @@ export const ProjectCard = memo(function ProjectCard({ name, canvas, projectId, 
     const status = getProjectStatus(agentCount, deployedAgentCount, gatewayHealthy);
     const { label, color } = STATUS_CONFIG[status];
     const nodeCount = canvas?.nodes.length ?? 0;
+    const warmProject = useCallback(() => {
+        router.prefetch(`/${projectId}`, FULL_ROUTE_PREFETCH);
+        void preloadCanvas();
+    }, [router, projectId]);
     const handleClick = useCallback(() => router.push(`/${projectId}`), [router, projectId]);
 
     return (
         <Card
             className="cursor-pointer gap-0 overflow-hidden p-0 transition-all hover:ring-2 hover:ring-primary/50"
             onClick={handleClick}
-            onMouseEnter={preloadCanvas}
+            onMouseEnter={warmProject}
+            onPointerDown={warmProject}
         >
             {/* Canvas preview — no padding, flush to card top and sides */}
             <div className="aspect-5/3 w-full">

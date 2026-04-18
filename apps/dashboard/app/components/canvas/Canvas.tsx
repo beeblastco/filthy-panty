@@ -75,6 +75,16 @@ const NODE_TEMPLATES = [
 /** Static ReactFlow options hoisted outside components to avoid object churn on re-renders. */
 const FIT_VIEW_OPTIONS = { maxZoom: 1.5, padding: 1 } as const;
 const PRO_OPTIONS = { hideAttribution: true } as const;
+type FlowPosition = { x: number; y: number };
+
+/** Ignore global shortcuts while typing in editable controls. */
+function isEditableTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    if (target.isContentEditable) return true;
+
+    const tagName = target.tagName;
+    return tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT";
+}
 
 /** Find the nearest agent node to a given flow position. */
 function findNearestAgentNode(
@@ -120,12 +130,15 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
     const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+    const [deleteRequestToken, setDeleteRequestToken] = useState(0);
     const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
     const [toolPickerOpen, setToolPickerOpen] = useState(false);
     const [configDialogOpen, setConfigDialogOpen] = useState(false);
+    const [agentCreatePosition, setAgentCreatePosition] = useState<FlowPosition | null>(null);
     const { screenToFlowPosition } = useReactFlow();
     const nextId = useRef(1);
-    const lastRightClick = useRef({ x: 0, y: 0 });
+    const canvasContainerRef = useRef<HTMLDivElement | null>(null);
+    const lastRightClick = useRef<FlowPosition | null>(null);
     const nodesRef = useRef(nodes);
     const edgesRef = useRef(edges);
 
@@ -184,7 +197,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             setNodes(canvasLayout.nodes as Node[]);
             setEdges(canvasLayout.edges as Edge[]);
             const maxId = canvasLayout.nodes.reduce(
-                (max, n) => Math.max(max, Number(n.id) || 0),
+                (max: number, n: { id: string }) => Math.max(max, Number(n.id) || 0),
                 0,
             );
             nextId.current = maxId + 1;
@@ -195,6 +208,23 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         }
     }, [canvasLayout, setNodes, setEdges]);
 
+    // Route Delete key to the side-panel confirmation flow instead of immediate node deletion.
+    useEffect(() => {
+        function onKeyDown(event: KeyboardEvent) {
+            if (event.key !== "Delete") return;
+            if (!selectedNode) return;
+            if (isEditableTarget(event.target)) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+            setDeleteRequestToken((token) => token + 1);
+        }
+
+        window.addEventListener("keydown", onKeyDown);
+
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [selectedNode]);
+
     const onConnect: OnConnect = useCallback(
         (params) => {
             setEdges((eds) => addEdge(params, eds));
@@ -202,6 +232,23 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         },
         [setEdges, scheduleSave],
     );
+
+    /** Compute the current viewport center in flow coordinates. */
+    const getViewportCenterPosition = useCallback((): FlowPosition => {
+        const bounds = canvasContainerRef.current?.getBoundingClientRect();
+        const clientX = bounds
+            ? bounds.left + bounds.width / 2
+            : typeof window !== "undefined"
+              ? window.innerWidth / 2
+              : 0;
+        const clientY = bounds
+            ? bounds.top + bounds.height / 2
+            : typeof window !== "undefined"
+              ? window.innerHeight / 2
+              : 0;
+
+        return screenToFlowPosition({ x: clientX, y: clientY });
+    }, [screenToFlowPosition]);
 
     const onContextMenu = useCallback(
         (event: React.MouseEvent) => {
@@ -216,7 +263,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     /** Add a service node at a position and auto-connect to the nearest agent. */
     const addNode = useCallback(
         (type: string, label: string) => {
-            const position = lastRightClick.current;
+            const position = lastRightClick.current ?? getViewportCenterPosition();
             const id = String(nextId.current++);
             const nodeLabel = `${label} ${id}`;
 
@@ -241,7 +288,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 
             scheduleSave();
         },
-        [setNodes, setEdges, scheduleSave],
+        [getViewportCenterPosition, setNodes, setEdges, scheduleSave],
     );
 
     /** Save after a node drag completes. */
@@ -263,7 +310,24 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     );
 
     const onPaneClick = useCallback(() => setSelectedNode(null), []);
-    const onOpenCreateConfig = useCallback(() => setConfigDialogOpen(true), []);
+    const onOpenCreateConfig = useCallback(
+        (position?: FlowPosition) => {
+            setAgentCreatePosition(position ?? getViewportCenterPosition());
+            setConfigDialogOpen(true);
+        },
+        [getViewportCenterPosition],
+    );
+    const onConfigDialogOpenChange = useCallback((open: boolean) => {
+        setConfigDialogOpen(open);
+        if (!open) setAgentCreatePosition(null);
+    }, []);
+    const onOpenSourcePicker = useCallback(() => {
+        setAgentCreatePosition(lastRightClick.current ?? getViewportCenterPosition());
+        setSourcePickerOpen(true);
+    }, [getViewportCenterPosition]);
+    const onCreateAgentFromPicker = useCallback(() => {
+        onOpenCreateConfig(agentCreatePosition ?? getViewportCenterPosition());
+    }, [agentCreatePosition, getViewportCenterPosition, onOpenCreateConfig]);
 
     /** Wrapper matching OnEdgesDelete signature. */
     const onEdgesDeleteHandler = useCallback(() => {
@@ -320,6 +384,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             fitView
             fitViewOptions={FIT_VIEW_OPTIONS}
             maxZoom={1.5}
+            deleteKeyCode={null}
             colorMode={isDark ? "dark" : "light"}
             proOptions={PRO_OPTIONS}
             defaultEdgeOptions={defaultEdgeOptions}
@@ -332,7 +397,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     );
 
     return (
-        <div className="relative size-full overflow-hidden">
+        <div ref={canvasContainerRef} className="relative size-full overflow-hidden">
             {isEmpty ? (
                 <div className="size-full">
                     {flow}
@@ -358,7 +423,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                                 <ContextMenuItem
                                     onClick={() =>
                                         type === "agent"
-                                            ? setSourcePickerOpen(true)
+                                            ? onOpenSourcePicker()
                                             : type === "tool"
                                               ? setToolPickerOpen(true)
                                               : addNode(type, label)
@@ -375,12 +440,13 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 
             {isEmpty && (
                 <EmptyCanvasGuide
-                    onCreateConfig={onOpenCreateConfig}
+                    onCreateConfig={() => onOpenCreateConfig()}
                 />
             )}
 
             <NodeSidePanel
                 node={selectedNode}
+                deleteRequestToken={deleteRequestToken}
                 onClose={onPaneClick}
                 onRemoveNode={removeNode}
                 onUpdateNodeLabel={updateNodeLabel}
@@ -389,14 +455,15 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             <AgentSourcePickerDialog
                 open={sourcePickerOpen}
                 onOpenChange={setSourcePickerOpen}
-                onCreateNew={onOpenCreateConfig}
+                onCreateNew={onCreateAgentFromPicker}
             />
 
             <CreateAgentConfigDialog
                 projectId={projectId}
                 environmentId={environmentId}
                 open={configDialogOpen}
-                onOpenChange={setConfigDialogOpen}
+                onOpenChange={onConfigDialogOpenChange}
+                initialCanvasPosition={agentCreatePosition}
             />
 
             <ToolSourcePickerDialog
