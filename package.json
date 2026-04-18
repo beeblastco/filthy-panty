@@ -1,0 +1,29 @@
+{
+  "name": "filthy-panty",
+  "description": "Agentic AI template using Architecture A: Step Functions Express + Lambda tools, deployed with SST.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "postinstall": "sst install",
+    "dev": "sst dev",
+    "build": "bun run scripts/build.ts",
+    "check": "bunx tsc --noEmit",
+    "deploy": "bun run build && sst deploy",
+    "remove": "sst remove"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "8.10.161",
+    "@types/bun": "^1.3.11"
+  },
+  "peerDependencies": {
+    "typescript": "^6.0.2"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "3.1017.0",
+    "@aws-sdk/client-sfn": "3.1017.0",
+    "@aws-sdk/client-sqs": "3.1017.0",
+    "@pulumi/aws": "7.23.0",
+    "@pulumi/pulumi": "3.228.0",
+    "sst": "4.5.10"
+  }
+}
