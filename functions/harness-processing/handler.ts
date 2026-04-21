@@ -77,7 +77,6 @@ async function runAgentLoop(
   ];
 
   const tools = {
-    google_search: google.tools.googleSearch({}),
     ...createTools({
       conversationKey: session.conversationKey,
       latestUserMessage: extractText(userContent),
