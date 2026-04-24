@@ -30,7 +30,10 @@ import {
 } from "../_shared/dynamo.ts";
 import { requireEnv } from "../_shared/env.ts";
 import { logError, logInfo } from "../_shared/log.ts";
-import { normalizeFilesystemNamespace } from "./utils.ts";
+import {
+  conversationLeaseKey,
+  normalizeFilesystemNamespace,
+} from "./filesystem-namespace.ts";
 
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const PROCESSED_EVENTS_TABLE_NAME = requireEnv("PROCESSED_EVENTS_TABLE_NAME");
@@ -320,7 +323,7 @@ export class Session {
   }
 
   private async loadMemoryFile(): Promise<string | null> {
-    const key = `${this.filesystemNamespace()}/MEMORY.md`;
+    const key = `${normalizeFilesystemNamespace(this.conversationKey)}/MEMORY.md`;
 
     try {
       const response = await s3.send(new GetObjectCommand({
@@ -330,32 +333,29 @@ export class Session {
 
       return await response.Body?.transformToString() ?? "";
     } catch (error) {
-      if (isMissingS3Object(error)) {
-        if (!this.hasLoggedMissingMemoryFile) {
-          logInfo("No MEMORY.md found for session prompt", {
-            conversationKey: this.conversationKey,
-            key,
-          });
-          this.hasLoggedMissingMemoryFile = true;
-        }
-        return null;
+      if (!isMissingS3Object(error)) {
+        logError("Failed to load MEMORY.md for session prompt", {
+          conversationKey: this.conversationKey,
+          key,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
       }
+    }
 
-      logError("Failed to load MEMORY.md for session prompt", {
+    if (!this.hasLoggedMissingMemoryFile) {
+      logInfo("No MEMORY.md found for session prompt", {
         conversationKey: this.conversationKey,
         key,
-        error: error instanceof Error ? error.message : String(error),
       });
-      throw error;
+      this.hasLoggedMissingMemoryFile = true;
     }
-  }
 
-  private filesystemNamespace(): string {
-    return normalizeFilesystemNamespace(this.conversationKey);
+    return null;
   }
 
   private conversationLeaseKey(): string {
-    return `conversation-lease:${this.conversationKey}`;
+    return conversationLeaseKey(this.conversationKey);
   }
 }
 

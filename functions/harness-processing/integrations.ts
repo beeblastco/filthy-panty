@@ -4,12 +4,16 @@
  */
 
 import type {
+  SystemModelMessage,
   UserContent,
+  UserModelMessage,
 } from "ai";
 import {
-  modelMessageSchema,
+  systemModelMessageSchema,
+  userModelMessageSchema,
 } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
+import { timingSafeEqual } from "node:crypto";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -25,27 +29,41 @@ import { logError } from "../_shared/log.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
 import { createTelegramChannel } from "../_shared/telegram-channel.ts";
+import { INTERNAL_EVENT_ID_PREFIX } from "./filesystem-namespace.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 
-const telegramChannel = createOptionalTelegramChannel();
-const githubChannel = createOptionalGitHubChannel();
-const slackChannel = createOptionalSlackChannel();
-const discordChannel = createOptionalDiscordChannel();
+const DIRECT_API_EVENT_ID_PREFIX = "api:";
+const DIRECT_API_CONVERSATION_PREFIX = "api:";
+const RESERVED_EVENT_ID_PREFIXES = [
+  INTERNAL_EVENT_ID_PREFIX,
+  DIRECT_API_EVENT_ID_PREFIX,
+  "gh:",
+  "slack:",
+  "slack-command:",
+  "discord:",
+  "tg-",
+] as const;
+const RESERVED_CONVERSATION_PREFIXES = [
+  INTERNAL_EVENT_ID_PREFIX,
+  DIRECT_API_CONVERSATION_PREFIX,
+  "gh:",
+  "slack:",
+  "tg:",
+  "discord:",
+] as const;
+const CLOSED_ALLOW_LIST = "closed";
 
-const webhookChannels = [
-  telegramChannel,
-  githubChannel,
-  slackChannel,
-  discordChannel,
-].filter((channel): channel is ChannelAdapter => channel !== null);
+type DirectIngressEvent =
+  | UserModelMessage
+  | (SystemModelMessage & { persist: false });
 
 export interface DirectInboundEvent {
   eventId: string;
   conversationKey: string;
-  events: ConversationIngressEvent[];
+  events: DirectIngressEvent[];
 }
 
-export type HandlerEvent = DirectInboundEvent | LambdaFunctionURLEvent;
+export type HandlerEvent = LambdaFunctionURLEvent;
 
 export interface ChannelInboundEvent {
   eventId: string;
@@ -63,24 +81,42 @@ interface IntegrationHandlers {
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
 }
 
+export interface ChannelRegistry {
+  telegramChannel: ChannelAdapter | null;
+  githubChannel: ChannelAdapter | null;
+  slackChannel: ChannelAdapter | null;
+  discordChannel: ChannelAdapter | null;
+  webhookChannels: ChannelAdapter[];
+}
+
+interface IntegrationRoutingOptions {
+  channelRegistry?: ChannelRegistry;
+}
+
 export async function routeIncomingEvent(
   event: HandlerEvent,
   handlers: IntegrationHandlers,
 ): Promise<LambdaResponse> {
-  if (!isLambdaUrlEvent(event)) {
-    return handlers.handleDirectRequest(event);
-  }
+  return createIncomingEventRouter()(event, handlers);
+}
 
-  return handleLambdaUrlEvent(event, handlers);
+export function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
+  const channelRegistry = options.channelRegistry ?? createChannelRegistry();
+
+  return async (
+    event: HandlerEvent,
+    handlers: IntegrationHandlers,
+  ): Promise<LambdaResponse> => handleLambdaUrlEvent(event, handlers, channelRegistry);
 }
 
 async function handleLambdaUrlEvent(
   event: LambdaFunctionURLEvent,
   handlers: IntegrationHandlers,
+  channelRegistry: ChannelRegistry,
 ): Promise<LambdaResponse> {
   const method = event.requestContext.http.method;
 
-  if (method === "GET" || event.rawPath === "/health") {
+  if (method === "GET") {
     return {
       statusCode: 200,
       headers: { "Content-Type": "text/plain; charset=utf-8" },
@@ -103,17 +139,41 @@ async function handleLambdaUrlEvent(
     body: decodeBody(event.body, event.isBase64Encoded),
   } satisfies ChannelRequest;
 
-  const matchedChannel = webhookChannels.find((channel) => channel.canHandle(request));
+  const matchedChannel = channelRegistry.webhookChannels.find((channel) => channel.canHandle(request));
   if (matchedChannel) {
     return handleChannelWebhook(matchedChannel, request, handlers);
   }
 
-  const unavailableResponse = detectUnconfiguredChannel(request.headers);
+  const unavailableResponse = detectUnconfiguredChannel(request.headers, channelRegistry);
   if (unavailableResponse) {
     return unavailableResponse;
   }
 
-  return handlers.handleDirectRequest(parseDirectPayload(request.body));
+  if (optionalEnv("ENABLE_DIRECT_API") !== "true" || !optionalEnv("DIRECT_API_SECRET")) {
+    return {
+      statusCode: 503,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      body: "Direct API is not configured",
+    };
+  }
+
+  if (!isAuthorizedDirectApiRequest(request.headers, optionalEnv("DIRECT_API_SECRET") ?? "")) {
+    return {
+      statusCode: 401,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      body: "Unauthorized",
+    };
+  }
+
+  try {
+    return handlers.handleDirectRequest(parseDirectPayload(request.body));
+  } catch (err) {
+    return {
+      statusCode: 400,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      body: err instanceof Error ? err.message : "Invalid request",
+    };
+  }
 }
 
 async function handleChannelWebhook(
@@ -239,24 +299,23 @@ function decodeBody(body: string | undefined, isBase64Encoded?: boolean): string
   return isBase64Encoded ? Buffer.from(raw, "base64").toString("utf-8") : raw;
 }
 
-function isLambdaUrlEvent(event: HandlerEvent): event is LambdaFunctionURLEvent {
-  return typeof event === "object" && event !== null && "version" in event;
-}
-
-function detectUnconfiguredChannel(headers: Record<string, string>): LambdaResponse | null {
-  if ("x-telegram-bot-api-secret-token" in headers && !telegramChannel) {
+function detectUnconfiguredChannel(
+  headers: Record<string, string>,
+  channelRegistry: ChannelRegistry,
+): LambdaResponse | null {
+  if ("x-telegram-bot-api-secret-token" in headers && !channelRegistry.telegramChannel) {
     return integrationNotConfigured("Telegram");
   }
 
-  if ("x-github-event" in headers && !githubChannel) {
+  if ("x-github-event" in headers && !channelRegistry.githubChannel) {
     return integrationNotConfigured("GitHub");
   }
 
-  if ("x-slack-signature" in headers && !slackChannel) {
+  if ("x-slack-signature" in headers && !channelRegistry.slackChannel) {
     return integrationNotConfigured("Slack");
   }
 
-  if ("x-signature-ed25519" in headers && !discordChannel) {
+  if ("x-signature-ed25519" in headers && !channelRegistry.discordChannel) {
     return integrationNotConfigured("Discord");
   }
 
@@ -269,6 +328,51 @@ function integrationNotConfigured(name: string): LambdaResponse {
     headers: { "Content-Type": "text/plain; charset=utf-8" },
     body: `${name} integration is not configured`,
   };
+}
+
+function createChannelRegistry(): ChannelRegistry {
+  const telegramChannel = createOptionalTelegramChannel();
+  const githubChannel = createOptionalGitHubChannel();
+  const slackChannel = createOptionalSlackChannel();
+  const discordChannel = createOptionalDiscordChannel();
+
+  return {
+    telegramChannel,
+    githubChannel,
+    slackChannel,
+    discordChannel,
+    webhookChannels: [
+      telegramChannel,
+      githubChannel,
+      slackChannel,
+      discordChannel,
+    ].filter((channel): channel is ChannelAdapter => channel !== null),
+  };
+}
+
+function isAuthorizedDirectApiRequest(headers: Record<string, string>, secret: string): boolean {
+  const token = extractBearerToken(headers.authorization);
+  if (!token) {
+    return false;
+  }
+
+  const actual = Buffer.from(token);
+  const expected = Buffer.from(secret);
+
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+function extractBearerToken(authorization: string | undefined): string | null {
+  if (!authorization) {
+    return null;
+  }
+
+  const [scheme, token, ...rest] = authorization.trim().split(/\s+/);
+  if (rest.length > 0 || !scheme || !token || scheme.toLowerCase() !== "bearer") {
+    return null;
+  }
+
+  return token;
 }
 
 function parseDirectPayload(bodyText: string): DirectInboundEvent {
@@ -290,19 +394,29 @@ function parseDirectPayload(bodyText: string): DirectInboundEvent {
   }
 
   const record = parsed as Record<string, unknown>;
+  const rawEventId = normalizeDirectIdentifier("eventId", record.eventId as string);
+  if (hasReservedEventIdPrefix(rawEventId)) {
+    throw new Error("eventId uses a reserved internal prefix");
+  }
+
+  const rawConversationKey = normalizeDirectIdentifier("conversationKey", record.conversationKey as string);
+  if (hasReservedConversationPrefix(rawConversationKey)) {
+    throw new Error("conversationKey uses a reserved channel or internal prefix");
+  }
+
   const events = parseDirectIngressEvents(record);
   if (events.length === 0) {
     throw new Error("Request body must include a non-empty events array");
   }
 
   return {
-    eventId: record.eventId as string,
-    conversationKey: record.conversationKey as string,
+    eventId: `${DIRECT_API_EVENT_ID_PREFIX}${rawEventId}`,
+    conversationKey: `${DIRECT_API_CONVERSATION_PREFIX}${rawConversationKey}`,
     events,
   };
 }
 
-function parseDirectIngressEvents(record: Record<string, unknown>): ConversationIngressEvent[] {
+function parseDirectIngressEvents(record: Record<string, unknown>): DirectIngressEvent[] {
   const explicitEvents = record.events;
 
   if (explicitEvents == null) {
@@ -316,7 +430,7 @@ function parseDirectIngressEvents(record: Record<string, unknown>): Conversation
   return explicitEvents.map(parseDirectIngressEvent);
 }
 
-function parseDirectIngressEvent(rawEvent: unknown): ConversationIngressEvent {
+function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
   if (!rawEvent || typeof rawEvent !== "object") {
     throw new Error("Each direct event must be an object");
   }
@@ -331,17 +445,32 @@ function parseDirectIngressEvent(rawEvent: unknown): ConversationIngressEvent {
     throw new Error("Only system-role events may set persist");
   }
 
-  const parsed = modelMessageSchema.safeParse(candidate);
-  if (!parsed.success) {
-    throw new Error(`Invalid direct event: ${parsed.error.issues[0]?.message ?? "must match ModelMessage"}`);
+  if (candidate.role === "user") {
+    const parsedUser = userModelMessageSchema.safeParse(candidate);
+    if (!parsedUser.success) {
+      throw new Error(`Invalid direct event: ${parsedUser.error.issues[0]?.message ?? "must match UserModelMessage"}`);
+    }
+
+    return parsedUser.data;
   }
 
-  return parsed.data.role === "system"
-    ? {
-      ...parsed.data,
-      ...(persist === undefined ? {} : { persist }),
-    }
-    : parsed.data;
+  if (candidate.role !== "system") {
+    throw new Error("Direct API accepts only user and ephemeral system events");
+  }
+
+  if (persist === true) {
+    throw new Error("Direct API system events cannot be persisted");
+  }
+
+  const parsedSystem = systemModelMessageSchema.safeParse(candidate);
+  if (!parsedSystem.success) {
+    throw new Error(`Invalid direct event: ${parsedSystem.error.issues[0]?.message ?? "must match SystemModelMessage"}`);
+  }
+
+  return {
+    ...parsedSystem.data,
+    persist: false,
+  };
 }
 
 function parseAllowedChatIds(raw: string): Set<number> {
@@ -358,6 +487,10 @@ function parseAllowedChatIds(raw: string): Set<number> {
 }
 
 function parseStringAllowList(raw: string | undefined): Set<string> | null {
+  if (raw?.trim().toLowerCase() === CLOSED_ALLOW_LIST) {
+    return new Set();
+  }
+
   if (isOpenAllowList(raw)) {
     return null;
   }
@@ -368,6 +501,23 @@ function parseStringAllowList(raw: string | undefined): Set<string> | null {
     .filter((value) => value.length > 0) ?? [];
 
   return values.length > 0 ? new Set(values) : null;
+}
+
+function hasReservedConversationPrefix(value: string): boolean {
+  return RESERVED_CONVERSATION_PREFIXES.some((prefix) => value.startsWith(prefix));
+}
+
+function hasReservedEventIdPrefix(value: string): boolean {
+  return RESERVED_EVENT_ID_PREFIXES.some((prefix) => value.startsWith(prefix));
+}
+
+function normalizeDirectIdentifier(name: string, value: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error(`${name} must not be empty`);
+  }
+
+  return normalized;
 }
 
 function createOptionalTelegramChannel(): ChannelAdapter | null {
