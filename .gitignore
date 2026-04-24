@@ -2,5 +2,6 @@ node_modules/
 dist/
 .sst/
 .env
+.DS_Store
 *.log
 functions/_shared/.generated/
