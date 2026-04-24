@@ -230,13 +230,17 @@ function createSlackActions(
 ): ChannelActions {
   return {
     async sendText(text) {
-      const formattedText = formatSlackMessage(text);
+      const formattedMessage = formatSlackMessage(text);
 
       if (source.responseUrl) {
         const response = await fetch(source.responseUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: formattedText, response_type: "in_channel" }),
+          body: JSON.stringify({
+            text: formattedMessage.text,
+            response_type: "in_channel",
+            ...(formattedMessage.attachments ? { attachments: formattedMessage.attachments } : {}),
+          }),
         });
         if (!response.ok) {
           throw new Error(`Slack response_url failed (${response.status})`);
@@ -246,7 +250,8 @@ function createSlackActions(
 
       await slackApi(botToken, "chat.postMessage", {
         channel: source.channelId,
-        text: formattedText,
+        text: formattedMessage.text,
+        ...(formattedMessage.attachments ? { attachments: formattedMessage.attachments } : {}),
         ...(source.threadTs ? { thread_ts: source.threadTs } : {}),
       });
     },
