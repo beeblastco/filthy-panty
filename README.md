@@ -1,30 +1,167 @@
 # filthy-panty
 
-Experimental serverless AI agent orchestrator using AWS Lambda as the core runtime layer. Inspired by Anthropic and Pnzu server architectures but stripped down for small team deployment.
+Experimental serverless AI chatbot and agent harness on AWS Lambda. The deployed path is one public Lambda Function URL that handles direct API traffic and optional Telegram, GitHub, Slack, and Discord webhooks.
 
-It has some quirks, but the goal is cost-optimized (maybe free when usage under free-tier limits) for low usage rather than burning through VPS bills.
+The design goal is simple infrastructure for low-volume usage: Bun on Lambda, SST for infra, DynamoDB for conversation state and dedup, S3 for filesystem-backed tool state, and Vercel AI SDK for the agent loop.
 
 ## Architecture
 
-One public Lambda Function URL, deployed with SST:
+One public Lambda is deployed:
 
-- **harness-processing** — Streaming Function URL (`RESPONSE_STREAM` invoke mode). Accepts direct API calls by default and supported channel webhooks when enabled, verifies and normalizes inbound requests in `functions/harness-processing/integrations.ts`, deduplicates events, loads event-backed conversation context from DynamoDB, runs the Vercel AI SDK `streamText` loop, and emits SSE only for direct API callers.
+- `harness-processing` runs in Lambda response streaming mode and is the only public entrypoint.
 
 ```mermaid
 flowchart TD
-  A["Direct API caller"] --> B["harness-processing Function URL"]
-  C["Optional Telegram / GitHub / Slack / Discord webhook"] --> B
-  B --> D["Normalize + verify in integrations.ts"]
-  D --> E["Dedup (DynamoDB)"]
-  E --> F["Load event-backed context (DynamoDB + S3)"]
-  F --> G["streamText() with tools + thinking"]
-  G --> H["SSE for direct callers"]
-  G --> I["Channel reply actions for webhook callers"]
+  A["Direct API caller"] --> B["Lambda Function URL"]
+  C["Telegram / GitHub / Slack / Discord webhook"] --> B
+
+  subgraph L["AWS Lambda function: harness-processing"]
+    D["bootstrap entrypoint<br/>configured as handler: bootstrap"]
+    E["startStreamingRuntime()<br/>custom Bun runtime bridge"]
+    F["handler.ts export handler()<br/>application-level Lambda handler"]
+    G["integrations.ts routeIncomingEvent()"]
+    H["Direct API auth + payload validation"]
+    I["Webhook auth + adapter parse"]
+    J["session.ts"]
+    N["harness.ts"]
+    P["Inline tools registry"]
+  end
+
+  B --> D
+  D --> E
+  E --> F
+  F --> G
+  G --> H
+  G --> I
+
+  H --> J
+  J --> N
+  N --> P
+  N --> O["Google Gemini via Vercel AI SDK"]
+  N --> Q["SSE response"]
+
+  I --> ACK["Immediate webhook HTTP ack"]
+  I --> PR["afterResponse -> processChannelMessage()"]
+  PR --> F2["handler.ts handleChannelRequest()"]
+  F2 --> J
+  N --> R["Channel reply actions"]
+
+  J --> K["DynamoDB: processed events"]
+  J --> L2["DynamoDB: conversations"]
+  J --> M["S3: MEMORY.md / tool state"]
 ```
 
-## Request Format
+Request path ownership:
 
-POST to the harness-processing Function URL with:
+- [`functions/harness-processing/bootstrap.ts`](functions/harness-processing/bootstrap.ts): minimal Bun runtime entrypoint
+- [`functions/_shared/runtime.ts`](functions/_shared/runtime.ts): custom Lambda Runtime API bridge with response streaming
+- [`functions/harness-processing/integrations.ts`](functions/harness-processing/integrations.ts): request normalization, channel detection, auth checks, and direct API parsing
+- [`functions/harness-processing/handler.ts`](functions/harness-processing/handler.ts): thin orchestration for SSE, commands, leases, and reply flow
+- [`functions/harness-processing/session.ts`](functions/harness-processing/session.ts): event deduplication, conversation persistence, prompt context, and memory loading
+- [`functions/harness-processing/harness.ts`](functions/harness-processing/harness.ts): model execution loop and inline tool orchestration
+- [`functions/harness-processing/tools/index.ts`](functions/harness-processing/tools/index.ts): static tool registry so tool files are bundled
+- [`functions/_shared/`](functions/_shared/): shared channel adapters, auth helpers, logging, env, and runtime code
+
+### Handler boundary
+
+- AWS invokes `bootstrap`, not `handler.ts`, because SST config sets `handler: "bootstrap"` in [`sst.config.ts`](sst.config.ts).
+- [`bootstrap.ts`](functions/harness-processing/bootstrap.ts) starts [`startStreamingRuntime()`](functions/_shared/runtime.ts), which then calls the exported [`handler()`](functions/harness-processing/handler.ts).
+
+### Storage and runtime boundaries
+
+- `Conversations` DynamoDB table stores normalized model messages by `conversationKey`.
+- `ProcessedEvents` DynamoDB table stores dedup markers and short-lived conversation lease records.
+- The S3 filesystem bucket stores `MEMORY.md` and filesystem-backed tool state under per-conversation namespaces.
+- Tool execution is inline in `harness-processing`; there is no secondary worker Lambda or queue-based tool runner in the deployed path.
+- The direct API and webhook traffic share the same Lambda, but use separate `conversationKey` prefixes and routing/auth paths.
+
+## Stack
+
+- Runtime: Bun on Lambda `provided.al2023` with ARM64 binaries built by `scripts/build.ts`
+- Infra: SST v4
+- Model SDK: Vercel AI SDK `ai`
+- Default provider setup: `@ai-sdk/google`
+- Persistence: DynamoDB + S3
+- Streaming: SSE for direct API callers only
+
+## Security Controls
+
+Ingress and state isolation are enforced in code instead of by separate edge services:
+
+- [`functions/harness-processing/integrations.ts`](functions/harness-processing/integrations.ts) disables the direct API unless `ENABLE_DIRECT_API=true`, requires `Authorization: Bearer <DirectApiSecret>`, reserves internal/channel key prefixes, and only accepts `user` plus non-persisted `system` direct events.
+- [`functions/_shared/telegram-channel.ts`](functions/_shared/telegram-channel.ts) and [`functions/_shared/telegram.ts`](functions/_shared/telegram.ts) verify the Telegram webhook secret and enforce `ALLOWED_CHAT_IDS`.
+- [`functions/_shared/github-channel.ts`](functions/_shared/github-channel.ts) verifies `x-hub-signature-256` and optionally restricts ingress with `GITHUB_ALLOWED_REPOS`.
+- [`functions/_shared/slack-channel.ts`](functions/_shared/slack-channel.ts) verifies the Slack HMAC signature, rejects requests outside a 5-minute replay window, and optionally restricts ingress with `SLACK_ALLOWED_CHANNEL_IDS`.
+- [`functions/_shared/discord-channel.ts`](functions/_shared/discord-channel.ts) and [`functions/_shared/discord-signature.ts`](functions/_shared/discord-signature.ts) verify Discord Ed25519 signatures, reject stale signed requests outside a 5-minute replay window, deny Discord DMs, and optionally restrict guild ingress with `DISCORD_ALLOWED_GUILD_IDS`.
+- [`functions/harness-processing/session.ts`](functions/harness-processing/session.ts) uses DynamoDB conditional writes for idempotent event claims and short-lived conversation leases so concurrent webhook deliveries do not execute the same turn twice.
+- [`functions/harness-processing/filesystem-namespace.ts`](functions/harness-processing/filesystem-namespace.ts) derives collision-resistant hashed filesystem namespaces and lease keys from the full conversation key.
+
+## Examples
+
+The bot can run both as a command-driven chat assistant and as a channel-native research bot.
+
+## Quick Start
+
+### 1. Install dependencies
+
+```bash
+bun install
+```
+
+### 2. Copy local config
+
+```bash
+cp .env.example .env
+```
+
+### 3. Keep `.env` for local SST config only. Use at least these values
+
+```bash
+AWS_PROFILE=default
+SST_STAGE=dev
+```
+
+Do not put deployed secrets in `.env`.
+
+### 4. Set required SST secrets
+
+```bash
+bunx sst secret set GoogleApiKey <value>
+```
+
+Optional:
+
+```bash
+bunx sst secret set TavilyApiKey <value>
+```
+
+If you want the public Function URL to accept direct API requests, also enable `ENABLE_DIRECT_API=true` and set:
+
+```bash
+bunx sst secret set DirectApiSecret <value>
+```
+
+Or bulk load:
+
+```bash
+cp secrets.env.example secrets.env
+bunx sst secret load ./secrets.env
+```
+
+### 5. Run locally or deploy
+
+```bash
+bun run dev
+bun run check
+bun run build
+bun run deploy
+```
+
+## Direct API Request
+
+The direct API is disabled by default. To use it, set `ENABLE_DIRECT_API=true`, configure `DirectApiSecret`, and send `Authorization: Bearer <DirectApiSecret>` with each request.
+
+POST to the deployed `harness-processing` Function URL with Vercel AI SDK-style messages:
 
 ```json
 {
@@ -41,9 +178,11 @@ POST to the harness-processing Function URL with:
 }
 ```
 
-`events` is a list of Vercel AI SDK model messages. `eventId` prevents duplicate processing (e.g., webhook retries). `conversationKey` identifies which DynamoDB conversation to load/persist.
+- `eventId` is used for deduplication.
+- `conversationKey` selects the persisted direct conversation. The service stores direct API conversations under an internal `api:` namespace so they do not collide with webhook-backed threads.
+- `events` may contain `user` messages and one-off `system` messages only.
 
-Direct API callers can send system-role injections too:
+Direct API callers can also inject `system` events:
 
 ```json
 {
@@ -65,200 +204,67 @@ Direct API callers can send system-role injections too:
 }
 ```
 
-System-role events are supported only on the direct API path. Set `persist` to `false` for per-request injected context or `true` to store it in the DynamoDB event log for future turns.
-
-## Stack
-
-- **Runtime:** Bun on Lambda `provided.al2023` (ARM64)
-- **AI:** Vercel AI SDK v6 — any provider supported by the SDK works. Demo uses Gemma 4 31B IT via `@ai-sdk/google` (free tier)
-- **Infra:** SST v4 for IaC, AWS serverless stack DynamoDB, Lambda, S3, all covered through free-tier.
-- **Streaming:** Lambda Function URL response streaming with SSE
-
-## Development
-
-```bash
-bun install
-bun run dev        # SST dev mode
-bun run build      # Compile all functions to ARM64 binaries
-bun run deploy     # Build + deploy
-bun run check      # Type-check
-bun run discord:sync  # Sync Discord slash commands
-```
+`system` events are supported only on the direct API path and must use `persist: false`. The direct API rejects caller-supplied `assistant`, `tool`, and persisted `system` events.
 
 ## Configuration
 
-Most runtime environment variables in this project are injected by SST in `sst.config.ts`, not read from a root `.env` file at runtime.
+`sst.config.ts` is the source of truth for infra names, tags, regions, secrets, and integration flags.
 
-### Injected By SST
-
-The `harness-processing` Lambda gets these values from the `environment` block in `sst.config.ts`:
-
-- `GOOGLE_API_KEY`
-- `GOOGLE_MODEL_ID`
-- `CONVERSATIONS_TABLE_NAME`
-- `PROCESSED_EVENTS_TABLE_NAME`
-- `SLIDING_CONTEXT_WINDOW`
-- `MAX_AGENT_ITERATIONS`
-- `TELEGRAM_BOT_TOKEN` when `ENABLE_TELEGRAM_INTEGRATION=true`
-- `TELEGRAM_WEBHOOK_SECRET` when `ENABLE_TELEGRAM_INTEGRATION=true`
-- `ALLOWED_CHAT_IDS` when `ENABLE_TELEGRAM_INTEGRATION=true`
-- `TELEGRAM_REACTION_EMOJI` when `ENABLE_TELEGRAM_INTEGRATION=true`
-- `GITHUB_WEBHOOK_SECRET` when `ENABLE_GITHUB_INTEGRATION=true`
-- `GITHUB_APP_ID` when `ENABLE_GITHUB_INTEGRATION=true`
-- `GITHUB_PRIVATE_KEY` when `ENABLE_GITHUB_INTEGRATION=true`
-- `GITHUB_ALLOWED_REPOS` when `ENABLE_GITHUB_INTEGRATION=true`
-- `SLACK_BOT_TOKEN` when `ENABLE_SLACK_INTEGRATION=true`
-- `SLACK_SIGNING_SECRET` when `ENABLE_SLACK_INTEGRATION=true`
-- `SLACK_ALLOWED_CHANNEL_IDS` when `ENABLE_SLACK_INTEGRATION=true`
-- `DISCORD_BOT_TOKEN` when `ENABLE_DISCORD_INTEGRATION=true`
-- `DISCORD_PUBLIC_KEY` when `ENABLE_DISCORD_INTEGRATION=true`
-- `DISCORD_ALLOWED_GUILD_IDS` when `ENABLE_DISCORD_INTEGRATION=true`
-- `TAVILY_API_KEY`
-- `FILESYSTEM_BUCKET_NAME`
-
-In addition, `AWS_REGION` is provided by the Lambda runtime in AWS. The repo currently deploys to `eu-central-1` in `sst.config.ts`.
-
-The system prompt is bundled from `SYSTEM.md` at build time and is not injected as a Lambda environment variable.
-
-### What Goes In `.env`
-
-For normal SST usage, keep `.env` limited to local CLI settings such as:
+Use `.env` for local SST inputs and non-secret toggles:
 
 - `AWS_PROFILE`
 - `SST_STAGE`
+- `ENABLE_DIRECT_API`
 - `ENABLE_TELEGRAM_INTEGRATION`
 - `ENABLE_GITHUB_INTEGRATION`
 - `ENABLE_SLACK_INTEGRATION`
 - `ENABLE_DISCORD_INTEGRATION`
-- `GITHUB_ALLOWED_REPOS`
-- `SLACK_ALLOWED_CHANNEL_IDS`
-- `DISCORD_ALLOWED_GUILD_IDS`
-- `DISCORD_APPLICATION_ID`
-- `DISCORD_SYNC_GUILD_ID` for immediate guild-scoped Discord command updates in development
+- All other variables can be setup, see [`.env.example`](.env.example).
 
-Use `.env.example` as the template for that local file.
+Use SST secrets for runtime secrets and tokens. See [`secrets.env.example`](secrets.env.example).
 
-Do not put deployed API keys, webhook secrets, or bot tokens in `.env`.
+Allow-list semantics:
 
-### Set SST Secrets
+- In `dev`, you may omit the variable or set it to `open` for intentionally unrestricted local testing.
+- Outside `dev`, configure an explicit comma-separated list whenever the integration is enabled.
+- Set the value to `closed` to deny all resources until explicit IDs or names are configured.
 
-This repo defines these SST secrets in `sst.config.ts`:
+Important repo conventions:
 
-- `GoogleApiKey`
-- `TavilyApiKey`
-- `TelegramBotToken` when `ENABLE_TELEGRAM_INTEGRATION=true`
-- `TelegramWebhookSecret` when `ENABLE_TELEGRAM_INTEGRATION=true`
-- `AllowedChatIds` when `ENABLE_TELEGRAM_INTEGRATION=true`
-- `GitHubWebhookSecret`
-- `GitHubAppId`
-- `GitHubPrivateKey`
-- `SlackBotToken`
-- `SlackSigningSecret`
-- `DiscordBotToken`
-- `DiscordPublicKey`
+- Extra channel integrations are opt-in.
+- GitHub, Slack, and Discord allow-lists must be explicitly configured outside `dev` when those integrations are enabled.
+- The system prompt is bundled at build time by `scripts/system-prompt.ts`.
 
-Set them one by one with the SST CLI:
+If Discord is enabled, sync slash commands with:
 
 ```bash
-bunx sst secret set GoogleApiKey <value>
-bunx sst secret set TavilyApiKey <value>
-bunx sst secret set GitHubWebhookSecret <value>
-bunx sst secret set GitHubAppId <value>
-bunx sst secret set GitHubPrivateKey < private-key.pem
-bunx sst secret set SlackBotToken <value>
-bunx sst secret set SlackSigningSecret <value>
-bunx sst secret set DiscordBotToken <value>
-bunx sst secret set DiscordPublicKey <value>
+bun run discord:sync
 ```
 
-When Telegram is enabled, also set:
+## Extension Points
 
-```bash
-bunx sst secret set TelegramBotToken <value>
-bunx sst secret set TelegramWebhookSecret <value>
-bunx sst secret set AllowedChatIds <comma-separated-chat-ids>
-```
+Add a tool:
 
-SST secrets are stage-specific. If you are not running `sst dev`, run `sst deploy` after setting them so the deployed app picks up the new values.
+- Create `functions/harness-processing/tools/<name>.tool.ts`
+- Export a default tool factory
+- Put the tool logic inside `execute`
+- Register the factory in [`functions/harness-processing/tools/index.ts`](functions/harness-processing/tools/index.ts)
 
-### Integration Flags And Allow Lists
+Add a channel:
 
-The extra integrations are opt-in in `sst.config.ts`. Set these in your local `.env` before `sst dev` or `sst deploy`:
+- Implement `ChannelAdapter` in `functions/_shared/<channel>-channel.ts`
+- Wire normalization and routing into [`functions/harness-processing/integrations.ts`](functions/harness-processing/integrations.ts)
+- Keep reply formatting and send logic inside that channel module
 
-- `ENABLE_GITHUB_INTEGRATION=true`
-- `ENABLE_SLACK_INTEGRATION=true`
-- `ENABLE_DISCORD_INTEGRATION=true`
-- `ENABLE_TELEGRAM_INTEGRATION=true`
+Add a command:
 
-Optional allow lists are read from the SST config environment and default to `open`:
+- Add a new entry to the `commands` array in [`functions/_shared/commands.ts`](functions/_shared/commands.ts)
+- Use the channel-agnostic `ChannelActions` interface from shared code
 
-- `GITHUB_ALLOWED_REPOS`
-- `SLACK_ALLOWED_CHANNEL_IDS`
-- `DISCORD_ALLOWED_GUILD_IDS`
+## Deploy and CI
 
-### Discord Slash Commands
-
-Discord slash commands stay on the existing Interactions Endpoint URL path handled by `harness-processing`.
-
-For setup:
-
-1. Enable Discord integration in `.env` with `ENABLE_DISCORD_INTEGRATION=true`.
-2. Add `DISCORD_APPLICATION_ID` to `.env`.
-3. Optional for development: set `DISCORD_SYNC_GUILD_ID` to sync commands to a specific guild for immediate updates.
-4. Deploy the app with `bun run deploy`.
-5. In the Discord Developer Portal, point the Interactions Endpoint URL at the deployed `harnessProcessingUrl`.
-6. Run `bun run discord:sync` to register the slash commands.
-
-The sync script registers `/help`, `/new`, and `/ask`. Commands are registered for guild and bot-DM contexts with guild install as the default installation context. When `DISCORD_SYNC_GUILD_ID` is set, the sync targets that guild; otherwise it overwrites global commands. The script reads `DISCORD_APPLICATION_ID` and `DISCORD_SYNC_GUILD_ID` from local `.env`, and uses `DISCORD_BOT_TOKEN` from the current shell or the local SST secret store.
-
-### Bulk Load Secrets
-
-If you prefer a dotenv-style file for secrets, copy `secrets.env.example` to `secrets.env`, fill in your values, and load them with:
-
-```bash
-bunx sst secret load ./secrets.env
-```
-
-The SST CLI supports loading a dotenv-formatted file this way.
-
-### GitHub Actions Deploy Config
-
-The deploy workflow reads GitHub repository variables for non-secret config:
-
-- `AWS_REGION`
-- `AWS_ROLE_ARN`
-- `SST_STAGE`
-- `ENABLE_TELEGRAM_INTEGRATION`
-- `ENABLE_GITHUB_INTEGRATION`
-- `ENABLE_SLACK_INTEGRATION`
-- `ENABLE_DISCORD_INTEGRATION`
-- `GITHUB_ALLOWED_REPOS`
-- `SLACK_ALLOWED_CHANNEL_IDS`
-- `DISCORD_ALLOWED_GUILD_IDS`
-- `DISCORD_APPLICATION_ID` when `ENABLE_DISCORD_INTEGRATION=true`
-- `DISCORD_SYNC_GUILD_ID` optional for immediate guild-scoped Discord command updates
-
-It reads GitHub repository secrets for SST secret values, using the `SST_SECRET_` prefix expected by SST in CI:
-
-- `SST_SECRET_GoogleApiKey`
-- `SST_SECRET_TavilyApiKey`
-- `SST_SECRET_TelegramBotToken` only when `ENABLE_TELEGRAM_INTEGRATION=true`
-- `SST_SECRET_TelegramWebhookSecret` only when `ENABLE_TELEGRAM_INTEGRATION=true`
-- `SST_SECRET_AllowedChatIds` only when `ENABLE_TELEGRAM_INTEGRATION=true`
-- `SST_SECRET_GitHubWebhookSecret` only when `ENABLE_GITHUB_INTEGRATION=true`
-- `SST_SECRET_GitHubAppId` only when `ENABLE_GITHUB_INTEGRATION=true`
-- `SST_SECRET_GitHubPrivateKey` only when `ENABLE_GITHUB_INTEGRATION=true`
-- `SST_SECRET_SlackBotToken` only when `ENABLE_SLACK_INTEGRATION=true`
-- `SST_SECRET_SlackSigningSecret` only when `ENABLE_SLACK_INTEGRATION=true`
-- `SST_SECRET_DiscordBotToken` only when `ENABLE_DISCORD_INTEGRATION=true`
-- `SST_SECRET_DiscordPublicKey` only when `ENABLE_DISCORD_INTEGRATION=true`
-
-If `ENABLE_DISCORD_INTEGRATION=true`, the deploy workflow also runs `bun run discord:sync` after `sst deploy`. Set `DISCORD_APPLICATION_ID` as a repository variable, and optionally set `DISCORD_SYNC_GUILD_ID` when you want the workflow to overwrite guild-scoped commands instead of global commands.
-
-If `ENABLE_TELEGRAM_INTEGRATION=false`, the deploy workflow skips Telegram webhook sync and no Telegram GitHub secrets are required.
-
-## Adding Things
-
-- **New tool:** Create `functions/harness-processing/tools/<name>.tool.ts`, export a default tool factory that returns one or more AI SDK tools with their logic in `execute`, then import that factory in `functions/harness-processing/tools/index.ts`.
-- **New channel:** Implement `ChannelAdapter` in `functions/_shared/<channel>-channel.ts` and wire it into `functions/harness-processing/integrations.ts`.
-- **New command:** Add entry to `commands` array in `functions/_shared/commands.ts`.
+- `bun run deploy` runs `bun run build` first, then `sst deploy`
+- GitHub Actions runs CI on pull requests and non-`main` pushes, and deploys on pushes to `main`
+- `bun run test` runs the direct API unit tests locally
+- `scripts/manual/direct-api-*.ts` are opt-in live probes for a deployed Function URL; they are not part of CI
+- Use `gh run list` and `gh run view` to inspect pipeline status

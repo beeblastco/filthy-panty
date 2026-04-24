@@ -1,6 +1,6 @@
 /**
  * Task-list tool backed by the virtual filesystem.
- * Keep task titles and task status management here, while hiding file storage details from the model.
+ * Keep task titles and task status management here.
  */
 
 import {
@@ -12,11 +12,10 @@ import {
 } from "@aws-sdk/client-s3";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { requireEnv } from "../../_shared/env.ts";
-import { normalizeFilesystemNamespace } from "../utils.ts";
+import { normalizeFilesystemNamespace } from "../filesystem-namespace.ts";
 import type { ToolContext } from "./index.ts";
 
 const s3 = new S3Client({ region: process.env.AWS_REGION });
-
 const FILESYSTEM_BUCKET_NAME = requireEnv("FILESYSTEM_BUCKET_NAME");
 
 const taskInputSchema = {

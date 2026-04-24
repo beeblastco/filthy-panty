@@ -1,5 +1,6 @@
-const FUNCTION_URL = "https://redactedharnessurlid.lambda-url.eu-central-1.on.aws/";
-import { fetchWithTiming, printTimingResults } from "./utils";
+import { fetchWithTiming, printTimingResults, requireManualEnv } from "./direct-api-utils.ts";
+
+const FUNCTION_URL = requireManualEnv("FUNCTION_URL");
 
 const result = await fetchWithTiming(FUNCTION_URL, {
   eventId: `test-${Date.now()}`,
@@ -7,12 +8,12 @@ const result = await fetchWithTiming(FUNCTION_URL, {
   events: [
     {
       role: "system",
-      content: "Reply with plain text only and no commentary.",
+      content: "Be concise after using tools.",
       persist: false,
     },
     {
       role: "user",
-      content: [{ type: "text", text: "Count from 1 to 10 slowly, one number per line." }],
+      content: [{ type: "text", text: "Search the web for the latest weather in Hanoi." }],
     },
   ],
 });
