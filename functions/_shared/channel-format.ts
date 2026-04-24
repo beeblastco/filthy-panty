@@ -1,19 +1,85 @@
 /**
  * Channel-specific text formatting helpers.
- * Keep generic markdown-ish assistant output readable on channels with different rendering rules.
+ * Normalize generic markdown-ish assistant output for Slack, Discord, and Telegram.
  */
 
-export function formatSlackMessage(text: string): string {
-  return mapTextSegments(text, (segment) =>
-    transformSlackLines(replaceMarkdownTables(segment)),
-  ).trim();
+export interface MarkdownTable {
+  rows: string[][];
+}
+
+interface SlackRawTextCell {
+  type: "raw_text";
+  text: string;
+}
+
+interface SlackTableBlock {
+  type: "table";
+  rows: SlackRawTextCell[][];
+  column_settings?: Array<{ align?: "left" | "center" | "right"; is_wrapped?: boolean } | null>;
+}
+
+interface SlackAttachment {
+  blocks: SlackTableBlock[];
+}
+
+export interface SlackFormattedMessage {
+  text: string;
+  attachments?: SlackAttachment[];
+}
+
+export function formatSlackMessage(text: string): SlackFormattedMessage {
+  const extracted = extractMarkdownTables(text);
+
+  if (extracted.tables.length === 1) {
+    return {
+      text: transformSlackLines(extracted.text).trim() || " ",
+      attachments: [{ blocks: [toSlackTableBlock(extracted.tables[0]!)] }],
+    };
+  }
+
+  return {
+    text: transformNonCodeSegments(text, (segment) =>
+      transformSlackLines(replaceMarkdownTables(segment, (table) => renderMonospaceTable(table))),
+    ).trim(),
+  };
 }
 
 export function formatDiscordMessage(text: string): string {
-  return mapTextSegments(text, replaceMarkdownTables).trim();
+  return transformNonCodeSegments(
+    text,
+    (segment) => replaceMarkdownTables(segment, (table) => renderMonospaceTable(table)),
+  ).trim();
 }
 
-function mapTextSegments(
+export function formatTelegramHtml(text: string): string {
+  const result: string[] = [];
+  let lastIndex = 0;
+  const pattern = /```(\w*)\n?([\s\S]*?)```/g;
+
+  for (const match of text.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    if (index > lastIndex) {
+      result.push(formatTelegramSegment(text.slice(lastIndex, index)));
+    }
+
+    const language = (match[1] ?? "").trim();
+    const code = escapeHtml((match[2] ?? "").trimEnd());
+    result.push(
+      language
+        ? `<pre><code class="language-${language}">${code}</code></pre>`
+        : `<pre>${code}</pre>`,
+    );
+    lastIndex = index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    result.push(formatTelegramSegment(text.slice(lastIndex)));
+  }
+
+  return result.join("");
+}
+
+function transformNonCodeSegments(
   text: string,
   formatter: (segment: string) => string,
 ): string {
@@ -37,7 +103,26 @@ function mapTextSegments(
   return parts.join("");
 }
 
-function replaceMarkdownTables(text: string): string {
+function extractMarkdownTables(text: string): { text: string; tables: MarkdownTable[] } {
+  const tables: MarkdownTable[] = [];
+  const stripped = transformNonCodeSegments(
+    text,
+    (segment) => replaceMarkdownTables(segment, (table) => {
+      tables.push(table);
+      return "";
+    }),
+  );
+
+  return {
+    text: collapseBlankLines(stripped),
+    tables,
+  };
+}
+
+function replaceMarkdownTables(
+  text: string,
+  renderTable: (table: MarkdownTable) => string,
+): string {
   const lines = text.split("\n");
   const output: string[] = [];
 
@@ -56,7 +141,8 @@ function replaceMarkdownTables(text: string): string {
       }
 
       index -= 1;
-      output.push(renderMarkdownTable(tableLines));
+      const table = parseMarkdownTable(tableLines);
+      output.push(table ? renderTable(table) : tableLines.join("\n"));
       continue;
     }
 
@@ -66,11 +152,112 @@ function replaceMarkdownTables(text: string): string {
   return output.join("\n");
 }
 
+function parseMarkdownTable(lines: string[]): MarkdownTable | null {
+  const rows = lines
+    .filter((line) => !isMarkdownTableSeparator(line))
+    .map((line) => parseMarkdownTableRow(line));
+
+  return rows.length > 0 ? { rows } : null;
+}
+
+function renderMonospaceTable(table: MarkdownTable): string {
+  const plainTable = toPlainTextTable(table);
+  const { widths } = getTableMetrics(plainTable);
+  const renderRow = (row: string[]) =>
+    row
+      .map((cell, columnIndex) => (cell ?? "").padEnd(widths[columnIndex]!))
+      .join(" | ");
+
+  const header = renderRow(plainTable.rows[0]!);
+  const separator = widths.map((width) => "-".repeat(width)).join("-|-");
+  const body = plainTable.rows.slice(1).map((row) => renderRow(row));
+
+  return `\`\`\`text\n${[header, separator, ...body].join("\n")}\n\`\`\``;
+}
+
+function renderBoxTable(table: MarkdownTable): string {
+  const plainTable = toPlainTextTable(table);
+  const { columnCount, widths } = getTableMetrics(plainTable);
+  const rule = (left: string, middle: string, right: string, fill: string) =>
+    left + widths.map((width) => fill.repeat(width + 2)).join(middle) + right;
+
+  const renderRow = (row: string[]) =>
+    "│" +
+    Array.from({ length: columnCount }, (_, columnIndex) => {
+      const cell = columnIndex < row.length ? row[columnIndex]! : "";
+      return ` ${cell.padEnd(widths[columnIndex]!)} `;
+    }).join("│") +
+    "│";
+
+  const output = [rule("┌", "┬", "┐", "─"), renderRow(plainTable.rows[0]!)];
+  if (plainTable.rows.length > 1) {
+    output.push(rule("├", "┼", "┤", "─"));
+    for (const row of plainTable.rows.slice(1)) {
+      output.push(renderRow(row));
+    }
+  }
+  output.push(rule("└", "┴", "┘", "─"));
+  return output.join("\n");
+}
+
+function formatTelegramSegment(text: string): string {
+  const parts: string[] = [];
+  const lines = text.split("\n");
+  const pending: string[] = [];
+
+  const flushPending = () => {
+    if (pending.length === 0) {
+      return;
+    }
+
+    parts.push(inlineToTelegramHtml(pending.join("\n")));
+    pending.length = 0;
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (
+      isMarkdownTableRow(lines[index]) &&
+      index + 1 < lines.length &&
+      isMarkdownTableSeparator(lines[index + 1])
+    ) {
+      const tableLines = [lines[index]!, lines[index + 1]!];
+      index += 2;
+
+      while (index < lines.length && isMarkdownTableRow(lines[index])) {
+        tableLines.push(lines[index]!);
+        index += 1;
+      }
+
+      index -= 1;
+      flushPending();
+      const table = parseMarkdownTable(tableLines);
+      parts.push(table ? `<pre>${escapeHtml(renderBoxTable(table))}</pre>` : escapeHtml(tableLines.join("\n")));
+      continue;
+    }
+
+    pending.push(lines[index]!);
+  }
+
+  flushPending();
+  return parts.join("");
+}
+
+function getTableMetrics(table: MarkdownTable): { columnCount: number; widths: number[] } {
+  const columnCount = Math.max(...table.rows.map((row) => row.length));
+  const widths = Array.from({ length: columnCount }, (_, columnIndex) =>
+    Math.max(...table.rows.map((row) => (row[columnIndex] ?? "").length), 3),
+  );
+
+  return { columnCount, widths };
+}
+
 function transformSlackLines(text: string): string {
-  return text
-    .split("\n")
-    .map((line) => formatSlackLine(line))
-    .join("\n");
+  return collapseBlankLines(
+    text
+      .split("\n")
+      .map((line) => formatSlackLine(line))
+      .join("\n"),
+  );
 }
 
 function formatSlackLine(line: string): string {
@@ -104,30 +291,94 @@ function stripSlackHeadingMarkup(text: string): string {
     .trim();
 }
 
-function renderMarkdownTable(lines: string[]): string {
-  const rows = lines
-    .filter((line) => !isMarkdownTableSeparator(line))
-    .map((line) => parseMarkdownTableRow(line));
+function toSlackTableBlock(table: MarkdownTable): SlackTableBlock {
+  const { columnCount } = getTableMetrics(table);
+  const plainTable = toPlainTextTable(table);
 
-  if (rows.length === 0) {
-    return lines.join("\n");
+  return {
+    type: "table",
+    column_settings: Array.from({ length: columnCount }, (_, index) => (
+      index === 0
+        ? { is_wrapped: true }
+        : null
+    )),
+    rows: plainTable.rows.map((row) =>
+      Array.from({ length: columnCount }, (_, columnIndex) => ({
+        type: "raw_text" as const,
+        text: row[columnIndex] ?? "",
+      })),
+    ),
+  };
+}
+
+function stripMarkdownEmphasis(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "$1")
+    .replace(/(?<!_)_(?!_)([^_\n]+)_(?!_)/g, "$1")
+    .replace(/`(.+?)`/g, "$1");
+}
+
+function toPlainTextTable(table: MarkdownTable): MarkdownTable {
+  return {
+    rows: table.rows.map((row) => row.map((cell) => stripMarkdownEmphasis(cell))),
+  };
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function inlineToTelegramHtml(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => {
+      const headingMatch = line.match(/^#{1,6}\s+(.+)$/);
+      if (headingMatch) {
+        return `<b>${escapeHtml(headingMatch[1]!)}</b>`;
+      }
+
+      return line
+        .split(/(`[^`\n]+`)/)
+        .map((part) => {
+          if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+            return `<code>${escapeHtml(part.slice(1, -1))}</code>`;
+          }
+          return richToTelegramHtml(part);
+        })
+        .join("");
+    })
+    .join("\n");
+}
+
+function richToTelegramHtml(text: string): string {
+  const parts: string[] = [];
+  for (const part of text.split(/(\[[^\]]+\]\([^)]+\))/)) {
+    const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    if (linkMatch) {
+      const href = linkMatch[2]!;
+      if (/^https?:\/\//i.test(href)) {
+        parts.push(`<a href="${escapeHtml(href)}">${escapeHtml(linkMatch[1]!)}</a>`);
+      } else {
+        parts.push(escapeHtml(part));
+      }
+    } else {
+      let escaped = escapeHtml(part);
+      escaped = escaped.replace(/\*\*(.+?)\*\*/gs, "<b>$1</b>");
+      escaped = escaped.replace(/__(.+?)__/gs, "<b>$1</b>");
+      escaped = escaped.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<i>$1</i>");
+      escaped = escaped.replace(/(?<!_)_(?!_)([^_\n]+)_(?!_)/g, "<i>$1</i>");
+      parts.push(escaped);
+    }
   }
+  return parts.join("");
+}
 
-  const columnCount = Math.max(...rows.map((row) => row.length));
-  const widths = Array.from({ length: columnCount }, (_, columnIndex) =>
-    Math.max(...rows.map((row) => (row[columnIndex] ?? "").length), 3),
-  );
-
-  const renderRow = (row: string[]) =>
-    row
-      .map((cell, columnIndex) => (cell ?? "").padEnd(widths[columnIndex]!))
-      .join(" | ");
-
-  const header = renderRow(rows[0]!);
-  const separator = widths.map((width) => "-".repeat(width)).join("-|-");
-  const body = rows.slice(1).map((row) => renderRow(row));
-
-  return `\`\`\`text\n${[header, separator, ...body].join("\n")}\n\`\`\``;
+function collapseBlankLines(text: string): string {
+  return text
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]+\n/g, "\n");
 }
 
 function parseMarkdownTableRow(line: string): string[] {
