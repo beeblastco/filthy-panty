@@ -8,6 +8,7 @@ import type {
   ChannelAdapter,
   ChannelParseResult
 } from "./channels.ts";
+import { resolveDiscordCommand } from "./commands.ts";
 import { verifyDiscordSignature } from "./discord-signature.ts";
 import { logWarn } from "./log.ts";
 
@@ -115,6 +116,14 @@ export function createDiscordChannel(
         };
       }
 
+      const resolvedCommand = resolveDiscordCommand(
+        payload.data.name,
+        extractOptionText(payload.data.options),
+      );
+      if (!resolvedCommand) {
+        return unsupportedInteractionResponse();
+      }
+
       return {
         kind: "message",
         ack: {
@@ -128,14 +137,18 @@ export function createDiscordChannel(
             ? `discord:${payload.guild_id}:${payload.channel_id}`
             : `discord:dm:${payload.channel_id}`,
           channelName: "discord",
-          content: [{ type: "text", text: extractOptionText(payload.data.options) }],
+          content: resolvedCommand.contentText
+            ? [{ type: "text", text: resolvedCommand.contentText }]
+            : [],
           source: {
             applicationId: payload.application_id,
             interactionToken: payload.token,
             interactionId: payload.id,
             guildId: payload.guild_id,
             channelId: payload.channel_id,
-            commandToken: `/${payload.data.name}`,
+            ...(resolvedCommand.commandToken
+              ? { commandToken: resolvedCommand.commandToken }
+              : {}),
             userId: payload.member?.user?.id ?? payload.user?.id,
           } satisfies DiscordSource,
         },
@@ -154,21 +167,27 @@ function createDiscordActions(
 ): ChannelActions {
   return {
     async sendText(text) {
-      const response = await fetch(
-        `https://discord.com/api/v10/webhooks/${source.applicationId}/${source.interactionToken}/messages/@original`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            content: text,
-            allowed_mentions: { parse: [] },
-          }),
-        },
-      );
+      const chunks = splitDiscordMessage(text);
 
-      if (!response.ok) {
-        const body = await response.text();
-        throw new Error(`Discord reply failed (${response.status}): ${body}`);
+      for (const [index, chunk] of chunks.entries()) {
+        const response = await fetch(
+          index === 0
+            ? `https://discord.com/api/v10/webhooks/${source.applicationId}/${source.interactionToken}/messages/@original`
+            : `https://discord.com/api/v10/webhooks/${source.applicationId}/${source.interactionToken}`,
+          {
+            method: index === 0 ? "PATCH" : "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              content: chunk,
+              allowed_mentions: { parse: [] },
+            }),
+          },
+        );
+
+        if (!response.ok) {
+          const body = await response.text();
+          throw new Error(`Discord reply failed (${response.status}): ${body}`);
+        }
       }
     },
 
@@ -236,6 +255,39 @@ function flattenOptions(options: DiscordInteractionOption[]): string[] {
   }
 
   return values;
+}
+
+function splitDiscordMessage(text: string): string[] {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return [""];
+  }
+
+  if (trimmed.length <= 2000) {
+    return [trimmed];
+  }
+
+  const chunks: string[] = [];
+  let remaining = trimmed;
+
+  while (remaining.length > 2000) {
+    const candidate = remaining.slice(0, 2000);
+    const splitAt = Math.max(
+      candidate.lastIndexOf("\n\n"),
+      candidate.lastIndexOf("\n"),
+      candidate.lastIndexOf(" "),
+    );
+    const boundary = splitAt > 1000 ? splitAt : 2000;
+
+    chunks.push(remaining.slice(0, boundary).trim());
+    remaining = remaining.slice(boundary).trim();
+  }
+
+  if (remaining) {
+    chunks.push(remaining);
+  }
+
+  return chunks;
 }
 
 function toDiscordSource(source: Record<string, unknown>): DiscordSource {

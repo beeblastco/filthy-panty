@@ -82,6 +82,7 @@ bun run dev        # SST dev mode
 bun run build      # Compile all functions to ARM64 binaries
 bun run deploy     # Build + deploy
 bun run check      # Type-check
+bun run discord:sync  # Sync Discord slash commands
 ```
 
 ## Configuration
@@ -132,6 +133,8 @@ For normal SST usage, keep `.env` limited to local CLI settings such as:
 - `GITHUB_ALLOWED_REPOS`
 - `SLACK_ALLOWED_CHANNEL_IDS`
 - `DISCORD_ALLOWED_GUILD_IDS`
+- `DISCORD_APPLICATION_ID`
+- `DISCORD_SYNC_GUILD_ID` for immediate guild-scoped Discord command updates in development
 
 Use `.env.example` as the template for that local file.
 
@@ -192,6 +195,21 @@ Optional allow lists are read from the SST config environment and default to `op
 - `GITHUB_ALLOWED_REPOS`
 - `SLACK_ALLOWED_CHANNEL_IDS`
 - `DISCORD_ALLOWED_GUILD_IDS`
+
+### Discord Slash Commands
+
+Discord slash commands stay on the existing Interactions Endpoint URL path handled by `harness-processing`.
+
+For setup:
+
+1. Enable Discord integration in `.env` with `ENABLE_DISCORD_INTEGRATION=true`.
+2. Add `DISCORD_APPLICATION_ID` to `.env`.
+3. Optional for development: set `DISCORD_SYNC_GUILD_ID` to sync commands to a specific guild for immediate updates.
+4. Deploy the app with `bun run deploy`.
+5. In the Discord Developer Portal, point the Interactions Endpoint URL at the deployed `harnessProcessingUrl`.
+6. Run `bun run discord:sync` to register the slash commands.
+
+The sync script registers `/help`, `/new`, and `/ask`. Commands are registered for guild and bot-DM contexts with guild install as the default installation context. When `DISCORD_SYNC_GUILD_ID` is set, the sync targets that guild; otherwise it overwrites global commands. The script reads `DISCORD_APPLICATION_ID` and `DISCORD_SYNC_GUILD_ID` from local `.env`, and uses `DISCORD_BOT_TOKEN` from the current shell or the local SST secret store.
 
 ### Bulk Load Secrets
 

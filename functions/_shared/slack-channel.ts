@@ -21,7 +21,9 @@ interface SlackEventEnvelope {
     subtype?: string;
     text?: string;
     channel?: string;
+    channel_type?: string;
     user?: string;
+    bot_id?: string;
     ts?: string;
     thread_ts?: string;
   };
@@ -108,7 +110,7 @@ function parseEventCallback(
     return { kind: "ignore" };
   }
 
-  if (payload.event.type !== "app_mention" || payload.event.subtype) {
+  if (!isSupportedSlackEvent(payload.event)) {
     return { kind: "ignore" };
   }
 
@@ -131,7 +133,7 @@ function parseEventCallback(
     ack: { statusCode: 200 },
     message: {
       eventId: `slack:${payload.event_id}`,
-      conversationKey: `slack:${payload.team_id}:${channelId}:${threadTs}`,
+      conversationKey: getSlackConversationKey(payload.team_id, channelId, payload.event, threadTs),
       channelName: "slack",
       content: [{ type: "text", text }],
       source: {
@@ -143,6 +145,31 @@ function parseEventCallback(
       } satisfies SlackSource,
     },
   };
+}
+
+function isSupportedSlackEvent(event: NonNullable<SlackEventEnvelope["event"]>): boolean {
+  if (event.subtype || event.bot_id) {
+    return false;
+  }
+
+  if (event.type === "app_mention") {
+    return true;
+  }
+
+  return event.type === "message" && (event.channel_type === "im" || event.channel_type === "app_home");
+}
+
+function getSlackConversationKey(
+  teamId: string,
+  channelId: string,
+  event: NonNullable<SlackEventEnvelope["event"]>,
+  threadTs: string,
+): string {
+  if (event.type === "message" && (event.channel_type === "im" || event.channel_type === "app_home")) {
+    return `slack:${teamId}:${channelId}`;
+  }
+
+  return `slack:${teamId}:${channelId}:${threadTs}`;
 }
 
 function parseSlashCommand(
