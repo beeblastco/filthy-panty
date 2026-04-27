@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import {
   routeIncomingEvent,
+  type AsyncDirectInboundEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
+  type StatusInboundEvent,
 } from "../functions/harness-processing/integrations.ts";
 
 const ORIGINAL_ENABLE_DIRECT_API = process.env.ENABLE_DIRECT_API;
@@ -310,7 +312,9 @@ describe("direct API ingress", () => {
       throw new Error("Expected direct event to be handled");
     }
     expect(directEvent.eventId).toBe("api:one");
+    expect(directEvent.publicEventId).toBe("one");
     expect(directEvent.conversationKey).toBe("api:alpha");
+    expect(directEvent.publicConversationKey).toBe("alpha");
     expect(directEvent.events).toEqual([
       {
         role: "system",
@@ -323,10 +327,126 @@ describe("direct API ingress", () => {
       },
     ]);
   });
+
+  it("routes async direct API requests with a status URL", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const handledEvents: AsyncDirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "one",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer secret",
+      host: "example.lambda-url.aws",
+      "x-forwarded-proto": "https",
+    }, {
+      rawPath: "/async",
+    }), createHandlers({
+      handleAsyncRequest: async (event) => {
+        handledEvents.push(event);
+        return {
+          statusCode: 202,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ statusUrl: event.statusUrl }),
+        };
+      },
+    }));
+
+    expect(response.statusCode).toBe(202);
+    expect(handledEvents).toHaveLength(1);
+    expect(handledEvents[0]?.eventId).toBe("api:one");
+    expect(handledEvents[0]?.statusUrl).toBe("https://example.lambda-url.aws/status/one");
+  });
+
+  it("parses optional webhook config for direct API requests", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const handledEvents: DirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "one",
+      conversationKey: "alpha",
+      webhookUrl: "https://callbacks.example/hook",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer secret",
+      "x-webhook-secret": "webhook-secret",
+    }), createHandlers({
+      handleDirectRequest: async (event) => {
+        handledEvents.push(event);
+        return {
+          statusCode: 200,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+          body: "ok",
+        };
+      },
+    }));
+
+    expect(response.statusCode).toBe(200);
+    expect(handledEvents[0]?.webhookConfig).toEqual({
+      url: "https://callbacks.example/hook",
+      secret: "webhook-secret",
+    });
+  });
+
+  it("rejects webhook URLs without a webhook secret", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "one",
+      conversationKey: "alpha",
+      webhookUrl: "https://callbacks.example/hook",
+      events: [{
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }],
+    }, {
+      authorization: "Bearer secret",
+    }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toBe("X-Webhook-Secret is required when webhookUrl is provided");
+  });
+
+  it("routes status requests through direct API auth", async () => {
+    process.env.ENABLE_DIRECT_API = "true";
+    process.env.DIRECT_API_SECRET = "secret";
+
+    const handledEvents: StatusInboundEvent[] = [];
+    const response = await routeIncomingEvent(createEvent(undefined, {
+      authorization: "Bearer secret",
+    }, {
+      method: "GET",
+      rawPath: "/status/one",
+    }), createHandlers({
+      handleStatusRequest: async (event) => {
+        handledEvents.push(event);
+        return {
+          statusCode: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "processing" }),
+        };
+      },
+    }));
+
+    expect(response.statusCode).toBe(200);
+    expect(handledEvents).toEqual([{ eventId: "api:one", publicEventId: "one" }]);
+  });
 });
 
 function createHandlers(overrides: Partial<{
   handleDirectRequest(event: DirectInboundEvent): Promise<ResponseShape>;
+  handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<ResponseShape>;
+  handleStatusRequest(event: StatusInboundEvent): Promise<ResponseShape>;
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
 }> = {}) {
   return {
@@ -335,6 +455,8 @@ function createHandlers(overrides: Partial<{
       headers: { "Content-Type": "text/plain; charset=utf-8" },
       body: "ok",
     })),
+    handleAsyncRequest: overrides.handleAsyncRequest,
+    handleStatusRequest: overrides.handleStatusRequest,
     handleChannelRequest: overrides.handleChannelRequest ?? (async () => {}),
   };
 }
@@ -344,14 +466,17 @@ function createEvent(
   headers: Record<string, string> = {},
   options: Partial<{
     method: string;
+    rawPath: string;
     rawBody: string;
     isBase64Encoded: boolean;
   }> = {},
 ): LambdaFunctionURLEvent {
+  const rawPath = options.rawPath ?? "/";
+
   return {
     version: "2.0",
     routeKey: "$default",
-    rawPath: "/",
+    rawPath,
     rawQueryString: "",
     headers,
     requestContext: {
@@ -361,7 +486,7 @@ function createEvent(
       domainPrefix: "example",
       http: {
         method: options.method ?? "POST",
-        path: "/",
+        path: rawPath,
         protocol: "HTTP/1.1",
         sourceIp: "127.0.0.1",
         userAgent: "bun:test",

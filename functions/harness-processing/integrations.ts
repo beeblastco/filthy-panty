@@ -30,6 +30,7 @@ import { logError } from "../_shared/log.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
 import { createTelegramChannel } from "../_shared/telegram-channel.ts";
+import type { WebhookConfig } from "../_shared/webhook.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 
 const DIRECT_API_EVENT_ID_PREFIX = "api:";
@@ -59,8 +60,20 @@ type DirectIngressEvent =
 
 export interface DirectInboundEvent {
   eventId: string;
+  publicEventId: string;
   conversationKey: string;
+  publicConversationKey: string;
   events: DirectIngressEvent[];
+  webhookConfig?: WebhookConfig;
+}
+
+export interface AsyncDirectInboundEvent extends DirectInboundEvent {
+  statusUrl: string;
+}
+
+export interface StatusInboundEvent {
+  eventId: string;
+  publicEventId: string;
 }
 
 export type HandlerEvent = LambdaFunctionURLEvent;
@@ -78,6 +91,8 @@ export interface ChannelInboundEvent {
 
 interface IntegrationHandlers {
   handleDirectRequest(event: DirectInboundEvent): Promise<LambdaResponse>;
+  handleAsyncRequest?(event: AsyncDirectInboundEvent): Promise<LambdaResponse>;
+  handleStatusRequest?(event: StatusInboundEvent): Promise<LambdaResponse>;
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
 }
 
@@ -115,6 +130,27 @@ async function handleLambdaUrlEvent(
   channelRegistry: ChannelRegistry,
 ): Promise<LambdaResponse> {
   const method = event.requestContext.http.method;
+  const headers = normalizeHeaders(event.headers);
+
+  if (method === "GET" && isStatusPath(event.rawPath)) {
+    if (!isDirectApiConfigured()) {
+      return directApiNotConfiguredResponse();
+    }
+
+    if (!isAuthorizedDirectApiRequest(headers, optionalEnv("DIRECT_API_SECRET") ?? "")) {
+      return unauthorizedResponse();
+    }
+
+    try {
+      if (!handlers.handleStatusRequest) {
+        return notFoundResponse();
+      }
+
+      return handlers.handleStatusRequest(parseStatusPath(event.rawPath));
+    } catch (err) {
+      return badRequestResponse(err);
+    }
+  }
 
   if (method === "GET") {
     return {
@@ -135,7 +171,7 @@ async function handleLambdaUrlEvent(
   const request = {
     method,
     rawPath: event.rawPath,
-    headers: normalizeHeaders(event.headers),
+    headers,
     body: decodeBody(event.body, event.isBase64Encoded),
   } satisfies ChannelRequest;
 
@@ -149,30 +185,30 @@ async function handleLambdaUrlEvent(
     return unavailableResponse;
   }
 
-  if (optionalEnv("ENABLE_DIRECT_API") !== "true" || !optionalEnv("DIRECT_API_SECRET")) {
-    return {
-      statusCode: 503,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-      body: "Direct API is not configured",
-    };
+  if (!isDirectApiConfigured()) {
+    return directApiNotConfiguredResponse();
   }
 
   if (!isAuthorizedDirectApiRequest(request.headers, optionalEnv("DIRECT_API_SECRET") ?? "")) {
-    return {
-      statusCode: 401,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-      body: "Unauthorized",
-    };
+    return unauthorizedResponse();
   }
 
   try {
-    return handlers.handleDirectRequest(parseDirectPayload(request.body));
+    const parsed = parseDirectPayload(request.body, request.headers);
+    if (isAsyncPath(event.rawPath)) {
+      if (!handlers.handleAsyncRequest) {
+        return notFoundResponse();
+      }
+
+      return handlers.handleAsyncRequest({
+        ...parsed,
+        statusUrl: buildStatusUrl(event, parsed.publicEventId),
+      });
+    }
+
+    return handlers.handleDirectRequest(parsed);
   } catch (err) {
-    return {
-      statusCode: 400,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-      body: err instanceof Error ? err.message : "Invalid request",
-    };
+    return badRequestResponse(err);
   }
 }
 
@@ -375,7 +411,7 @@ function extractBearerToken(authorization: string | undefined): string | null {
   return token;
 }
 
-function parseDirectPayload(bodyText: string): DirectInboundEvent {
+function parseDirectPayload(bodyText: string, headers: Record<string, string>): DirectInboundEvent {
   let parsed: unknown;
 
   try {
@@ -408,12 +444,114 @@ function parseDirectPayload(bodyText: string): DirectInboundEvent {
   if (events.length === 0) {
     throw new Error("Request body must include a non-empty events array");
   }
+  const webhookConfig = parseWebhookConfig(record.webhookUrl, headers["x-webhook-secret"]);
 
   return {
     eventId: `${DIRECT_API_EVENT_ID_PREFIX}${rawEventId}`,
+    publicEventId: rawEventId,
     conversationKey: `${DIRECT_API_CONVERSATION_PREFIX}${rawConversationKey}`,
+    publicConversationKey: rawConversationKey,
     events,
+    ...(webhookConfig ? { webhookConfig } : {}),
   };
+}
+
+function parseWebhookConfig(rawUrl: unknown, rawSecret: string | undefined): WebhookConfig | undefined {
+  if (rawUrl == null && rawSecret == null) {
+    return undefined;
+  }
+
+  if (typeof rawUrl !== "string" || rawUrl.trim().length === 0) {
+    throw new Error("webhookUrl must be a non-empty string when X-Webhook-Secret is provided");
+  }
+
+  if (!rawSecret || rawSecret.trim().length === 0) {
+    throw new Error("X-Webhook-Secret is required when webhookUrl is provided");
+  }
+
+  const url = rawUrl.trim();
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") {
+      throw new Error("webhookUrl must use https");
+    }
+  } catch (err) {
+    throw new Error(err instanceof Error ? err.message : "webhookUrl must be a valid URL");
+  }
+
+  return {
+    url,
+    secret: rawSecret,
+  };
+}
+
+function parseStatusPath(rawPath: string): StatusInboundEvent {
+  const match = rawPath.match(/^\/status\/([^/]+)$/);
+  const rawEventId = match?.[1] ? decodeURIComponent(match[1]) : "";
+  const publicEventId = normalizeDirectIdentifier("eventId", rawEventId);
+  if (hasReservedEventIdPrefix(publicEventId)) {
+    throw new Error("eventId uses a reserved internal prefix");
+  }
+
+  return {
+    eventId: `${DIRECT_API_EVENT_ID_PREFIX}${publicEventId}`,
+    publicEventId,
+  };
+}
+
+function isDirectApiConfigured(): boolean {
+  return optionalEnv("ENABLE_DIRECT_API") === "true" && !!optionalEnv("DIRECT_API_SECRET");
+}
+
+function directApiNotConfiguredResponse(): LambdaResponse {
+  return {
+    statusCode: 503,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    body: "Direct API is not configured",
+  };
+}
+
+function unauthorizedResponse(): LambdaResponse {
+  return {
+    statusCode: 401,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    body: "Unauthorized",
+  };
+}
+
+function badRequestResponse(err: unknown): LambdaResponse {
+  return {
+    statusCode: 400,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    body: err instanceof Error ? err.message : "Invalid request",
+  };
+}
+
+function notFoundResponse(): LambdaResponse {
+  return {
+    statusCode: 404,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    body: "Not found",
+  };
+}
+
+function isAsyncPath(rawPath: string): boolean {
+  return rawPath === "/async";
+}
+
+function isStatusPath(rawPath: string): boolean {
+  return rawPath.startsWith("/status/");
+}
+
+function buildStatusUrl(event: LambdaFunctionURLEvent, publicEventId: string): string {
+  const headers = normalizeHeaders(event.headers);
+  const protocol = headers["x-forwarded-proto"] ?? "https";
+  const host = headers.host;
+  if (!host) {
+    throw new Error("Request is missing Host header");
+  }
+
+  return `${protocol}://${host}/status/${encodeURIComponent(publicEventId)}`;
 }
 
 function parseDirectIngressEvents(record: Record<string, unknown>): DirectIngressEvent[] {
