@@ -91,6 +91,7 @@ export default $config({
     const names = {
       conversations: resourceName("conversations", stage),
       processedEvents: resourceName("processed-events", stage),
+      asyncResults: resourceName("async-results", stage),
       harnessProcessing: resourceName("harness-processing", stage),
       memory: resourceName("memory", stage),
     };
@@ -136,6 +137,20 @@ export default $config({
         },
       },
     });
+
+    const asyncResultsTable = new sst.aws.Dynamo("AsyncResults", {
+      fields: {
+        eventId: "string",
+      },
+      primaryIndex: { hashKey: "eventId" },
+      ttl: "expiresAt",
+      deletionProtection: stage === "production",
+      transform: {
+        table: {
+          name: names.asyncResults,
+        },
+      },
+    });
     const filesystemBucketArn = `arn:aws:s3:::${names.memory}`;
 
     const harnessProcessing = new sst.aws.Function("HarnessProcessing", {
@@ -144,7 +159,7 @@ export default $config({
       architecture: "arm64",
       bundle: "dist/harness-processing",
       handler: "bootstrap",
-      description: "Runs the streaming agent loop: dedupe, load context, call tools inline, and return SSE.",
+      description: "Runs the streaming and async direct API agent loop with channel webhook support.",
       timeout: "10 minutes",
       memory: "256 MB",
       streaming: true,
@@ -157,6 +172,7 @@ export default $config({
         GOOGLE_MODEL_ID,
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
+        ASYNC_RESULTS_TABLE_NAME: asyncResultsTable.name,
         SLIDING_CONTEXT_WINDOW,
         MAX_AGENT_ITERATIONS,
         TAVILY_API_KEY: tavilyApiKey.value,
@@ -209,6 +225,18 @@ export default $config({
             "dynamodb:DeleteItem",
           ],
           resources: [conversationsTable.arn, processedEventsTable.arn],
+        },
+        {
+          actions: [
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+          ],
+          resources: [asyncResultsTable.arn],
+        },
+        {
+          actions: ["lambda:InvokeFunction"],
+          resources: [`arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:${names.harnessProcessing}`],
         },
         {
           actions: [
@@ -267,6 +295,7 @@ export default $config({
       harnessProcessingUrl: harnessProcessing.url,
       conversationsTableName: conversationsTable.name,
       processedEventsTableName: processedEventsTable.name,
+      asyncResultsTableName: asyncResultsTable.name,
       filesystemBucketName: filesystemBucket.name,
     };
   },

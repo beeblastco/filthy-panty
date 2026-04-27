@@ -3,25 +3,48 @@
  * Keep request orchestration, session setup, and response shaping here.
  */
 
+import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { executeCommand } from "../_shared/commands.ts";
 import { requireEnv } from "../_shared/env.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
+import { fireWebhook, type WebhookConfig } from "../_shared/webhook.ts";
 import { runAgentLoop } from "./harness.ts";
 import {
   routeIncomingEvent,
+  type AsyncDirectInboundEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
   type HandlerEvent,
+  type StatusInboundEvent,
 } from "./integrations.ts";
 import { createSession } from "./session.ts";
+import {
+  createPendingAsyncResult,
+  getAsyncResult,
+  markAsyncResultCompleted,
+  markAsyncResultFailed,
+} from "./status.ts";
 
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const textEncoder = new TextEncoder();
+const lambda = new LambdaClient({ region: process.env.AWS_REGION });
 
-export async function handler(event: HandlerEvent): Promise<LambdaResponse> {
+interface AsyncWorkerInvocation {
+  kind: "direct-api-async-worker";
+  event: DirectInboundEvent;
+}
+
+export async function handler(event: HandlerEvent | AsyncWorkerInvocation): Promise<LambdaResponse> {
+  if (isAsyncWorkerInvocation(event)) {
+    await handleAsyncWorkerRequest(event.event);
+    return { statusCode: 204 };
+  }
+
   return routeIncomingEvent(event, {
     handleDirectRequest,
+    handleAsyncRequest,
+    handleStatusRequest,
     handleChannelRequest,
   });
 }
@@ -43,7 +66,7 @@ async function handleDirectRequest(event: DirectInboundEvent): Promise<LambdaRes
       return emptySseResponse();
     }
 
-    const stream = await runAgentLoop(session, turnContext);
+    const stream = await runAgentLoop(session, turnContext, directReplyHooks(event));
     return {
       statusCode: 200,
       headers: { "Content-Type": "text/event-stream" },
@@ -58,6 +81,116 @@ async function handleDirectRequest(event: DirectInboundEvent): Promise<LambdaRes
       eventId: session.eventId,
       error: err instanceof Error ? err.message : String(err),
     });
+    await session.release().catch(() => { });
+    throw err;
+  }
+}
+
+async function handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<LambdaResponse> {
+  if (!event.events.some((ingressEvent) => ingressEvent.role === "user")) {
+    await createPendingAsyncResult({
+      eventId: event.eventId,
+      conversationKey: event.conversationKey,
+    });
+    await markAsyncResultFailed({
+      eventId: event.eventId,
+      error: "Request must include at least one user event",
+    });
+    return acceptedAsyncResponse(event.statusUrl);
+  }
+
+  const created = await createPendingAsyncResult({
+    eventId: event.eventId,
+    conversationKey: event.conversationKey,
+  });
+
+  if (created) {
+    try {
+      await invokeAsyncWorker(event);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to start async worker";
+      logError("Failed to invoke async worker", {
+        eventId: event.eventId,
+        error: message,
+      });
+      await settleAsyncFailure(event, message);
+    }
+  }
+
+  return acceptedAsyncResponse(event.statusUrl);
+}
+
+async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaResponse> {
+  const result = await getAsyncResult(event.eventId);
+  if (!result) {
+    return {
+      statusCode: 404,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        eventId: event.publicEventId,
+        status: "not_found",
+      }),
+    };
+  }
+
+  return {
+    statusCode: 200,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      eventId: event.publicEventId,
+      conversationKey: result.conversationKey.replace(/^api:/, ""),
+      status: result.status,
+      ...(result.response ? { response: result.response } : {}),
+      ...(result.error ? { error: result.error } : {}),
+    }),
+  };
+}
+
+async function handleAsyncWorkerRequest(event: DirectInboundEvent): Promise<void> {
+  const session = createSession(event.eventId, event.conversationKey);
+  if (!(await claimSession(session))) {
+    return;
+  }
+
+  try {
+    const ephemeralSystem = await session.appendIngressEvents(event.events);
+    const turnContext = await session.createTurnContext(ephemeralSystem);
+    if (!turnContext.hasPendingUserMessage) {
+      await settleAsyncFailure(event, "Request did not produce a pending user message");
+      return;
+    }
+
+    let didSettle = false;
+    const stream = await runAgentLoop(session, turnContext, {
+      onFinalText: async (text) => {
+        didSettle = true;
+        await markAsyncResultCompleted({
+          eventId: event.eventId,
+          response: text,
+        });
+        await sendWebhook(event, {
+          eventId: event.publicEventId,
+          conversationKey: event.publicConversationKey,
+          response: text,
+          success: true,
+        });
+      },
+      onErrorText: async () => {
+        didSettle = true;
+        await settleAsyncFailure(event, "Agent processing failed");
+      },
+    });
+
+    await stream.consumeStream();
+    if (stream.didFail() && !didSettle) {
+      await settleAsyncFailure(event, "Agent processing failed");
+    }
+  } catch (err) {
+    logError("Async direct request processing failed", {
+      eventId: event.eventId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    await settleAsyncFailure(event, err instanceof Error ? err.message : "Async request failed");
     await session.release().catch(() => { });
     throw err;
   }
@@ -141,4 +274,85 @@ function emptySseResponse(): LambdaResponse {
       },
     }),
   };
+}
+
+function directReplyHooks(event: DirectInboundEvent) {
+  return event.webhookConfig
+    ? {
+      onFinalText: async (text: string) => sendWebhook(event, {
+        eventId: event.publicEventId,
+        conversationKey: event.publicConversationKey,
+        response: text,
+        success: true,
+      }),
+      onErrorText: async () => sendWebhook(event, {
+        eventId: event.publicEventId,
+        conversationKey: event.publicConversationKey,
+        success: false,
+        error: "Agent processing failed",
+      }),
+    }
+    : undefined;
+}
+
+async function settleAsyncFailure(event: DirectInboundEvent, error: string): Promise<void> {
+  await markAsyncResultFailed({
+    eventId: event.eventId,
+    error,
+  });
+  await sendWebhook(event, {
+    eventId: event.publicEventId,
+    conversationKey: event.publicConversationKey,
+    success: false,
+    error,
+  });
+}
+
+async function sendWebhook(
+  event: { webhookConfig?: WebhookConfig },
+  payload: unknown,
+): Promise<void> {
+  if (!event.webhookConfig) {
+    return;
+  }
+
+  try {
+    await fireWebhook(event.webhookConfig, payload);
+  } catch (err) {
+    logError("Webhook delivery failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
+  const functionName = process.env.AWS_LAMBDA_FUNCTION_NAME;
+  if (!functionName) {
+    throw new Error("Missing AWS_LAMBDA_FUNCTION_NAME for async worker invocation");
+  }
+
+  await lambda.send(new InvokeCommand({
+    FunctionName: functionName,
+    InvocationType: "Event",
+    Payload: textEncoder.encode(JSON.stringify({
+      kind: "direct-api-async-worker",
+      event,
+    } satisfies AsyncWorkerInvocation)),
+  }));
+}
+
+function acceptedAsyncResponse(statusUrl: string): LambdaResponse {
+  return {
+    statusCode: 202,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ statusUrl }),
+  };
+}
+
+function isAsyncWorkerInvocation(event: unknown): event is AsyncWorkerInvocation {
+  return Boolean(
+    event &&
+    typeof event === "object" &&
+    (event as { kind?: unknown }).kind === "direct-api-async-worker",
+  );
 }
