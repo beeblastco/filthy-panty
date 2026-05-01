@@ -1,5 +1,9 @@
 # filthy-panty
 
+Current testing and demo URL:
+harness processing endpoint: https://neqw2f4jkhicsoyybmb5lckebm0fsrgb.lambda-url.eu-central-1.on.aws/
+account management endpoint: https://rhsxsjumb7vyrwhtwlyatfa5b40zltie.lambda-url.eu-central-1.on.aws/
+
 Experimental serverless multi-account AI chatbot and agent harness on AWS Lambda.
 
 The deployed architecture uses two public Lambda Function URLs:
