@@ -11,18 +11,14 @@ import {
   stripTrailingSlash,
 } from "./utils.ts";
 
-const DEFAULT_ACCOUNT_USERNAME = "telegram-default";
-const DEFAULT_ACCOUNT_DESCRIPTION = "Default Telegram account managed by CI/CD.";
-const DEFAULT_REACTION_EMOJI = "👀";
-
 const accountManageUrl = stripTrailingSlash(outputOrEnv("ACCOUNT_MANAGE_URL", "accountManageUrl"));
 const harnessProcessingUrl = stripTrailingSlash(outputOrEnv("HARNESS_PROCESSING_URL", "harnessProcessingUrl"));
 const adminSecret = requireScriptEnv("ADMIN_ACCOUNT_SECRET");
 const telegramBotToken = requireScriptEnv("TELEGRAM_BOT_TOKEN");
 const telegramWebhookSecret = requireScriptEnv("TELEGRAM_WEBHOOK_SECRET");
 const allowedChatIds = parseAllowedChatIds(requireScriptEnv("ALLOWED_CHAT_IDS"));
-const username = process.env.TELEGRAM_ACCOUNT_USERNAME?.trim() || DEFAULT_ACCOUNT_USERNAME;
-const description = process.env.TELEGRAM_ACCOUNT_DESCRIPTION?.trim() || DEFAULT_ACCOUNT_DESCRIPTION;
+const username = process.env.TELEGRAM_ACCOUNT_USERNAME?.trim();
+const description = process.env.TELEGRAM_ACCOUNT_DESCRIPTION?.trim();
 
 const account = await upsertTelegramAccount();
 const webhookUrl = `${harnessProcessingUrl}/webhooks/${encodeURIComponent(account.accountId)}/telegram`;
@@ -43,24 +39,24 @@ async function upsertTelegramAccount(): Promise<PublicAccount> {
         botToken: telegramBotToken,
         webhookSecret: telegramWebhookSecret,
         allowedChatIds,
-        reactionEmoji: DEFAULT_REACTION_EMOJI,
+        reactionEmoji: "👀",
       },
     },
   };
 
   if (existing) {
     const updated = await accountApi("PATCH", `/accounts/${encodeURIComponent(existing.accountId)}`, {
-      username,
-      description,
-      config,
+      username: username,
+      description: description,
+      config: config,
     });
     return parseAccountResponse(updated);
   }
 
   const created = await publicAccountApi("POST", "/accounts", {
-    username,
-    description,
-    config,
+    username: username,
+    description: description,
+    config: config,
   });
   return parseAccountResponse(created);
 }

@@ -1,3 +1,7 @@
+/**
+ * CI helper to sync the embedded system prompt module with the source file.
+ */
+
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const SYSTEM_PROMPT_SOURCE = new URL("../SYSTEM.md", import.meta.url);
