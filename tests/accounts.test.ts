@@ -55,11 +55,183 @@ describe("account config", () => {
     );
   });
 
+  it("validates account model config", () => {
+    expect(normalizeAccountConfig({
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+        openai: {
+          apiKey: "openai-key",
+          project: "project-id",
+        },
+        bedrock: {
+          region: "us-east-1",
+          apiKey: "bedrock-key",
+        },
+        gateway: {
+          apiKey: "gateway-key",
+        },
+      },
+      model: {
+        provider: "google",
+        modelid: "gemini-custom",
+        temperature: 0.2,
+        options: {
+          google: {
+            thinkingConfig: {
+              thinkingLevel: "low",
+            },
+          },
+        },
+      },
+    })).toEqual({
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+        openai: {
+          apiKey: "openai-key",
+          project: "project-id",
+        },
+        bedrock: {
+          region: "us-east-1",
+          apiKey: "bedrock-key",
+        },
+        gateway: {
+          apiKey: "gateway-key",
+        },
+      },
+      model: {
+        provider: "google",
+        modelid: "gemini-custom",
+        temperature: 0.2,
+        options: {
+          google: {
+            thinkingConfig: {
+              thinkingLevel: "low",
+            },
+          },
+        },
+      },
+    });
+
+    expect(() => normalizeAccountConfig({
+      model: {
+        provider: 12,
+      },
+    })).toThrow("config.model.provider must be one of: google, openai, bedrock, gateway");
+
+    expect(() => normalizeAccountConfig({
+      model: {
+        options: "bad",
+      },
+    })).toThrow("config.model.options must be an object");
+
+    expect(() => normalizeAccountConfig({
+      provider: {
+        unknown: {},
+      },
+    })).toThrow("config.provider.unknown is not a supported provider");
+
+    expect(() => normalizeAccountConfig({
+      provider: {
+        openai: {
+          headers: {
+            "x-test": 1,
+          },
+        },
+      },
+    })).toThrow("config.provider.openai.headers must be an object with string values");
+  });
+
+  it("validates account tool config", () => {
+    expect(normalizeAccountConfig({
+      tools: {
+        filesystem: {},
+        tavilySearch: {
+          maxResults: 5,
+          includeAnswer: false,
+          searchDepth: "basic",
+          topic: "general",
+        },
+        tavilyExtract: {
+          extractDepth: "advanced",
+          format: "markdown",
+        },
+        googleSearch: {
+          searchTypes: {
+            webSearch: {},
+          },
+          timeRangeFilter: {
+            startTime: "2026-05-01T00:00:00Z",
+            endTime: "2026-05-02T00:00:00Z",
+          },
+        },
+      },
+    })).toEqual({
+      tools: {
+        filesystem: {},
+        tavilySearch: {
+          maxResults: 5,
+          includeAnswer: false,
+          searchDepth: "basic",
+          topic: "general",
+        },
+        tavilyExtract: {
+          extractDepth: "advanced",
+          format: "markdown",
+        },
+        googleSearch: {
+          searchTypes: {
+            webSearch: {},
+          },
+          timeRangeFilter: {
+            startTime: "2026-05-01T00:00:00Z",
+            endTime: "2026-05-02T00:00:00Z",
+          },
+        },
+      },
+    });
+
+    expect(() => normalizeAccountConfig({
+      tools: {
+        unknownTool: { enabled: true },
+      },
+    })).toThrow("config.tools.unknownTool is not a supported tool");
+
+    expect(() => normalizeAccountConfig({
+      tools: {
+        filesystem: { enabled: "yes" },
+      },
+    })).toThrow("config.tools.filesystem.enabled must be a boolean");
+  });
+
   it("projects only runtime settings for agent sessions", () => {
     expect(toRuntimeAccountConfig({
+      model: {
+        provider: "google",
+        modelid: "gemini-custom",
+        options: {
+          google: {
+            thinkingConfig: {
+              thinkingLevel: "low",
+            },
+          },
+        },
+      },
+      provider: {
+        openai: {
+          apiKey: "openai-key",
+        },
+      },
       modelId: "gemini-test",
       maxAgentIterations: 3,
       memoryNamespace: "support",
+      tools: {
+        filesystem: { enabled: true },
+        tavilySearch: { maxResults: 3 },
+      },
       channels: {
         slack: {
           botToken: "xoxb-secret",
@@ -67,9 +239,29 @@ describe("account config", () => {
         },
       },
     })).toEqual({
+      model: {
+        provider: "google",
+        modelid: "gemini-custom",
+        options: {
+          google: {
+            thinkingConfig: {
+              thinkingLevel: "low",
+            },
+          },
+        },
+      },
+      provider: {
+        openai: {
+          apiKey: "openai-key",
+        },
+      },
       modelId: "gemini-test",
       maxAgentIterations: 3,
       memoryNamespace: "support",
+      tools: {
+        filesystem: { enabled: true },
+        tavilySearch: { maxResults: 3 },
+      },
     });
   });
 
@@ -87,6 +279,20 @@ describe("account config", () => {
             allowedRepos: ["owner/repo"],
           },
         },
+        tools: {
+          tavilySearch: {
+            apiKey: "tool-api-key",
+            maxResults: 5,
+          },
+        },
+        provider: {
+          openai: {
+            apiKey: "openai-key",
+          },
+          bedrock: {
+            secretAccessKey: "aws-secret",
+          },
+        },
       },
       createdAt: "2026-05-01T00:00:00.000Z",
       updatedAt: "2026-05-01T00:00:00.000Z",
@@ -98,6 +304,20 @@ describe("account config", () => {
           privateKey: "********",
           webhookSecret: "********",
           allowedRepos: ["owner/repo"],
+        },
+      },
+      tools: {
+        tavilySearch: {
+          apiKey: "********",
+          maxResults: 5,
+        },
+      },
+      provider: {
+        openai: {
+          apiKey: "********",
+        },
+        bedrock: {
+          secretAccessKey: "********",
         },
       },
     });

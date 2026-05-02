@@ -42,7 +42,7 @@ Response:
 
 Store `accountSecret` securely. It is not recoverable; rotate it if lost.
 
-If `config` is omitted, the stored config is `{}`. Runtime then uses the deployed defaults: `GOOGLE_MODEL_ID`, `MAX_AGENT_ITERATIONS`, `SLIDING_CONTEXT_WINDOW`, the generated default system prompt, per-conversation memory/filesystem, and no configured provider channels.
+If `config` is omitted, the stored config is `{}`. Runtime then uses the deployed defaults: Google with `GOOGLE_MODEL_ID`, `MAX_AGENT_ITERATIONS`, `SLIDING_CONTEXT_WINDOW`, the generated default system prompt, per-conversation memory/filesystem, no enabled tools, and no configured provider channels.
 
 ## Manage Own Account
 
@@ -123,16 +123,111 @@ Top-level runtime config:
 
 ```json
 {
-  "modelId": "gemma-4-31b-it",
+  "provider": {
+    "google": {
+      "apiKey": "..."
+    },
+    "openai": {
+      "apiKey": "..."
+    },
+    "bedrock": {
+      "region": "us-east-1",
+      "apiKey": "..."
+    },
+    "gateway": {
+      "apiKey": "..."
+    }
+  },
+  "model": {
+    "provider": "google",
+    "modelid": "gemini-3-flash",
+    "temperature": 0.2,
+    "maxOutputTokens": 16000,
+    "options": {
+      "google": {
+        "thinkingConfig": {
+          "thinkingLevel": "high"
+        }
+      }
+    }
+  },
   "maxAgentIterations": 20,
   "slidingContextWindow": 20,
   "systemPrompt": "Optional account-specific system prompt.",
   "memoryNamespace": "support",
+  "tools": {},
   "channels": {}
 }
 ```
 
+`provider` config stores constructor settings for the selected AI SDK provider:
+
+- `google`: passed to `createGoogleGenerativeAI(...)`; falls back to the deployed `GOOGLE_API_KEY` when omitted.
+- `openai`: passed to `createOpenAI(...)`.
+- `bedrock`: passed to `createAmazonBedrock(...)`.
+- `gateway`: passed to `createGateway(...)`.
+
+Secret-like fields such as `apiKey`, `secret`, `token`, and `privateKey` are encrypted at rest and redacted from account reads.
+
+`model` config controls the Vercel AI SDK `streamText` call:
+
+- `provider`: selects the provider constructor: `google`, `openai`, `bedrock`, or `gateway`.
+- `modelid` or `modelId`: provider model id. The legacy top-level `modelId` still works as a Google fallback.
+- `options`: passed to `streamText` as `providerOptions`.
+- Other fields under `model`, such as `temperature`, `maxOutputTokens`, `topP`, `headers`, or `timeout`, are passed through as normal `streamText` settings. Harness-owned fields such as messages, system prompt assembly, tools, callbacks, and stop conditions remain controlled by the runtime.
+
+If `model.options` is omitted, Google runs with the deployed default provider options:
+
+```json
+{
+  "google": {
+    "thinkingConfig": {
+      "thinkingLevel": "high"
+    }
+  }
+}
+```
+
 `memoryNamespace` controls whether memory/files are per conversation or shared across conversations in the same account. See [Memory and Session](memory-and-session.md) for the visual model.
+
+Tool config:
+
+```json
+{
+  "tools": {
+    "filesystem": { "enabled": true },
+    "tasks": { "enabled": true },
+    "tavilySearch": {
+      "enabled": true,
+      "searchDepth": "advanced",
+      "includeAnswer": true,
+      "maxResults": 5,
+      "topic": "general"
+    },
+    "tavilyExtract": {
+      "enabled": true,
+      "extractDepth": "advanced",
+      "format": "markdown"
+    },
+    "googleSearch": {
+      "enabled": true,
+      "searchTypes": {
+        "webSearch": {}
+      }
+    }
+  }
+}
+```
+
+Tools are opt-in. If `config.tools` is omitted, the agent runs without custom or provider-defined tools. Listed tools are enabled by default; set `"enabled": false` to disable a listed tool without deleting its config. Unknown tool names are rejected during account create/update.
+
+Supported tool names:
+
+- `filesystem`: S3-backed persistent virtual filesystem.
+- `tasks`: task-list helper backed by the virtual filesystem.
+- `tavilySearch`: Tavily web search using the global `TAVILY_API_KEY`.
+- `tavilyExtract`: Tavily page extraction using the global `TAVILY_API_KEY`.
+- `googleSearch`: Google provider-defined search via `google.tools.googleSearch()`.
 
 Channel config:
 

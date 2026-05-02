@@ -18,7 +18,7 @@ The design goal is simple infrastructure for low-volume multi-tenant usage: Bun 
 
 - Runtime: Bun on Lambda `provided.al2023` with ARM64 binaries built by [`scripts/build.ts`](scripts/build.ts).
 - Infra: SST v4.
-- Model SDK: Vercel AI SDK `ai` with `@ai-sdk/google`.
+- Model SDK: Vercel AI SDK `ai` with account-configured Google, OpenAI, Bedrock, and Gateway providers.
 - Persistence: DynamoDB + S3.
 - Streaming: SSE for sync direct API callers only.
 - Account config: stored in DynamoDB with encrypted config payloads and hashed account API secrets.
@@ -34,7 +34,7 @@ flowchart LR
   Harness --> Accounts
   Harness --> Conversations["DynamoDB<br/>Conversations / ProcessedEvents / AsyncResults"]
   Harness --> Memory["S3<br/>account-scoped MEMORY.md + filesystem"]
-  Harness --> Model["Google AI<br/>Vercel AI SDK"]
+  Harness --> Model["Configured model<br/>Vercel AI SDK"]
 ```
 
 ## Docs
@@ -63,6 +63,8 @@ bun run deploy
 
 After deploy, create an account through the `accountManageUrl` output. The response returns an `accountSecret` once. Use that secret as `Authorization: Bearer <accountSecret>` for direct API calls and account self-management.
 
+Accounts control model settings and tool access through encrypted `config`. See [Account management](docs/account-management.md#account-config) for the supported config shape.
+
 ## Common Commands
 
 ```bash
@@ -87,5 +89,5 @@ bun run discord:sync
 - [`functions/harness-processing/handler.ts`](functions/harness-processing/handler.ts): SSE, async self-invocation, commands, leases, and reply orchestration.
 - [`functions/harness-processing/session.ts`](functions/harness-processing/session.ts): conversation persistence, deduplication, leases, prompt context, and account-scoped memory loading.
 - [`functions/harness-processing/status.ts`](functions/harness-processing/status.ts): async direct API status storage for `/status/{eventId}` polling.
-- [`functions/harness-processing/harness.ts`](functions/harness-processing/harness.ts): model execution loop and inline tool orchestration.
-- [`functions/harness-processing/tools/index.ts`](functions/harness-processing/tools/index.ts): static inline tool registry.
+- [`functions/harness-processing/harness.ts`](functions/harness-processing/harness.ts): configured model execution loop and inline tool orchestration.
+- [`functions/harness-processing/tools/index.ts`](functions/harness-processing/tools/index.ts): static tool factory registry and account-configured tool selection.

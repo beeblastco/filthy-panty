@@ -4,9 +4,13 @@
  */
 
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createGateway } from "@ai-sdk/gateway";
+import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
+import { createOpenAI } from "@ai-sdk/openai";
 import {
   stepCountIs,
   streamText,
+  type LanguageModel,
   type ToolSet,
 } from "ai";
 import type { AccountConfig } from "../_shared/accounts.ts";
@@ -17,6 +21,13 @@ import { createTools } from "./tools/index.ts";
 
 const GOOGLE_MODEL_ID = requireEnv("GOOGLE_MODEL_ID");
 const MAX_AGENT_ITERATIONS = Number(requireEnv("MAX_AGENT_ITERATIONS"));
+const DEFAULT_GOOGLE_PROVIDER_OPTIONS = {
+  google: {
+    thinkingConfig: {
+      thinkingLevel: "high",
+    },
+  },
+} as const;
 
 const google = createGoogleGenerativeAI({ apiKey: requireEnv("GOOGLE_API_KEY") });
 
@@ -39,22 +50,22 @@ export async function runAgentLoop(
     ...createTools({
       conversationKey: session.conversationKey,
       filesystemNamespace: session.filesystemNamespace(),
-    }),
+      google: createGoogleProvider(accountConfig),
+    }, accountConfig),
   } satisfies ToolSet;
+  const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;
+  const configuredModel = resolveConfiguredModel(accountConfig);
+  const modelSettings = streamTextSettingsFromModelConfig(accountConfig);
+  const providerOptions = accountConfig.model?.options ?? DEFAULT_GOOGLE_PROVIDER_OPTIONS;
 
   const stream = streamText({
-    model: google(accountConfig.modelId ?? GOOGLE_MODEL_ID),
+    maxOutputTokens: 16000,
+    ...modelSettings,
+    model: configuredModel,
     system: turnContext.system,
     messages: turnContext.messages,
-    tools: tools,
-    maxOutputTokens: 16000,
-    providerOptions: {
-      google: {
-        thinkingConfig: {
-          thinkingLevel: "high",
-        },
-      }
-    },
+    ...(enabledTools ? { tools: enabledTools } : {}),
+    providerOptions: providerOptions as never,
     stopWhen: stepCountIs(accountConfig.maxAgentIterations ?? MAX_AGENT_ITERATIONS),
     prepareStep: async () => {
       const refreshed = await session.loadRefreshedSystemPromptParts({
@@ -116,4 +127,39 @@ export async function runAgentLoop(
     didFail: () => didFail,
     failureText: () => failureText,
   });
+}
+
+function resolveConfiguredModel(accountConfig: AccountConfig): LanguageModel {
+  const provider = accountConfig.model?.provider ?? "google";
+  const modelId = accountConfig.model?.modelId ?? accountConfig.model?.modelid ?? accountConfig.modelId ?? GOOGLE_MODEL_ID;
+
+  switch (provider) {
+    case "google":
+      return createGoogleProvider(accountConfig)(modelId);
+    case "openai":
+      return createOpenAI(accountConfig.provider?.openai as never)(modelId);
+    case "bedrock":
+      return createAmazonBedrock(accountConfig.provider?.bedrock as never)(modelId);
+    case "gateway":
+      return createGateway(accountConfig.provider?.gateway as never)(modelId);
+  }
+}
+
+function createGoogleProvider(accountConfig: AccountConfig) {
+  const config = accountConfig.provider?.google;
+  return config === undefined
+    ? google
+    : createGoogleGenerativeAI(config as never);
+}
+
+function streamTextSettingsFromModelConfig(accountConfig: AccountConfig): Record<string, unknown> {
+  const {
+    provider: _provider,
+    modelId: _modelId,
+    modelid: _modelid,
+    options: _options,
+    ...settings
+  } = accountConfig.model ?? {};
+
+  return settings;
 }

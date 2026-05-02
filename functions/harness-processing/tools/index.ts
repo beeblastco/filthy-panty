@@ -1,28 +1,55 @@
-// Tool registry for harness-processing: imports tool files and merges them into one AI SDK ToolSet.
+/**
+ * Harness tool registry.
+ * Keep static tool imports and account-configured tool selection here.
+ */
+
+import type { GoogleGenerativeAIProvider } from "@ai-sdk/google";
 import type { ToolSet } from "ai";
+import {
+  ACCOUNT_TOOL_NAMES,
+  type AccountConfig,
+  type AccountToolConfig,
+  type AccountToolName,
+} from "../../_shared/accounts.ts";
 import filesystemTool from "./filesystem.tool.ts";
+import googleSearchTool from "./google-search.tool.ts";
 import tasksTool from "./tasks.tool.ts";
-import tavilyTool from "./tavily.tool.ts";
+import { tavilyExtractTool, tavilySearchTool } from "./tavily.tool.ts";
 
 export interface ToolContext {
   conversationKey: string;
   filesystemNamespace: string;
+  config: AccountToolConfig;
+  google: GoogleGenerativeAIProvider;
 }
 
 type ToolFactory = (context: ToolContext) => ToolSet;
-// Add new tool factories here so they are bundled into the compiled Lambda binary.
-const toolFactories: ToolFactory[] = [
-  tavilyTool,
-  filesystemTool,
-  tasksTool,
-];
+const toolFactories = {
+  filesystem: filesystemTool,
+  tasks: tasksTool,
+  tavilySearch: tavilySearchTool,
+  tavilyExtract: tavilyExtractTool,
+  googleSearch: googleSearchTool,
+} satisfies Record<AccountToolName, ToolFactory>;
 
-export function createTools(context: ToolContext): ToolSet {
+export function createTools(context: Omit<ToolContext, "config">, accountConfig: AccountConfig): ToolSet {
   const tools: ToolSet = {};
 
-  for (const factory of toolFactories) {
-    Object.assign(tools, factory(context));
+  for (const toolName of ACCOUNT_TOOL_NAMES) {
+    const toolConfig = accountConfig.tools?.[toolName];
+    if (!isToolEnabled(toolConfig)) {
+      continue;
+    }
+
+    Object.assign(tools, toolFactories[toolName]({
+      ...context,
+      config: toolConfig,
+    }));
   }
 
   return tools;
+}
+
+function isToolEnabled(config: AccountToolConfig | undefined): config is AccountToolConfig {
+  return config !== undefined && config.enabled !== false;
 }

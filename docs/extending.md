@@ -5,9 +5,26 @@
 1. Create `functions/harness-processing/tools/<name>.tool.ts`.
 2. Export a default tool factory.
 3. Put the tool logic directly inside the tool's `execute`.
-4. Register the factory in [`functions/harness-processing/tools/index.ts`](../functions/harness-processing/tools/index.ts).
+4. Add the public tool name to `ACCOUNT_TOOL_NAMES` and config validation in [`functions/_shared/accounts.ts`](../functions/_shared/accounts.ts).
+5. Register the factory in [`functions/harness-processing/tools/index.ts`](../functions/harness-processing/tools/index.ts).
 
 Tool execution is inline inside `harness-processing`. Do not add queue-based tool execution or external tool Lambda wiring unless the architecture intentionally changes.
+
+Tools are account-configured and opt-in. `tools/index.ts` should stay focused on static imports, the factory map, and config-driven selection. Keep tool-specific logic in the tool file itself.
+
+Example account config:
+
+```json
+{
+  "tools": {
+    "filesystem": { "enabled": true },
+    "tavilySearch": { "enabled": true, "maxResults": 5 },
+    "googleSearch": { "enabled": true }
+  }
+}
+```
+
+If a tool needs account-level options, validate those options in `accounts.ts`, read them from `context.config` in the tool factory, and keep runtime secrets in SST secrets unless they are truly account-specific encrypted config.
 
 ## Add a Channel
 

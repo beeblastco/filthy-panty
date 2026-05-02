@@ -8,8 +8,10 @@ This is an experiment product, so the security model is simple by design. It avo
 flowchart TD
   Account["Account record"] --> Meta["Plain metadata<br/>accountId, username, description, status"]
   Account --> Hash["Account secret hash<br/>secretHash"]
-  Account --> Config["Encrypted config blob<br/>model settings + provider credentials"]
+  Account --> Config["Encrypted config blob<br/>model, tool, and channel settings"]
 
+  Config --> Model["model provider/options"]
+  Config --> Tools["tool allowlist/options"]
   Config --> Telegram["Telegram token / webhook secret"]
   Config --> GitHub["GitHub app id / private key / webhook secret"]
   Config --> Slack["Slack bot token / signing secret"]
@@ -18,7 +20,7 @@ flowchart TD
 
 The account API secret is never stored directly. It is returned once on create or rotation, then only `secretHash` is stored.
 
-Provider credentials must be usable at runtime, so they cannot be hashed. They are stored inside the encrypted account config.
+Provider credentials and account-specific runtime options must be usable at runtime, so they cannot be hashed. They are stored inside the encrypted account config. Normal account responses recursively redact secret-like field names such as `token`, `secret`, `privateKey`, and `apiKey`, including inside tool config.
 
 ## How Config Encryption Works
 

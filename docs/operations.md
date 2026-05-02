@@ -22,7 +22,7 @@ bunx sst secret set AccountConfigEncryptionSecret <long-random-value>
 
 `AdminAccountSecret` authenticates admin account-management requests. `AccountConfigEncryptionSecret` encrypts account config payloads in DynamoDB. Treat both as stable production secrets; rotating the encryption secret requires a re-encryption migration for existing account configs.
 
-Provider integration secrets are no longer global SST secrets. They live in each account's encrypted config.
+Provider integration secrets are no longer global SST secrets. Channel credentials and account-specific model provider keys live in each account's encrypted config. Shared runtime API keys such as `GoogleApiKey` and `TavilyApiKey` remain SST secrets; account config chooses which model/tools may use them.
 
 Public account creation is throttled by `ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR`, currently set to `5` in `sst.config.ts`.
 
@@ -89,7 +89,7 @@ Configure provider webhooks with the returned `accountId`:
 {HARNESS_PROCESSING_URL}/webhooks/{accountId}/discord
 ```
 
-Then patch the account config with the provider credentials needed for each channel.
+Then patch the account config with the provider credentials needed for each channel, plus any model/tool settings. See [Account management](account-management.md#account-config) for the supported config shape.
 
 CI/CD configures the default Telegram account after deploy. It creates or updates the `telegram-default` account config from Telegram GitHub Actions secrets, then registers Telegram to `/webhooks/{accountId}/telegram`.
 

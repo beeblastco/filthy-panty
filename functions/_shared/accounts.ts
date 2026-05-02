@@ -27,6 +27,23 @@ const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const REDACTED_SECRET_VALUE = "********";
 const MAX_ACCOUNT_ITERATIONS_LIMIT = 100;
 const SLIDING_CONTEXT_WINDOW_LIMIT = 200;
+export const ACCOUNT_TOOL_NAMES = [
+  "filesystem",
+  "tasks",
+  "tavilySearch",
+  "tavilyExtract",
+  "googleSearch",
+] as const;
+
+export type AccountToolName = typeof ACCOUNT_TOOL_NAMES[number];
+const ACCOUNT_MODEL_PROVIDER_NAMES = [
+  "google",
+  "openai",
+  "bedrock",
+  "gateway",
+] as const;
+
+export type AccountModelProviderName = typeof ACCOUNT_MODEL_PROVIDER_NAMES[number];
 
 export type AccountStatus = "active" | "disabled";
 
@@ -43,11 +60,35 @@ export interface AccountRecord {
 
 export interface AccountConfig {
   modelId?: string;
+  model?: AccountModelConfig;
+  provider?: AccountProviderConfig;
   maxAgentIterations?: number;
   slidingContextWindow?: number;
   systemPrompt?: string;
   memoryNamespace?: string;
   channels?: AccountChannelsConfig;
+  tools?: AccountToolsConfig;
+  [key: string]: unknown;
+}
+
+export interface AccountModelConfig {
+  provider?: AccountModelProviderName;
+  modelId?: string;
+  modelid?: string;
+  options?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export type AccountProviderConfig = Partial<Record<AccountModelProviderName, AccountProviderSettings>>;
+
+export interface AccountProviderSettings {
+  [key: string]: unknown;
+}
+
+export type AccountToolsConfig = Partial<Record<AccountToolName, AccountToolConfig>>;
+
+export interface AccountToolConfig {
+  enabled?: boolean;
   [key: string]: unknown;
 }
 
@@ -346,19 +387,25 @@ export function toPublicAccount(account: AccountRecord): PublicAccountRecord {
 
 export function toRuntimeAccountConfig(config: AccountConfig): AccountConfig {
   const {
+    model,
     modelId,
+    provider,
     maxAgentIterations,
     slidingContextWindow,
     systemPrompt,
     memoryNamespace,
+    tools,
   } = config;
 
   return normalizeAccountConfig({
+    ...(model !== undefined ? { model } : {}),
     ...(modelId !== undefined ? { modelId } : {}),
+    ...(provider !== undefined ? { provider } : {}),
     ...(maxAgentIterations !== undefined ? { maxAgentIterations } : {}),
     ...(slidingContextWindow !== undefined ? { slidingContextWindow } : {}),
     ...(systemPrompt !== undefined ? { systemPrompt } : {}),
     ...(memoryNamespace !== undefined ? { memoryNamespace } : {}),
+    ...(tools !== undefined ? { tools } : {}),
   });
 }
 
@@ -373,11 +420,14 @@ export function normalizeAccountConfig(value: unknown): AccountConfig {
 
   const config = value as Record<string, unknown>;
   assertOptionalString(config.modelId, "config.modelId");
+  normalizeModelConfig(config.model);
+  normalizeProviderConfig(config.provider);
   assertOptionalPositiveInteger(config.maxAgentIterations, "config.maxAgentIterations", MAX_ACCOUNT_ITERATIONS_LIMIT);
   assertOptionalPositiveInteger(config.slidingContextWindow, "config.slidingContextWindow", SLIDING_CONTEXT_WINDOW_LIMIT);
   assertOptionalString(config.systemPrompt, "config.systemPrompt");
   assertOptionalNonEmptyString(config.memoryNamespace, "config.memoryNamespace");
   normalizeChannelsConfig(config.channels);
+  normalizeToolsConfig(config.tools);
 
   return config as AccountConfig;
 }
@@ -437,6 +487,143 @@ function normalizeChannelsConfig(value: unknown): void {
   normalizeGitHubConfig(channels.github);
   normalizeSlackConfig(channels.slack);
   normalizeDiscordConfig(channels.discord);
+}
+
+function normalizeModelConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.model must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalProviderName(config.provider, "config.model.provider");
+  assertOptionalString(config.modelId, "config.model.modelId");
+  assertOptionalString(config.modelid, "config.model.modelid");
+  if (config.options !== undefined && !isPlainObject(config.options)) {
+    throw new Error("config.model.options must be an object");
+  }
+}
+
+function normalizeProviderConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.provider must be an object");
+  }
+
+  for (const [providerName, providerConfig] of Object.entries(value)) {
+    if (!isAccountModelProviderName(providerName)) {
+      throw new Error(`config.provider.${providerName} is not a supported provider`);
+    }
+    normalizeProviderSettings(providerName, providerConfig);
+  }
+}
+
+function normalizeProviderSettings(providerName: AccountModelProviderName, value: unknown): void {
+  if (!isPlainObject(value)) {
+    throw new Error(`config.provider.${providerName} must be an object`);
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalString(config.apiKey, `config.provider.${providerName}.apiKey`);
+  assertOptionalString(config.baseURL, `config.provider.${providerName}.baseURL`);
+  if (config.headers !== undefined && !isStringRecord(config.headers)) {
+    throw new Error(`config.provider.${providerName}.headers must be an object with string values`);
+  }
+
+  if (providerName === "openai") {
+    assertOptionalString(config.organization, "config.provider.openai.organization");
+    assertOptionalString(config.project, "config.provider.openai.project");
+    assertOptionalString(config.name, "config.provider.openai.name");
+  }
+
+  if (providerName === "bedrock") {
+    assertOptionalString(config.region, "config.provider.bedrock.region");
+    assertOptionalString(config.accessKeyId, "config.provider.bedrock.accessKeyId");
+    assertOptionalString(config.secretAccessKey, "config.provider.bedrock.secretAccessKey");
+    assertOptionalString(config.sessionToken, "config.provider.bedrock.sessionToken");
+  }
+}
+
+function normalizeToolsConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.tools must be an object");
+  }
+
+  for (const [toolName, toolConfig] of Object.entries(value)) {
+    if (!isAccountToolName(toolName)) {
+      throw new Error(`config.tools.${toolName} is not a supported tool`);
+    }
+    normalizeToolConfig(toolName, toolConfig);
+  }
+}
+
+function normalizeToolConfig(toolName: AccountToolName, value: unknown): void {
+  if (!isPlainObject(value)) {
+    throw new Error(`config.tools.${toolName} must be an object`);
+  }
+
+  const config = value as Record<string, unknown>;
+  if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
+    throw new Error(`config.tools.${toolName}.enabled must be a boolean`);
+  }
+
+  switch (toolName) {
+    case "filesystem":
+    case "tasks":
+      return;
+    case "tavilySearch":
+      normalizeTavilySearchToolConfig(config);
+      return;
+    case "tavilyExtract":
+      normalizeTavilyExtractToolConfig(config);
+      return;
+    case "googleSearch":
+      normalizeGoogleSearchToolConfig(config);
+      return;
+  }
+}
+
+function normalizeTavilySearchToolConfig(config: Record<string, unknown>): void {
+  assertOptionalEnum(config.searchDepth, "config.tools.tavilySearch.searchDepth", ["basic", "advanced"]);
+  assertOptionalBoolean(config.includeAnswer, "config.tools.tavilySearch.includeAnswer");
+  assertOptionalPositiveInteger(config.maxResults, "config.tools.tavilySearch.maxResults", 20);
+  assertOptionalEnum(config.topic, "config.tools.tavilySearch.topic", ["general", "news", "finance"]);
+}
+
+function normalizeTavilyExtractToolConfig(config: Record<string, unknown>): void {
+  assertOptionalEnum(config.extractDepth, "config.tools.tavilyExtract.extractDepth", ["basic", "advanced"]);
+  assertOptionalEnum(config.format, "config.tools.tavilyExtract.format", ["markdown", "text"]);
+}
+
+function normalizeGoogleSearchToolConfig(config: Record<string, unknown>): void {
+  if (config.searchTypes !== undefined) {
+    if (!isPlainObject(config.searchTypes)) {
+      throw new Error("config.tools.googleSearch.searchTypes must be an object");
+    }
+    const searchTypes = config.searchTypes as Record<string, unknown>;
+    if (searchTypes.webSearch !== undefined && !isPlainObject(searchTypes.webSearch)) {
+      throw new Error("config.tools.googleSearch.searchTypes.webSearch must be an object");
+    }
+    if (searchTypes.imageSearch !== undefined && !isPlainObject(searchTypes.imageSearch)) {
+      throw new Error("config.tools.googleSearch.searchTypes.imageSearch must be an object");
+    }
+  }
+
+  if (config.timeRangeFilter !== undefined) {
+    if (!isPlainObject(config.timeRangeFilter)) {
+      throw new Error("config.tools.googleSearch.timeRangeFilter must be an object");
+    }
+    const timeRangeFilter = config.timeRangeFilter as Record<string, unknown>;
+    assertOptionalString(timeRangeFilter.startTime, "config.tools.googleSearch.timeRangeFilter.startTime");
+    assertOptionalString(timeRangeFilter.endTime, "config.tools.googleSearch.timeRangeFilter.endTime");
+  }
 }
 
 function validateConfigPatch(value: unknown, path: string): void {
@@ -563,13 +750,47 @@ function isAccountStatus(value: string | undefined): value is AccountStatus {
   return value === "active" || value === "disabled";
 }
 
+function isAccountToolName(value: string): value is AccountToolName {
+  return (ACCOUNT_TOOL_NAMES as readonly string[]).includes(value);
+}
+
+function isAccountModelProviderName(value: string): value is AccountModelProviderName {
+  return (ACCOUNT_MODEL_PROVIDER_NAMES as readonly string[]).includes(value);
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return isPlainObject(value) &&
+    Object.values(value).every((entry) => typeof entry === "string");
 }
 
 function assertOptionalString(value: unknown, name: string): void {
   if (value !== undefined && typeof value !== "string") {
     throw new Error(`${name} must be a string`);
+  }
+}
+
+function assertOptionalProviderName(value: unknown, name: string): void {
+  if (value === undefined) {
+    return;
+  }
+  if (typeof value !== "string" || !isAccountModelProviderName(value)) {
+    throw new Error(`${name} must be one of: ${ACCOUNT_MODEL_PROVIDER_NAMES.join(", ")}`);
+  }
+}
+
+function assertOptionalBoolean(value: unknown, name: string): void {
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new Error(`${name} must be a boolean`);
+  }
+}
+
+function assertOptionalEnum<T extends string>(value: unknown, name: string, allowed: readonly T[]): void {
+  if (value !== undefined && (typeof value !== "string" || !allowed.includes(value as T))) {
+    throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
   }
 }
 

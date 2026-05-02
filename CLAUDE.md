@@ -1,6 +1,6 @@
 # Agent
 
-This repository is an agentic AI chatbot on AWS — Lambda + Google AI (Gemini) + Telegram/GitHub/Slack/Discord integrations, deployed with SST. It uses the Vercel AI SDK (`ai` + `@ai-sdk/google`) with SSE streaming via Lambda Function URLs.
+This repository is an agentic AI chatbot on AWS — Lambda + Vercel AI SDK + Telegram/GitHub/Slack/Discord integrations, deployed with SST. It uses account-configured Google, OpenAI, Bedrock, and Gateway providers, with SSE streaming via Lambda Function URLs.
 
 Key rules:
 
@@ -11,10 +11,12 @@ Key rules:
   - `account-manage` — account creation, account secret rotation, and account metadata/config management.
   - `harness-processing` — streaming Function URL (`RESPONSE_STREAM` invoke mode). It accepts account-authenticated direct API requests, async requests, status polling, and supported account-scoped channel webhooks. It normalizes them through `functions/harness-processing/integrations.ts`, runs the agent loop in `functions/harness-processing/harness.ts`, persists conversation state in `functions/harness-processing/session.ts`, and emits SSE only for sync direct API callers.
 - The custom Bun runtime used by the deployed path is `startStreamingRuntime` from `functions/_shared/runtime.ts`. It passes the full Lambda Function URL event envelope into the handler so request routing can distinguish direct API traffic from supported webhook traffic and return channel-specific HTTP responses.
-- To add a new tool: create `functions/harness-processing/tools/<name>.tool.ts`, export a default tool factory, put the tool logic directly inside each tool's `execute`, and import that factory in `functions/harness-processing/tools/index.ts`.
-- `functions/harness-processing/tools/index.ts` is the static registry used to ensure tool files are bundled into the compiled Lambda binary.
+- To add a new tool: create `functions/harness-processing/tools/<name>.tool.ts`, export a default tool factory, put the tool logic directly inside each tool's `execute`, add the public tool name/config validation in `functions/_shared/accounts.ts`, and import/register that factory in `functions/harness-processing/tools/index.ts`.
+- `functions/harness-processing/tools/index.ts` is the static factory registry and account-configured selector used to ensure tool files are bundled into the compiled Lambda binary.
 - Custom tools run inline inside `harness-processing` during the streaming request. Do not add queue-based tool execution or external tool-Lambda wiring unless the architecture intentionally changes.
-- Google Search is enabled as a built-in tool via `google.tools.googleSearch({})`.
+- Tools are opt-in through `config.tools`; no `config.tools` means no inline or provider-defined tools are passed to the model.
+- Google Search lives in `functions/harness-processing/tools/google-search.tool.ts` and is enabled through `config.tools.googleSearch`.
+- Account provider constructor settings live under `config.provider`. Account model configuration lives under `config.model`: `provider`, `modelid`/`modelId`, normal Vercel AI SDK `streamText` settings, and `options` for `providerOptions`.
 - Shared code goes in `functions/_shared/` only when it is actually shared by multiple Lambdas. Keep harness-only code in `functions/harness-processing/`.
 - File header comments must use a block-docstring style:
 
@@ -33,7 +35,7 @@ Key rules:
 - To add a new communication channel (e.g. Slack, WhatsApp): create `functions/_shared/<channel>-channel.ts` implementing the `ChannelAdapter` interface from `functions/_shared/channels.ts`, then wire the normalization path into `functions/harness-processing/integrations.ts`. Reply sending should stay inside that channel's `ChannelActions`; do not hardcode channel-specific logic into shared handlers or the core agent loop.
 - To add a new bot command: add an entry to the `commands` array in `functions/_shared/commands.ts` with aliases, description, and an execute function. Commands receive a `CommandContext` with a channel-agnostic `ChannelActions` interface — do not import channel-specific modules from commands.
 - Reply formatting uses `markdownToHtml()` from `functions/_shared/telegram.ts` for Telegram. New channels should implement their own formatting in their channel module if needed.
-- Core secrets are managed via SST: `AdminAccountSecret`, `AccountConfigEncryptionSecret`, `GoogleApiKey`, and `TavilyApiKey`. Provider credentials live in each account's encrypted config, not as global runtime secrets.
+- Core secrets are managed via SST: `AdminAccountSecret`, `AccountConfigEncryptionSecret`, `GoogleApiKey`, and `TavilyApiKey`. Channel/provider credentials live in each account's encrypted config when they are account-specific.
 
 Remember:
 
