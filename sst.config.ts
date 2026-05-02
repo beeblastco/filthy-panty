@@ -1,7 +1,8 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
 // SST infrastructure for the account-managed harness: one streaming runtime Lambda and one account-management Lambda.
-const AWS_REGION = "eu-central-1";
+const DEVELOPMENT_AWS_REGION = "ap-southeast-1";
+const PRODUCTION_AWS_REGION = "eu-central-1";
 const AWS_ACCOUNT_ID = "403012596812";
 const PROJECT_NAME = "filthy-panty";
 const PROJECT_OWNER_EMAIL = "phickstran@beeblast.co";
@@ -10,15 +11,19 @@ const SLIDING_CONTEXT_WINDOW = "20";
 const MAX_AGENT_ITERATIONS = "20";
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
 
+function regionForStage(stage: string): string {
+  return stage === "production" ? PRODUCTION_AWS_REGION : DEVELOPMENT_AWS_REGION;
+}
 
-function resourceName(service: string, stage: string): string {
+function resourceName(service: string, stage: string, region: string): string {
   const stagePrefix = stage === "production" ? "" : `${stage}-`;
-  return `${stagePrefix}${PROJECT_NAME}-${service}-${AWS_REGION}-${AWS_ACCOUNT_ID}`;
+  return `${stagePrefix}${PROJECT_NAME}-${service}-${region}-${AWS_ACCOUNT_ID}`;
 }
 
 export default $config({
   app(input) {
     const stage = input?.stage ?? "dev";
+    const region = regionForStage(stage);
 
     return {
       name: PROJECT_NAME,
@@ -27,7 +32,7 @@ export default $config({
       home: "aws",
       providers: {
         aws: {
-          region: AWS_REGION,
+          region,
           version: "7.20.0",
           ...(AWS_PROFILE ? { profile: AWS_PROFILE } : {}),
           defaultTags: {
@@ -44,15 +49,16 @@ export default $config({
 
   async run() {
     const stage = $app.stage;
+    const region = regionForStage(stage);
     const names = {
-      conversations: resourceName("conversations", stage),
-      processedEvents: resourceName("processed-events", stage),
-      asyncResults: resourceName("async-results", stage),
-      accountConfigs: resourceName("account-configs", stage),
-      accountSignupRateLimits: resourceName("account-signup-rate-limits", stage),
-      harnessProcessing: resourceName("harness-processing", stage),
-      accountManage: resourceName("account-manage", stage),
-      memory: resourceName("memory", stage),
+      conversations: resourceName("conversations", stage, region),
+      processedEvents: resourceName("processed-events", stage, region),
+      asyncResults: resourceName("async-results", stage, region),
+      accountConfigs: resourceName("account-configs", stage, region),
+      accountSignupRateLimits: resourceName("account-signup-rate-limits", stage, region),
+      harnessProcessing: resourceName("harness-processing", stage, region),
+      accountManage: resourceName("account-manage", stage, region),
+      memory: resourceName("memory", stage, region),
     };
 
     const googleApiKey = new sst.Secret("GoogleApiKey");
@@ -189,7 +195,7 @@ export default $config({
         },
         {
           actions: ["lambda:InvokeFunction"],
-          resources: [`arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:${names.harnessProcessing}`],
+          resources: [`arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:function:${names.harnessProcessing}`],
         },
         {
           actions: [

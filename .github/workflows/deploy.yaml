@@ -4,41 +4,84 @@ on:
   push:
     branches:
       - main
+      - dev
+  pull_request:
+  create:
   workflow_dispatch:
     inputs:
       stage:
-        description: SST stage to deploy. Defaults to repository variable SST_STAGE or dev.
+        description: SST stage to deploy. Defaults to production for main and dev for dev.
         required: false
         type: string
 
 concurrency:
-  group: sst-deploy-${{ github.event.repository.name }}-${{ inputs.stage || vars.SST_STAGE || 'dev' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  validate:
+    if: ${{ github.event_name != 'create' || github.event.ref_type == 'branch' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      CI: "true"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run check
+
+      - name: Run unit tests
+        run: bun run test
+
+      - name: Build Lambda binaries
+        run: bun run build
+
   deploy:
+    needs: validate
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       id-token: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      AWS_REGION: ${{ vars.AWS_REGION }}
+      DEFAULT_AWS_REGION: ${{ vars.AWS_REGION }}
+      PRODUCTION_AWS_REGION: ${{ vars.PRODUCTION_AWS_REGION }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
       INPUT_STAGE: ${{ inputs.stage }}
-      DEFAULT_STAGE: ${{ vars.SST_STAGE }}
       CI: "true"
     steps:
       - name: Resolve deploy configuration
-        id: config
         shell: bash
         run: |
           set -euo pipefail
 
-          STAGE="${INPUT_STAGE:-${DEFAULT_STAGE:-dev}}"
+          if [[ -n "${INPUT_STAGE:-}" ]]; then
+            STAGE="$INPUT_STAGE"
+          elif [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            STAGE="production"
+          else
+            STAGE="dev"
+          fi
+
+          if [[ "$STAGE" == "production" ]]; then
+            AWS_REGION="${PRODUCTION_AWS_REGION:-eu-central-1}"
+          else
+            AWS_REGION="${DEFAULT_AWS_REGION:-ap-southeast-1}"
+          fi
 
           if [[ -z "${AWS_REGION:-}" ]]; then
-            echo "Missing required repository variable: AWS_REGION" >&2
+            echo "Missing AWS region for stage: $STAGE" >&2
             exit 1
           fi
 
@@ -47,8 +90,8 @@ jobs:
             exit 1
           fi
 
-          echo "stage=$STAGE" >> "$GITHUB_OUTPUT"
           echo "SST_STAGE=$STAGE" >> "$GITHUB_ENV"
+          echo "AWS_REGION=$AWS_REGION" >> "$GITHUB_ENV"
 
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -64,12 +107,6 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
-      - name: Typecheck
-        run: bun run check
-
-      - name: Run unit tests
-        run: bun run test
 
       - name: Build Lambda binaries
         run: bun run build
@@ -99,6 +136,7 @@ jobs:
           bunx sst deploy --stage "$SST_STAGE"
 
       - name: Configure Telegram account webhook
+        if: ${{ vars.ENABLE_TELEGRAM_INTEGRATION == 'true' }}
         env:
           ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.SST_SECRET_TELEGRAMBOTTOKEN }}
@@ -123,3 +161,108 @@ jobs:
           done
 
           bun run scripts/configure-telegram-account.ts
+
+      - name: Configure Discord account
+        if: ${{ vars.ENABLE_DISCORD_INTEGRATION == 'true' }}
+        env:
+          ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN || secrets.SST_SECRET_DISCORDBOTTOKEN }}
+          DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY || secrets.SST_SECRET_DISCORDPUBLICKEY }}
+          DISCORD_ALLOWED_GUILD_IDS: ${{ secrets.DISCORD_ALLOWED_GUILD_IDS || secrets.SST_SECRET_DISCORDALLOWEDGUILDIDS }}
+          DISCORD_ACCOUNT_USERNAME: discord-default
+          DISCORD_ACCOUNT_DESCRIPTION: Default Discord account managed by CI/CD.
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in \
+            ADMIN_ACCOUNT_SECRET \
+            DISCORD_BOT_TOKEN \
+            DISCORD_PUBLIC_KEY \
+            DISCORD_ALLOWED_GUILD_IDS
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required Discord account configuration secret: $name" >&2
+              exit 1
+            fi
+          done
+
+          bun run scripts/configure-discord-account.ts
+
+      - name: Sync Discord commands
+        if: ${{ vars.ENABLE_DISCORD_INTEGRATION == 'true' }}
+        env:
+          DISCORD_APPLICATION_ID: ${{ vars.DISCORD_APPLICATION_ID }}
+          DISCORD_SYNC_GUILD_ID: ${{ vars.DISCORD_SYNC_GUILD_ID }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN || secrets.SST_SECRET_DISCORDBOTTOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in \
+            DISCORD_APPLICATION_ID \
+            DISCORD_BOT_TOKEN
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required Discord command sync configuration: $name" >&2
+              exit 1
+            fi
+          done
+
+          bun run scripts/discord-sync.ts
+
+      - name: Configure GitHub account
+        if: ${{ vars.ENABLE_GITHUB_INTEGRATION == 'true' }}
+        env:
+          ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
+          GITHUB_APP_ID: ${{ secrets.GITHUB_APP_ID || secrets.SST_SECRET_GITHUBAPPID }}
+          GITHUB_PRIVATE_KEY: ${{ secrets.GITHUB_PRIVATE_KEY || secrets.SST_SECRET_GITHUBPRIVATEKEY }}
+          GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET || secrets.SST_SECRET_GITHUBWEBHOOKSECRET }}
+          GITHUB_ALLOWED_REPOS: ${{ secrets.GITHUB_ALLOWED_REPOS || secrets.SST_SECRET_GITHUBALLOWEDREPOS }}
+          GITHUB_ACCOUNT_USERNAME: github-default
+          GITHUB_ACCOUNT_DESCRIPTION: Default GitHub account managed by CI/CD.
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in \
+            ADMIN_ACCOUNT_SECRET \
+            GITHUB_APP_ID \
+            GITHUB_PRIVATE_KEY \
+            GITHUB_WEBHOOK_SECRET \
+            GITHUB_ALLOWED_REPOS
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required GitHub account configuration secret: $name" >&2
+              exit 1
+            fi
+          done
+
+          bun run scripts/configure-github-account.ts
+
+      - name: Configure Slack account
+        if: ${{ vars.ENABLE_SLACK_INTEGRATION == 'true' }}
+        env:
+          ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN || secrets.SST_SECRET_SLACKBOTTOKEN }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET || secrets.SST_SECRET_SLACKSIGNINGSECRET }}
+          SLACK_ALLOWED_CHANNEL_IDS: ${{ secrets.SLACK_ALLOWED_CHANNEL_IDS || secrets.SST_SECRET_SLACKALLOWEDCHANNELIDS }}
+          SLACK_ACCOUNT_USERNAME: slack-default
+          SLACK_ACCOUNT_DESCRIPTION: Default Slack account managed by CI/CD.
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in \
+            ADMIN_ACCOUNT_SECRET \
+            SLACK_BOT_TOKEN \
+            SLACK_SIGNING_SECRET \
+            SLACK_ALLOWED_CHANNEL_IDS
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required Slack account configuration secret: $name" >&2
+              exit 1
+            fi
+          done
+
+          bun run scripts/configure-slack-account.ts
