@@ -1,6 +1,6 @@
 import {
-  outputOrEnv,
   optionalScriptEnv,
+  outputOrEnv,
   parseJson,
   stripTrailingSlash,
 } from "../utils.ts";
@@ -16,29 +16,6 @@ interface LambdaCost {
   requestCost: number;
   streamingCost: number;
   totalCost: number;
-}
-
-function calculateLambdaCost(
-  billedDurationMs: number,
-  responseSizeBytes: number,
-): LambdaCost {
-  const memoryGb = HARNESS_MEMORY_MB / 1024;
-  const durationSeconds = billedDurationMs / 1000;
-  const computeCost = memoryGb * durationSeconds * LAMBDA_ARM64_GB_SECOND;
-  const requestCost = LAMBDA_REQUEST_COST;
-  const billableStreamingBytes = Math.max(
-    0,
-    responseSizeBytes - STREAMING_FREE_BYTES,
-  );
-  const streamingCost =
-    (billableStreamingBytes / (1024 * 1024 * 1024)) * LAMBDA_STREAMING_PER_GB;
-
-  return {
-    computeCost,
-    requestCost,
-    streamingCost,
-    totalCost: computeCost + requestCost + streamingCost,
-  };
 }
 
 interface TimingResult {
@@ -169,9 +146,11 @@ async function createManualAccount(): Promise<CreatedManualAccount> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      username,
+      username: username,
       description: "Temporary account created by scripts/manual direct API probes.",
-      config: {},
+      config: {
+        systemPrompt: "You are a helpful assistant. Do what they ask you to do",
+      },
     }),
   });
   const text = await response.text();
@@ -212,6 +191,29 @@ function isCreatedManualAccount(value: unknown): value is CreatedManualAccount {
     typeof value === "object" &&
     typeof (value as { accountSecret?: unknown }).accountSecret === "string",
   );
+}
+
+function calculateLambdaCost(
+  billedDurationMs: number,
+  responseSizeBytes: number,
+): LambdaCost {
+  const memoryGb = HARNESS_MEMORY_MB / 1024;
+  const durationSeconds = billedDurationMs / 1000;
+  const computeCost = memoryGb * durationSeconds * LAMBDA_ARM64_GB_SECOND;
+  const requestCost = LAMBDA_REQUEST_COST;
+  const billableStreamingBytes = Math.max(
+    0,
+    responseSizeBytes - STREAMING_FREE_BYTES,
+  );
+  const streamingCost =
+    (billableStreamingBytes / (1024 * 1024 * 1024)) * LAMBDA_STREAMING_PER_GB;
+
+  return {
+    computeCost,
+    requestCost,
+    streamingCost,
+    totalCost: computeCost + requestCost + streamingCost,
+  };
 }
 
 export function printTimingResults(result: TimingResult): void {
