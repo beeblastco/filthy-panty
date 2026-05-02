@@ -151,6 +151,6 @@ bun scripts/manual/async-api-tool-call.ts
 
 - GitHub Actions runs CI on pull requests and non-`main` pushes, and deploys on pushes to `main`.
 - Deploy requires repository secrets `SST_SECRET_GOOGLEAPIKEY`, `SST_SECRET_TAVILYAPIKEY`, `SST_SECRET_ADMINACCOUNTSECRET`, and `SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET`.
-- Default Telegram account configuration requires repository secrets `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and `TELEGRAM_ALLOWED_CHAT_IDS`.
+- Default Telegram account configuration prefers repository secrets `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and `TELEGRAM_ALLOWED_CHAT_IDS`. The deploy workflow also accepts the existing `SST_SECRET_TELEGRAMBOTTOKEN`, `SST_SECRET_TELEGRAMWEBHOOKSECRET`, and `SST_SECRET_ALLOWEDCHATIDS` GitHub secret names as compatibility inputs; these values are written into account config, not loaded as SST runtime secrets.
 - `bun run test` runs unit tests locally.
 - Use `gh run list` and `gh run view` to inspect pipeline status.
