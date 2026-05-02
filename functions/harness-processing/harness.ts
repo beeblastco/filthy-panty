@@ -13,23 +13,23 @@ import {
   type LanguageModel,
   type ToolSet,
 } from "ai";
-import type { AccountConfig } from "../_shared/accounts.ts";
+import type {
+  AccountConfig,
+  AccountModelProviderName,
+  AccountProviderSettings,
+} from "../_shared/accounts.ts";
 import { requireEnv } from "../_shared/env.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import type { Session, TurnContextSnapshot } from "./session.ts";
 import { createTools } from "./tools/index.ts";
 
-const GOOGLE_MODEL_ID = requireEnv("GOOGLE_MODEL_ID");
-const MAX_AGENT_ITERATIONS = Number(requireEnv("MAX_AGENT_ITERATIONS"));
-const DEFAULT_GOOGLE_PROVIDER_OPTIONS = {
-  google: {
-    thinkingConfig: {
-      thinkingLevel: "high",
-    },
-  },
-} as const;
+interface ResolvedModelProvider {
+  providerName: AccountModelProviderName;
+  provider: unknown;
+  model: LanguageModel;
+}
 
-const google = createGoogleGenerativeAI({ apiKey: requireEnv("GOOGLE_API_KEY") });
+const MAX_AGENT_ITERATIONS = Number(requireEnv("MAX_AGENT_ITERATIONS"));
 
 export interface AgentReplyHooks {
   onFinalText(text: string): Promise<void>;
@@ -45,27 +45,27 @@ export async function runAgentLoop(
   let didFail = false;
   let failureText: string | null = null;
   let promptContext = turnContext.promptContext;
+  const configuredModel = resolveConfiguredModel(accountConfig);
 
   const tools = {
     ...createTools({
       conversationKey: session.conversationKey,
       filesystemNamespace: session.filesystemNamespace(),
-      google: createGoogleProvider(accountConfig),
+      modelProviderName: configuredModel.providerName,
+      modelProvider: configuredModel.provider,
     }, accountConfig),
   } satisfies ToolSet;
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;
-  const configuredModel = resolveConfiguredModel(accountConfig);
   const modelSettings = streamTextSettingsFromModelConfig(accountConfig);
-  const providerOptions = accountConfig.model?.options ?? DEFAULT_GOOGLE_PROVIDER_OPTIONS;
 
   const stream = streamText({
     maxOutputTokens: 16000,
     ...modelSettings,
-    model: configuredModel,
+    model: configuredModel.model,
     system: turnContext.system,
     messages: turnContext.messages,
     ...(enabledTools ? { tools: enabledTools } : {}),
-    providerOptions: providerOptions as never,
+    ...(accountConfig.model?.options ? { providerOptions: accountConfig.model.options as never } : {}),
     stopWhen: stepCountIs(accountConfig.maxAgentIterations ?? MAX_AGENT_ITERATIONS),
     prepareStep: async () => {
       const refreshed = await session.loadRefreshedSystemPromptParts({
@@ -129,34 +129,69 @@ export async function runAgentLoop(
   });
 }
 
-function resolveConfiguredModel(accountConfig: AccountConfig): LanguageModel {
-  const provider = accountConfig.model?.provider ?? "google";
-  const modelId = accountConfig.model?.modelId ?? accountConfig.model?.modelid ?? accountConfig.modelId ?? GOOGLE_MODEL_ID;
+function resolveConfiguredModel(accountConfig: AccountConfig): ResolvedModelProvider {
+  const providerName = requireModelProvider(accountConfig);
+  const modelId = requireModelId(accountConfig);
+  const providerConfig = requireProviderSettings(accountConfig, providerName);
 
-  switch (provider) {
+  switch (providerName) {
     case "google":
-      return createGoogleProvider(accountConfig)(modelId);
+      return resolveProviderModel(providerName, createGoogleGenerativeAI(providerConfig as never), modelId);
     case "openai":
-      return createOpenAI(accountConfig.provider?.openai as never)(modelId);
+      return resolveProviderModel(providerName, createOpenAI(providerConfig as never), modelId);
     case "bedrock":
-      return createAmazonBedrock(accountConfig.provider?.bedrock as never)(modelId);
+      return resolveProviderModel(providerName, createAmazonBedrock(providerConfig as never), modelId);
     case "gateway":
-      return createGateway(accountConfig.provider?.gateway as never)(modelId);
+      return resolveProviderModel(providerName, createGateway(providerConfig as never), modelId);
   }
 }
 
-function createGoogleProvider(accountConfig: AccountConfig) {
-  const config = accountConfig.provider?.google;
-  return config === undefined
-    ? google
-    : createGoogleGenerativeAI(config as never);
+function resolveProviderModel(
+  providerName: AccountModelProviderName,
+  provider: (modelId: string) => LanguageModel,
+  modelId: string,
+): ResolvedModelProvider {
+  return {
+    providerName,
+    provider,
+    model: provider(modelId),
+  };
+}
+
+function requireModelProvider(accountConfig: AccountConfig): AccountModelProviderName {
+  const provider = accountConfig.model?.provider;
+  if (!provider) {
+    throw new Error("config.model.provider is required");
+  }
+  return provider;
+}
+
+function requireModelId(accountConfig: AccountConfig): string {
+  const modelId = accountConfig.model?.modelId;
+  if (!modelId) {
+    throw new Error("config.model.modelId is required");
+  }
+  return modelId;
+}
+
+function requireProviderSettings(
+  accountConfig: AccountConfig,
+  providerName: AccountModelProviderName,
+): AccountProviderSettings {
+  const providerConfig = accountConfig.provider?.[providerName];
+  if (!providerConfig) {
+    throw new Error(`config.provider.${providerName} is required`);
+  }
+  if (!providerConfig.apiKey) {
+    throw new Error(`config.provider.${providerName}.apiKey is required`);
+  }
+  return providerConfig;
 }
 
 function streamTextSettingsFromModelConfig(accountConfig: AccountConfig): Record<string, unknown> {
   const {
     provider: _provider,
     modelId: _modelId,
-    modelid: _modelid,
     options: _options,
     ...settings
   } = accountConfig.model ?? {};
