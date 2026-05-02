@@ -38,8 +38,8 @@ flowchart TD
   Handler --> Integrations["integrations.ts<br/>account auth + routing"]
   Integrations --> Session["session.ts<br/>conversation state + memory"]
   Session --> Harness["harness.ts<br/>model/tool loop"]
-  Harness --> Model["Google AI"]
-  Harness --> Tools["inline tools"]
+  Harness --> Model["Configured model<br/>Google direct or AI Gateway id"]
+  Harness --> Tools["account-enabled inline tools"]
 
   Session --> Conversations["DynamoDB: Conversations"]
   Session --> Processed["DynamoDB: ProcessedEvents"]
@@ -53,7 +53,7 @@ flowchart TD
 
 Every runtime request resolves an account before agent work begins.
 
-The diagrams show the logical ownership of runtime config. In code, `integrations.ts` resolves and decrypts the account once, then passes the runtime config into `handler.ts` and `session.ts` to avoid extra lookups during the turn.
+The diagrams show the logical ownership of runtime config. In code, `integrations.ts` resolves and decrypts the account once, then passes the runtime config into `handler.ts` and `session.ts` to avoid extra lookups during the turn. The runtime projection keeps model and tool config, but strips channel credentials before the agent loop.
 
 ```mermaid
 flowchart TD
@@ -107,7 +107,7 @@ flowchart TD
   Async --> Auth
   Auth --> Parse["parse direct payload"]
   Parse --> Session["session.ts<br/>claim + context"]
-  Session --> Agent["harness.ts<br/>streamText + tools"]
+  Session --> Agent["harness.ts<br/>configured streamText + tools"]
   Agent -->|"SSE chunks"| Caller
 
   Async --> Pending["status.ts<br/>processing"]
@@ -156,6 +156,10 @@ flowchart LR
 
 See [Memory and Session](memory-and-session.md) for the full model.
 
+## Model and Tool Configuration
+
+Accounts control model selection and tool access through encrypted account config. `harness.ts` resolves `config.model`, and `tools/index.ts` creates only the tools enabled under `config.tools`. See [Account management](account-management.md#account-config) for the supported config shape.
+
 ## Code Ownership
 
 - [`functions/_shared/accounts.ts`](../functions/_shared/accounts.ts): account records, account secret hashing, bearer auth, encrypted config storage, config merge, and redaction.
@@ -164,8 +168,8 @@ See [Memory and Session](memory-and-session.md) for the full model.
 - [`functions/harness-processing/handler.ts`](../functions/harness-processing/handler.ts): SSE, async self-invocation, commands, leases, and reply flow.
 - [`functions/harness-processing/session.ts`](../functions/harness-processing/session.ts): event deduplication, conversation persistence, prompt context, and account-scoped memory loading.
 - [`functions/harness-processing/status.ts`](../functions/harness-processing/status.ts): async direct API result persistence for polling.
-- [`functions/harness-processing/harness.ts`](../functions/harness-processing/harness.ts): model execution loop and inline tool orchestration.
-- [`functions/harness-processing/tools/index.ts`](../functions/harness-processing/tools/index.ts): static tool registry so tool files are bundled.
+- [`functions/harness-processing/harness.ts`](../functions/harness-processing/harness.ts): configured model execution loop and inline tool orchestration.
+- [`functions/harness-processing/tools/index.ts`](../functions/harness-processing/tools/index.ts): static tool factory registry and account-configured tool selection.
 
 ## Storage Boundaries
 

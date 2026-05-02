@@ -8,6 +8,8 @@ Authorization: Bearer <accountSecret>
 
 Direct API state is internally scoped as `acct:<accountId>:api:<key>`, so different accounts can reuse the same public `eventId` or `conversationKey` without colliding.
 
+Model behavior and tool access come from the account's encrypted config. If `config.tools` is omitted, direct API turns run without inline or provider-defined tools.
+
 ## Health Probe: `GET /`
 
 Unauthenticated `GET /` is a lightweight probe for the deployed `harness-processing` Function URL. It returns JSON and points callers at the write method:

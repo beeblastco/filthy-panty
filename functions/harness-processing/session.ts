@@ -394,6 +394,9 @@ function formatMemorySystemPrompt(memoryContent: string | null): string {
     : "Current MEMORY.md content for this conversation:\n\n(MEMORY.md exists but is empty)";
 }
 
+/**
+ * Normalizes system message to schema-compliant format.
+ */
 function normalizeSystemMessage(message: SystemModelMessage): SystemModelMessage {
   return systemModelMessageSchema.parse({
     role: "system",
@@ -439,6 +442,10 @@ function normalizeStoredConversationEvent(value: unknown): StoredConversationEve
     : null;
 }
 
+/**
+ * Converts a model message to a stored conversation event. Since some model does not recieved the thinking message. For the next turn.
+ * We need to omit that. For some model like Anthropic, this is not the case, we will need pass all the message to the next turn.
+ */
 function createStoredEventFromModelMessage(
   message: ModelMessage | undefined,
   sourceEventId: string,
@@ -461,6 +468,9 @@ function createStoredEventFromModelMessage(
   }
 }
 
+/**
+ * Wraps a message in a stored event structure.
+ */
 function toStoredConversationEvent<TMessage extends StoredConversationEvent["message"]>(
   message: TMessage | null,
   sourceEventId: string,
@@ -524,6 +534,9 @@ function isMissingS3Object(error: unknown): boolean {
     candidate.$metadata?.httpStatusCode === 404;
 }
 
+/**
+ * Filters user message to only text content parts.
+ */
 function sanitizeUserMessage(message: UserModelMessage): UserModelMessage | null {
   if (typeof message.content === "string") {
     return message;
@@ -533,6 +546,9 @@ function sanitizeUserMessage(message: UserModelMessage): UserModelMessage | null
   return content.length > 0 ? { ...message, content } : null;
 }
 
+/**
+ * Filters assistant message to only persisted content parts.
+ */
 function sanitizeAssistantMessage(message: AssistantModelMessage): AssistantModelMessage | null {
   if (typeof message.content === "string") {
     return message;
@@ -543,12 +559,18 @@ function sanitizeAssistantMessage(message: AssistantModelMessage): AssistantMode
   return content.length > 0 ? { ...message, content } : null;
 }
 
+/**
+ * Filters tool message to only persisted content parts.
+ */
 function sanitizeToolMessage(message: ToolModelMessage): ToolModelMessage | null {
   const content = message.content.filter(isPersistedToolContentPart);
 
   return content.length > 0 ? { ...message, content } : null;
 }
 
+/**
+ * Checks if assistant content part should be persisted.
+ */
 function isPersistedAssistantContentPart(
   part: Exclude<AssistantModelMessage["content"], string>[number],
 ): boolean {
@@ -558,6 +580,9 @@ function isPersistedAssistantContentPart(
     part.type === "tool-result";
 }
 
+/**
+ * Checks if tool content part should be persisted.
+ */
 function isPersistedToolContentPart(
   part: ToolModelMessage["content"][number],
 ): boolean {
