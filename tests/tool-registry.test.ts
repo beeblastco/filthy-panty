@@ -77,13 +77,27 @@ describe("createTools", () => {
       },
     });
   });
+
+  it("rejects googleSearch for non-Google model providers", async () => {
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+
+    expect(() => createTools(createToolContext(undefined, "openai"), {
+      tools: {
+        googleSearch: { enabled: true },
+      },
+    })).toThrow("config.tools.googleSearch requires config.model.provider to be google");
+  });
 });
 
-function createToolContext(googleSearch: (options: unknown) => unknown = mock((_options: unknown) => ({ provider: "googleSearch" }))) {
+function createToolContext(
+  googleSearch: ((options: unknown) => unknown) | undefined = mock((_options: unknown) => ({ provider: "googleSearch" })),
+  modelProviderName = "google",
+) {
   return {
     conversationKey: "conversation",
     filesystemNamespace: "filesystem",
-    google: {
+    modelProviderName,
+    modelProvider: {
       tools: {
         googleSearch,
       },

@@ -101,7 +101,17 @@ describe("runAgentLoop", () => {
       ephemeralSystem: [],
       hasPendingUserMessage: true,
       promptContext: { cursor: null, messages: [] },
-    }, {}, {
+    }, {
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
+      model: {
+        provider: "google",
+        modelId: "gemini-test",
+      },
+    }, {
       onFinalText: async () => {
         throw new Error("unexpected final text");
       },
@@ -114,13 +124,7 @@ describe("runAgentLoop", () => {
     expect(stream.failureText()).toBe("Model returned empty response");
     expect(onErrorText).toHaveBeenCalledWith("Model returned empty response");
     expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("tools");
-    expect(streamTextMock.mock.calls[0]?.[0]).toHaveProperty("providerOptions", {
-      google: {
-        thinkingConfig: {
-          thinkingLevel: "high",
-        },
-      },
-    });
+    expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("providerOptions");
   });
 
   it("passes account model config into streamText", async () => {
@@ -143,9 +147,14 @@ describe("runAgentLoop", () => {
       hasPendingUserMessage: true,
       promptContext: { cursor: null, messages: [] },
     }, {
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
       model: {
         provider: "google",
-        modelid: "gemini-custom",
+        modelId: "gemini-custom",
         temperature: 0.2,
         maxOutputTokens: 2048,
         options: {
@@ -161,6 +170,7 @@ describe("runAgentLoop", () => {
     await stream.consumeStream();
 
     expect(googleModelMock).toHaveBeenCalledWith("gemini-custom");
+    expect(createGoogleMock).toHaveBeenCalledWith({ apiKey: "google-key" });
     expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
       model: { provider: "google", modelId: "gemini-custom" },
       temperature: 0.2,
@@ -203,7 +213,7 @@ describe("runAgentLoop", () => {
       },
       model: {
         provider: "openai",
-        modelid: "gpt-5.4",
+        modelId: "gpt-5.4",
       },
     });
 
@@ -218,6 +228,45 @@ describe("runAgentLoop", () => {
     expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
       model: { provider: "openai", modelId: "gpt-5.4" },
     });
+  });
+
+  it("throws when model provider or provider apiKey is missing", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const session = {
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      persistModelMessages: async () => { },
+      loadRefreshedSystemPromptParts: async () => ({
+        promptContext: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never;
+    const turn = {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      hasPendingUserMessage: true,
+      promptContext: { cursor: null, messages: [] },
+    } as never;
+
+    expect(runAgentLoop(session, turn, {})).rejects.toThrow("config.model.provider is required");
+    expect(runAgentLoop(session, turn, {
+      model: {
+        provider: "openai",
+        modelId: "gpt-5.4",
+      },
+    })).rejects.toThrow("config.provider.openai is required");
+    expect(runAgentLoop(session, turn, {
+      provider: {
+        openai: {},
+      },
+      model: {
+        provider: "openai",
+        modelId: "gpt-5.4",
+      },
+    })).rejects.toThrow("config.provider.openai.apiKey is required");
   });
 
   it("creates Bedrock and Gateway providers from account provider config", async () => {
@@ -251,7 +300,7 @@ describe("runAgentLoop", () => {
       },
       model: {
         provider: "bedrock",
-        modelid: "amazon.nova-lite-v1:0",
+        modelId: "amazon.nova-lite-v1:0",
       },
     });
     await bedrockStream.consumeStream();
@@ -272,7 +321,7 @@ describe("runAgentLoop", () => {
       },
       model: {
         provider: "gateway",
-        modelid: "openai/gpt-5.4",
+        modelId: "openai/gpt-5.4",
       },
     });
     await gatewayStream.consumeStream();
@@ -288,8 +337,6 @@ describe("runAgentLoop", () => {
 });
 
 function installHarnessEnv(): void {
-  process.env.GOOGLE_MODEL_ID = "gemini-test";
-  process.env.GOOGLE_API_KEY = "google-key";
   process.env.MAX_AGENT_ITERATIONS = "3";
   process.env.TAVILY_API_KEY = "tavily-key";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";

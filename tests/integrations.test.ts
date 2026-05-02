@@ -16,7 +16,15 @@ const TEST_ACCOUNT = {
   secretHash: "hash",
   status: "active" as const,
   config: {
-    modelId: "gemini-test",
+    model: {
+      provider: "google" as const,
+      modelId: "gemini-test",
+    },
+    provider: {
+      google: {
+        apiKey: "google-key",
+      },
+    },
     memoryNamespace: "support",
     channels: {
       slack: {
@@ -288,7 +296,15 @@ describe("direct API ingress", () => {
     expect(directEvent.eventId).toBe("acct:acct_test:api:one");
     expect(directEvent.accountId).toBe("acct_test");
     expect(directEvent.accountConfig).toEqual({
-      modelId: "gemini-test",
+      model: {
+        provider: "google",
+        modelId: "gemini-test",
+      },
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
       memoryNamespace: "support",
     });
     expect(directEvent.publicEventId).toBe("one");

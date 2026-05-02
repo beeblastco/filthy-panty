@@ -59,7 +59,6 @@ export interface AccountRecord {
 }
 
 export interface AccountConfig {
-  modelId?: string;
   model?: AccountModelConfig;
   provider?: AccountProviderConfig;
   maxAgentIterations?: number;
@@ -74,7 +73,6 @@ export interface AccountConfig {
 export interface AccountModelConfig {
   provider?: AccountModelProviderName;
   modelId?: string;
-  modelid?: string;
   options?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -388,7 +386,6 @@ export function toPublicAccount(account: AccountRecord): PublicAccountRecord {
 export function toRuntimeAccountConfig(config: AccountConfig): AccountConfig {
   const {
     model,
-    modelId,
     provider,
     maxAgentIterations,
     slidingContextWindow,
@@ -399,7 +396,6 @@ export function toRuntimeAccountConfig(config: AccountConfig): AccountConfig {
 
   return normalizeAccountConfig({
     ...(model !== undefined ? { model } : {}),
-    ...(modelId !== undefined ? { modelId } : {}),
     ...(provider !== undefined ? { provider } : {}),
     ...(maxAgentIterations !== undefined ? { maxAgentIterations } : {}),
     ...(slidingContextWindow !== undefined ? { slidingContextWindow } : {}),
@@ -419,7 +415,6 @@ export function normalizeAccountConfig(value: unknown): AccountConfig {
   }
 
   const config = value as Record<string, unknown>;
-  assertOptionalString(config.modelId, "config.modelId");
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
   assertOptionalPositiveInteger(config.maxAgentIterations, "config.maxAgentIterations", MAX_ACCOUNT_ITERATIONS_LIMIT);
@@ -500,7 +495,6 @@ function normalizeModelConfig(value: unknown): void {
   const config = value as Record<string, unknown>;
   assertOptionalProviderName(config.provider, "config.model.provider");
   assertOptionalString(config.modelId, "config.model.modelId");
-  assertOptionalString(config.modelid, "config.model.modelid");
   if (config.options !== undefined && !isPlainObject(config.options)) {
     throw new Error("config.model.options must be an object");
   }

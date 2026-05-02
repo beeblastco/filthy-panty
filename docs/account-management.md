@@ -42,7 +42,7 @@ Response:
 
 Store `accountSecret` securely. It is not recoverable; rotate it if lost.
 
-If `config` is omitted, the stored config is `{}`. Runtime then uses the deployed defaults: Google with `GOOGLE_MODEL_ID`, `MAX_AGENT_ITERATIONS`, `SLIDING_CONTEXT_WINDOW`, the generated default system prompt, per-conversation memory/filesystem, no enabled tools, and no configured provider channels.
+If `config` is omitted, the stored config is `{}`. Runtime requests will fail until `config.model.provider`, `config.model.modelId`, and the matching `config.provider.<provider>.apiKey` are configured.
 
 ## Manage Own Account
 
@@ -140,7 +140,7 @@ Top-level runtime config:
   },
   "model": {
     "provider": "google",
-    "modelid": "gemini-3-flash",
+    "modelId": "gemini-3-flash",
     "temperature": 0.2,
     "maxOutputTokens": 16000,
     "options": {
@@ -160,9 +160,9 @@ Top-level runtime config:
 }
 ```
 
-`provider` config stores constructor settings for the selected AI SDK provider:
+`provider` config stores constructor settings for the selected AI SDK provider. The selected provider entry must exist and include `apiKey`.
 
-- `google`: passed to `createGoogleGenerativeAI(...)`; falls back to the deployed `GOOGLE_API_KEY` when omitted.
+- `google`: passed to `createGoogleGenerativeAI(...)`.
 - `openai`: passed to `createOpenAI(...)`.
 - `bedrock`: passed to `createAmazonBedrock(...)`.
 - `gateway`: passed to `createGateway(...)`.
@@ -172,21 +172,9 @@ Secret-like fields such as `apiKey`, `secret`, `token`, and `privateKey` are enc
 `model` config controls the Vercel AI SDK `streamText` call:
 
 - `provider`: selects the provider constructor: `google`, `openai`, `bedrock`, or `gateway`.
-- `modelid` or `modelId`: provider model id. The legacy top-level `modelId` still works as a Google fallback.
+- `modelId`: provider model id.
 - `options`: passed to `streamText` as `providerOptions`.
 - Other fields under `model`, such as `temperature`, `maxOutputTokens`, `topP`, `headers`, or `timeout`, are passed through as normal `streamText` settings. Harness-owned fields such as messages, system prompt assembly, tools, callbacks, and stop conditions remain controlled by the runtime.
-
-If `model.options` is omitted, Google runs with the deployed default provider options:
-
-```json
-{
-  "google": {
-    "thinkingConfig": {
-      "thinkingLevel": "high"
-    }
-  }
-}
-```
 
 `memoryNamespace` controls whether memory/files are per conversation or shared across conversations in the same account. See [Memory and Session](memory-and-session.md) for the visual model.
 

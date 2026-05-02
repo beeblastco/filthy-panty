@@ -3,11 +3,11 @@
  * Keep static tool imports and account-configured tool selection here.
  */
 
-import type { GoogleGenerativeAIProvider } from "@ai-sdk/google";
 import type { ToolSet } from "ai";
 import {
   ACCOUNT_TOOL_NAMES,
   type AccountConfig,
+  type AccountModelProviderName,
   type AccountToolConfig,
   type AccountToolName,
 } from "../../_shared/accounts.ts";
@@ -20,7 +20,8 @@ export interface ToolContext {
   conversationKey: string;
   filesystemNamespace: string;
   config: AccountToolConfig;
-  google: GoogleGenerativeAIProvider;
+  modelProviderName: AccountModelProviderName;
+  modelProvider: unknown;
 }
 
 type ToolFactory = (context: ToolContext) => ToolSet;

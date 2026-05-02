@@ -16,7 +16,7 @@ Key rules:
 - Custom tools run inline inside `harness-processing` during the streaming request. Do not add queue-based tool execution or external tool-Lambda wiring unless the architecture intentionally changes.
 - Tools are opt-in through `config.tools`; no `config.tools` means no inline or provider-defined tools are passed to the model.
 - Google Search lives in `functions/harness-processing/tools/google-search.tool.ts` and is enabled through `config.tools.googleSearch`.
-- Account provider constructor settings live under `config.provider`. Account model configuration lives under `config.model`: `provider`, `modelid`/`modelId`, normal Vercel AI SDK `streamText` settings, and `options` for `providerOptions`.
+- Account provider constructor settings live under `config.provider`. Account model configuration lives under `config.model`: `provider`, `modelId`, normal Vercel AI SDK `streamText` settings, and `options` for `providerOptions`.
 - Shared code goes in `functions/_shared/` only when it is actually shared by multiple Lambdas. Keep harness-only code in `functions/harness-processing/`.
 - File header comments must use a block-docstring style:
 

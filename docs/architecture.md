@@ -38,7 +38,7 @@ flowchart TD
   Handler --> Integrations["integrations.ts<br/>account auth + routing"]
   Integrations --> Session["session.ts<br/>conversation state + memory"]
   Session --> Harness["harness.ts<br/>model/tool loop"]
-  Harness --> Model["Configured model<br/>Google direct or AI Gateway id"]
+  Harness --> Model["Configured AI SDK provider<br/>Google / OpenAI / Bedrock / Gateway"]
   Harness --> Tools["account-enabled inline tools"]
 
   Session --> Conversations["DynamoDB: Conversations"]

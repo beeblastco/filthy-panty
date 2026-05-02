@@ -75,7 +75,7 @@ describe("account config", () => {
       },
       model: {
         provider: "google",
-        modelid: "gemini-custom",
+        modelId: "gemini-custom",
         temperature: 0.2,
         options: {
           google: {
@@ -104,7 +104,7 @@ describe("account config", () => {
       },
       model: {
         provider: "google",
-        modelid: "gemini-custom",
+        modelId: "gemini-custom",
         temperature: 0.2,
         options: {
           google: {
@@ -211,7 +211,7 @@ describe("account config", () => {
     expect(toRuntimeAccountConfig({
       model: {
         provider: "google",
-        modelid: "gemini-custom",
+        modelId: "gemini-custom",
         options: {
           google: {
             thinkingConfig: {
@@ -225,7 +225,6 @@ describe("account config", () => {
           apiKey: "openai-key",
         },
       },
-      modelId: "gemini-test",
       maxAgentIterations: 3,
       memoryNamespace: "support",
       tools: {
@@ -241,7 +240,7 @@ describe("account config", () => {
     })).toEqual({
       model: {
         provider: "google",
-        modelid: "gemini-custom",
+        modelId: "gemini-custom",
         options: {
           google: {
             thinkingConfig: {
@@ -255,7 +254,6 @@ describe("account config", () => {
           apiKey: "openai-key",
         },
       },
-      modelId: "gemini-test",
       maxAgentIterations: 3,
       memoryNamespace: "support",
       tools: {
