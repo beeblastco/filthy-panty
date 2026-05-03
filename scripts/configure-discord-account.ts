@@ -5,7 +5,7 @@
  */
 
 import { optionalEnv } from "../functions/_shared/env.ts";
-import { createScriptAccountRuntimeConfig, upsertScriptAccount } from "./utils.ts";
+import { accountServiceUrl, agentServiceUrl, createScriptAccountRuntimeConfig, upsertScriptAccount } from "./utils.ts";
 
 const discordBotToken = optionalEnv("DISCORD_BOT_TOKEN");
 const discordPublicKey = optionalEnv("DISCORD_PUBLIC_KEY");
@@ -26,15 +26,15 @@ if (!allowedGuildIds) {
   process.exit(0);
 }
 
-const accountServiceUrl = process.env.ACCOUNT_SERVICE_URL!;
-const agentServiceUrl = process.env.AGENT_SERVICE_URL!;
+const accountServiceUrlValue = accountServiceUrl();
+const agentServiceUrlValue = agentServiceUrl();
 const adminSecret = process.env.ADMIN_ACCOUNT_SECRET!;
 const parsedGuildIds = parseAllowedGuildIds(allowedGuildIds);
 const username = optionalEnv("DISCORD_ACCOUNT_USERNAME")?.trim();
 const description = optionalEnv("DISCORD_ACCOUNT_DESCRIPTION")?.trim();
 
 const account = await upsertDiscordAccount();
-const webhookUrl = `${agentServiceUrl}/webhooks/${encodeURIComponent(account.accountId)}/discord`;
+const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/discord`;
 
 console.log(`Configured Discord account ${account.accountId}`);
 console.log(`Register this URL in your Discord application: ${webhookUrl}`);
@@ -52,7 +52,7 @@ async function upsertDiscordAccount() {
     };
 
     return upsertScriptAccount({
-        accountServiceUrl,
+        accountServiceUrl: accountServiceUrlValue,
         adminSecret,
         username,
         description,

@@ -5,7 +5,7 @@
  */
 
 import { optionalEnv } from "../functions/_shared/env.ts";
-import { createScriptAccountRuntimeConfig, upsertScriptAccount } from "./utils.ts";
+import { accountServiceUrl, agentServiceUrl, createScriptAccountRuntimeConfig, upsertScriptAccount } from "./utils.ts";
 
 const githubAppId = optionalEnv("GITHUB_APP_ID");
 const githubPrivateKey = optionalEnv("GITHUB_PRIVATE_KEY");
@@ -32,15 +32,15 @@ if (!allowedRepos) {
   process.exit(0);
 }
 
-const accountServiceUrl = process.env.ACCOUNT_SERVICE_URL!;
-const agentServiceUrl = process.env.AGENT_SERVICE_URL!;
+const accountServiceUrlValue = accountServiceUrl();
+const agentServiceUrlValue = agentServiceUrl();
 const adminSecret = process.env.ADMIN_ACCOUNT_SECRET!;
 const parsedRepos = parseAllowedRepos(allowedRepos);
 const username = optionalEnv("GITHUB_ACCOUNT_USERNAME")?.trim();
 const description = optionalEnv("GITHUB_ACCOUNT_DESCRIPTION")?.trim();
 
 const account = await upsertGitHubAccount();
-const webhookUrl = `${agentServiceUrl}/webhooks/${encodeURIComponent(account.accountId)}/github`;
+const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/github`;
 
 console.log(`Configured GitHub account ${account.accountId}`);
 console.log(`Register this webhook URL in your GitHub App: ${webhookUrl}`);
@@ -59,7 +59,7 @@ async function upsertGitHubAccount() {
   };
 
   return upsertScriptAccount({
-    accountServiceUrl,
+    accountServiceUrl: accountServiceUrlValue,
     adminSecret,
     username,
     description,
