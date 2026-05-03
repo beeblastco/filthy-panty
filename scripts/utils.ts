@@ -48,6 +48,10 @@ export function accountServiceUrl(): string {
   return stripTrailingSlash(outputOrEnv("ACCOUNT_SERVICE_URL", "accountServiceUrl"));
 }
 
+export function agentServiceUrl(): string {
+  return stripTrailingSlash(outputOrEnv("AGENT_SERVICE_URL", "agentServiceUrl"));
+}
+
 export function harnessProcessingUrl(): string {
   return stripTrailingSlash(outputOrEnv("HARNESS_PROCESSING_URL", "harnessProcessingUrl"));
 }

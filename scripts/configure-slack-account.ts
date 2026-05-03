@@ -5,7 +5,7 @@
  */
 
 import { optionalEnv } from "../functions/_shared/env.ts";
-import { createScriptAccountRuntimeConfig, upsertScriptAccount } from "./utils.ts";
+import { accountServiceUrl, agentServiceUrl, createScriptAccountRuntimeConfig, upsertScriptAccount } from "./utils.ts";
 
 const slackBotToken = optionalEnv("SLACK_BOT_TOKEN");
 const slackSigningSecret = optionalEnv("SLACK_SIGNING_SECRET");
@@ -26,15 +26,15 @@ if (!allowedChannelIds) {
   process.exit(0);
 }
 
-const accountServiceUrl = process.env.ACCOUNT_SERVICE_URL!;
-const agentServiceUrl = process.env.AGENT_SERVICE_URL!;
+const accountServiceUrlValue = accountServiceUrl();
+const agentServiceUrlValue = agentServiceUrl();
 const adminSecret = process.env.ADMIN_ACCOUNT_SECRET!;
 const parsedChannelIds = parseAllowedChannelIds(allowedChannelIds);
 const username = optionalEnv("SLACK_ACCOUNT_USERNAME")?.trim();
 const description = optionalEnv("SLACK_ACCOUNT_DESCRIPTION")?.trim();
 
 const account = await upsertSlackAccount();
-const webhookUrl = `${agentServiceUrl}/webhooks/${encodeURIComponent(account.accountId)}/slack`;
+const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/slack`;
 
 console.log(`Configured Slack account ${account.accountId}`);
 console.log(`Register this URL in your Slack app's Event Subscriptions: ${webhookUrl}`);
@@ -52,7 +52,7 @@ async function upsertSlackAccount() {
     };
 
     return upsertScriptAccount({
-        accountServiceUrl,
+        accountServiceUrl: accountServiceUrlValue,
         adminSecret,
         username,
         description,

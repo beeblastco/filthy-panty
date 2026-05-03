@@ -5,7 +5,7 @@
  */
 
 import { optionalEnv } from "../functions/_shared/env.ts";
-import { createScriptAccountRuntimeConfig, upsertScriptAccount } from "./utils.ts";
+import { accountServiceUrl, agentServiceUrl, createScriptAccountRuntimeConfig, upsertScriptAccount } from "./utils.ts";
 
 const telegramBotToken = optionalEnv("TELEGRAM_BOT_TOKEN");
 const telegramWebhookSecret = optionalEnv("TELEGRAM_WEBHOOK_SECRET");
@@ -26,15 +26,15 @@ if (!allowedChatIds) {
   process.exit(0);
 }
 
-const accountServiceUrl = process.env.ACCOUNT_SERVICE_URL!;
-const agentServiceUrl = process.env.AGENT_SERVICE_URL!;
+const accountServiceUrlValue = accountServiceUrl();
+const agentServiceUrlValue = agentServiceUrl();
 const adminSecret = process.env.ADMIN_ACCOUNT_SECRET!;
 const parsedChatIds = parseAllowedChatIds(allowedChatIds);
 const username = optionalEnv("TELEGRAM_ACCOUNT_USERNAME")?.trim();
 const description = optionalEnv("TELEGRAM_ACCOUNT_DESCRIPTION")?.trim();
 
 const account = await upsertTelegramAccount();
-const webhookUrl = `${agentServiceUrl}/webhooks/${encodeURIComponent(account.accountId)}/telegram`;
+const webhookUrl = `${agentServiceUrlValue}/webhooks/${encodeURIComponent(account.accountId)}/telegram`;
 await setTelegramWebhook(webhookUrl);
 
 console.log(`Configured Telegram account ${account.accountId} and webhook ${webhookUrl}`);
@@ -53,7 +53,7 @@ async function upsertTelegramAccount() {
   };
 
   return upsertScriptAccount({
-    accountServiceUrl,
+    accountServiceUrl: accountServiceUrlValue,
     adminSecret,
     username,
     description,
