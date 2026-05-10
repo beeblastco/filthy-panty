@@ -6,10 +6,15 @@ import {
   createAccount,
   createAgent,
   deleteAccount,
-  pollStatus,
-  postAsyncRequest,
+  streamSSE,
   streamToolApprovalResponse,
 } from "./utils.ts";
+
+interface ToolApprovalRequestChunk {
+  type: "tool-approval-request";
+  approvalId: string;
+  toolCallId: string;
+}
 
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;
@@ -45,7 +50,9 @@ console.log("Created test account:", JSON.stringify(account));
 console.log("Created test agent:", JSON.stringify(agent));
 
 try {
-  const { statusUrl } = await postAsyncRequest({
+  let approvalRequest: ToolApprovalRequestChunk | null = null;
+
+  for await (const chunk of streamSSE({
     agentId: agent.agent.agentId,
     eventId: `approval-request-${Date.now()}`,
     conversationKey,
@@ -56,21 +63,25 @@ try {
         text: "Search the web for the latest OpenAI model release and summarize one result.",
       }],
     }],
-  }, account.accountSecret);
-
-  const status = await pollStatus(account.accountSecret, statusUrl);
-  if (status.status !== "awaiting_approval" || !status.approvals?.[0]) {
-    throw new Error(`Expected awaiting_approval, got ${JSON.stringify(status)}`);
+  }, account.accountSecret)) {
+    process.stdout.write(chunk);
+    const parsedChunk = parseToolApprovalRequestChunk(chunk);
+    if (parsedChunk) {
+      approvalRequest = parsedChunk;
+    }
   }
 
-  const approval = status.approvals[0];
-  console.log("Approving tool call:", JSON.stringify(approval, null, 2));
+  if (!approvalRequest) {
+    throw new Error("Expected sync stream to include a tool-approval-request chunk");
+  }
+
+  console.log("\n\nApproving tool call:", JSON.stringify(approvalRequest, null, 2));
 
   for await (const chunk of streamToolApprovalResponse({
     accountSecret: account.accountSecret,
     agentId: agent.agent.agentId,
     conversationKey,
-    approvalId: approval.approvalId,
+    approvalId: approvalRequest.approvalId,
     approved: true,
     reason: "Example script approved the search.",
   })) {
@@ -79,4 +90,21 @@ try {
 } finally {
   await deleteAccount(account.accountSecret);
   console.log("\n\nDeleted test account");
+}
+
+function parseToolApprovalRequestChunk(chunk: string): ToolApprovalRequestChunk | null {
+  try {
+    const parsed = JSON.parse(chunk) as Partial<ToolApprovalRequestChunk>;
+    return parsed.type === "tool-approval-request" &&
+      typeof parsed.approvalId === "string" &&
+      typeof parsed.toolCallId === "string"
+      ? {
+        type: parsed.type,
+        approvalId: parsed.approvalId,
+        toolCallId: parsed.toolCallId,
+      }
+      : null;
+  } catch {
+    return null;
+  }
 }

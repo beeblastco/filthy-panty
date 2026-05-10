@@ -295,11 +295,19 @@ describe("runAgentLoop", () => {
     expect(onApprovalRequired).toHaveBeenCalledWith(stream.approvalSummaries());
     expect(persistModelMessages).toHaveBeenCalledWith([{
       role: "assistant",
-      content: [{
-        type: "tool-approval-request",
-        approvalId: "approval-1",
-        toolCallId: "tool-call-1",
-      }],
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "tool-call-1",
+          toolName: "filesystem",
+          input: { shell: "rm file.txt" },
+        },
+        {
+          type: "tool-approval-request",
+          approvalId: "approval-1",
+          toolCallId: "tool-call-1",
+        },
+      ],
     }]);
     expect(streamTextMock.mock.calls[0]?.[0].tools).toMatchObject({
       filesystem: {
