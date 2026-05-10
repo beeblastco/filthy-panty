@@ -6,7 +6,10 @@
 import {
   stepCountIs,
   streamText,
+  type AssistantModelMessage,
+  type ModelMessage,
   type StepResult,
+  type ToolCallPart,
   type ToolApprovalRequestOutput,
   type ToolSet,
 } from "ai";
@@ -142,10 +145,17 @@ export async function runAgentLoop(
       const finalText = text.trim();
       const stepCount = steps.length;
       const toolCallCount = toolCalls.length;
-      const approvals = extractApprovalSummaries(steps);
+      // Get all the approval request list
+      const approvalRequests = extractApprovalRequests(steps);
+      const approvals = approvalRequests.map(summarizeApprovalRequest);
 
       try {
-        await session.persistModelMessages(response.messages);
+        // Need to summarizeApprovalRequest in case compaction happend during approval request
+        await session.persistModelMessages(
+          approvalRequests.length > 0
+            ? withApprovalToolCalls(response.messages, approvalRequests)
+            : response.messages,
+        );
 
         if (approvals.length > 0) {
           approvalSummaries = approvals;
@@ -232,22 +242,70 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function extractApprovalSummaries(steps: Array<StepResult<ToolSet>>): ToolApprovalSummary[] {
+function extractApprovalRequests(steps: Array<StepResult<ToolSet>>): ApprovalRequestOutput[] {
   return steps.flatMap((step) =>
     step.content.flatMap((part) => {
       if (part.type !== "tool-approval-request") {
         return [];
       }
 
-      const toolCall = part.toolCall;
-      return [{
-        approvalId: part.approvalId,
-        toolCallId: toolCall.toolCallId,
-        toolName: toolCall.toolName,
-        input: toolCall.input,
-      }];
+      return [part];
     })
   );
+}
+
+function summarizeApprovalRequest(request: ApprovalRequestOutput): ToolApprovalSummary {
+  return {
+    approvalId: request.approvalId,
+    toolCallId: request.toolCall.toolCallId,
+    toolName: request.toolCall.toolName,
+    input: request.toolCall.input,
+  };
+}
+
+function withApprovalToolCalls(
+  messages: ModelMessage[],
+  approvalRequests: ApprovalRequestOutput[],
+): ModelMessage[] {
+  const toolCallsById = new Map(
+    approvalRequests.map((request) => [request.toolCall.toolCallId, request.toolCall]),
+  );
+
+  return messages.map((message) => {
+    if (message.role !== "assistant" || typeof message.content === "string") {
+      return message;
+    }
+
+    const existingToolCallIds = new Set(
+      message.content
+        .filter((part) => part.type === "tool-call")
+        .map((part) => part.toolCallId),
+    );
+    const content = message.content.flatMap((part) => {
+      if (part.type !== "tool-approval-request" || existingToolCallIds.has(part.toolCallId)) {
+        return [part];
+      }
+
+      const toolCall = toolCallsById.get(part.toolCallId);
+      if (!toolCall) {
+        return [part];
+      }
+
+      existingToolCallIds.add(part.toolCallId);
+      return [toToolCallPart(toolCall), part];
+    });
+
+    return { ...message, content } satisfies AssistantModelMessage;
+  });
+}
+
+function toToolCallPart(toolCall: ApprovalToolCall): ToolCallPart {
+  return {
+    type: "tool-call",
+    toolCallId: toolCall.toolCallId,
+    toolName: toolCall.toolName,
+    input: toolCall.input,
+  };
 }
 
 function serializeError(error: unknown): Record<string, unknown> {
