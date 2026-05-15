@@ -90,13 +90,13 @@ sequenceDiagram
   S->>A: start children concurrently
   M-->>H: parent stream continues
   H-->>C: SSE chunks
-  A-->>S: child result
+  A-->>S: child results
   S->>S: queue completion if parent loop is active
   M-->>H: parent loop finishes
-  H->>S: drainOrWaitForSubagents()
-  S->>H: inject queued result as parent user event
+  H->>S: wait until outstanding children settle
+  S->>H: inject queued results as parent user events
   H->>P: run parent loop again
-  P->>M: parent sees injected result
+  P->>M: parent sees batched injected results
   M-->>H: proactive continuation
   H-->>C: SSE chunks
   H-->>C: close when idle
@@ -106,7 +106,7 @@ For sync SSE, `handler.ts` creates one `SubagentCoordinator` for the request and
 
 Child runs are Promise-concurrent inside the same Lambda invocation. They are not separate Lambda workers. The active parent model stream continues after the tool result, so the parent can keep answering, call other tools, or finish its current pass.
 
-If a child finishes while the parent model is still streaming, the result is queued in memory by the coordinator. It is not injected into the active model call because AI SDK model context cannot be changed mid-generation. After the parent stream ends, `runParentContinuationLoop()` calls `drainOrWaitForSubagents()`, which injects queued child results into the parent conversation and starts another parent model pass on the same SSE response.
+If a child finishes while the parent model is still streaming, the result is queued in memory by the coordinator. It is not injected into the active model call because AI SDK model context cannot be changed mid-generation. After the parent stream ends, `runParentContinuationLoop()` waits for all outstanding child work from the current batch to finish, injects the queued child results into the parent conversation together, and starts one parent model pass on the same SSE response.
 
 If the parent finishes before child work completes, the same SSE response remains open. During quiet waits the runtime sends SSE comment heartbeats such as:
 
@@ -115,18 +115,18 @@ If the parent finishes before child work completes, the same SSE response remain
 
 ```
 
-SSE clients ignore comments, but the bytes keep long idle streams alive. When a child finishes, the runtime injects a parent `user` event containing the task id, child metadata, child conversation key, and result or error. Then it runs the parent model again on the same SSE stream so the parent can react.
+SSE clients ignore comments, but the bytes keep long idle streams alive. As each child finishes, the runtime queues a parent `user` event containing the task id, child metadata, child conversation key, and result or error. When the outstanding child batch is idle, it injects all queued events and runs the parent model again on the same SSE stream so the parent can react once to the full batch.
 
-`drainOrWaitForSubagents()` is the handoff point between parent passes:
+The subagent handoff is the bridge between parent passes:
 
-- drain queued completions immediately when children finished before the parent stream ended
+- drain queued completions immediately when no children are still pending
 - return `0` when no subagents are pending, allowing the SSE response to close
-- wait for the next child completion when children are still running
+- wait for all outstanding child work when children are still running
 - emit heartbeat comments during SSE waits
-- inject timeout notices near the Lambda deadline so the parent can produce a partial continuation
+- inject completed results and timeout notices together near the Lambda deadline so the parent can produce a partial continuation
 
 ## Async And Channels
 
-`/async` and channel/webhook requests use the same coordinator loop without SSE heartbeats. They wait for child-triggered parent continuation within the Lambda timeout budget before settling the async result or sending the channel reply.
+`/async` and channel/webhook requests use the same coordinator loop without SSE heartbeats. They wait for batched child-result parent continuation within the Lambda timeout budget before settling the async result or sending the channel reply.
 
 `AsyncResults` still stores subagent task status for polling, but the SSE continuation path does not need separate child Lambda processors.

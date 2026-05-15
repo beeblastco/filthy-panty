@@ -58,6 +58,7 @@ interface ResolvedSubagentTask {
 export class SubagentCoordinator {
   private readonly completions: SubagentCompletion[] = [];
   private readonly pending = new Map<string, Promise<void>>();
+  private readonly pendingMetadata = new Map<string, Omit<SubagentCompletion, "status" | "response" | "error">>();
   private readonly waiters = new Set<() => void>();
 
   constructor(
@@ -100,26 +101,22 @@ export class SubagentCoordinator {
     return this.pending.size;
   }
 
-  hasCompletions(): boolean {
-    return this.completions.length > 0;
-  }
-
-  async waitForNextCompletion(options: {
+  async waitForIdle(options: {
     onHeartbeat?: (pendingCount: number) => void;
-  } = {}): Promise<boolean> {
-    while (this.pending.size > 0 && this.completions.length === 0 && Date.now() < this.waitUntilMs) {
+  } = {}): Promise<"idle" | "timeout"> {
+    while (this.pending.size > 0 && Date.now() < this.waitUntilMs) {
       const heartbeatAt = Math.min(Date.now() + HEARTBEAT_INTERVAL_MS, this.waitUntilMs);
       await Promise.race([
-        this.nextCompletion(),
+        this.nextStateChange(),
         sleep(Math.max(heartbeatAt - Date.now(), 0)),
       ]);
 
-      if (this.completions.length === 0 && this.pending.size > 0) {
+      if (this.pending.size > 0) {
         options.onHeartbeat?.(this.pending.size);
       }
     }
 
-    return this.completions.length > 0;
+    return this.pending.size === 0 ? "idle" : "timeout";
   }
 
   async drainCompletionsToParent(): Promise<number> {
@@ -132,23 +129,30 @@ export class SubagentCoordinator {
     return completions.length;
   }
 
-  async injectTimeoutsToParent(): Promise<number> {
-    if (this.pending.size === 0) {
+  async drainCompletionsAndTimeoutsToParent(): Promise<number> {
+    if (this.completions.length === 0 && this.pending.size === 0) {
       return 0;
     }
 
-    const timeouts = [...this.pending.keys()].map((taskId): SubagentCompletion => ({
-      taskId,
-      agentId: "unknown",
-      name: "Pending subagent",
-      conversationKey: "unknown",
-      status: "failed",
-      error: "Subagent task is still pending near the parent request timeout.",
-    }));
+    const completions = this.completions.splice(0);
+    const timeouts = [...this.pending.keys()].map((taskId): SubagentCompletion => {
+      const metadata = this.pendingMetadata.get(taskId);
+      return {
+        taskId: metadata?.taskId ?? taskId,
+        agentId: metadata?.agentId ?? "unknown",
+        name: metadata?.name ?? "Pending subagent",
+        ...(metadata?.description ? { description: metadata.description } : {}),
+        conversationKey: metadata?.conversationKey ?? "unknown",
+        status: "failed",
+        error: "Subagent task is still pending near the parent request timeout.",
+      };
+    });
 
     this.pending.clear();
-    await this.parentSession.persistModelMessages(timeouts.map(completionToParentMessage));
-    return timeouts.length;
+    this.pendingMetadata.clear();
+    const batch = [...completions, ...timeouts];
+    await this.parentSession.persistModelMessages(batch.map(completionToParentMessage));
+    return batch.length;
   }
 
   private async resolveTask(
@@ -229,10 +233,18 @@ export class SubagentCoordinator {
       }))
       .finally(() => {
         this.pending.delete(task.taskId);
+        this.pendingMetadata.delete(task.taskId);
         this.notifyCompletion();
       });
 
     this.pending.set(task.taskId, promise);
+    this.pendingMetadata.set(task.taskId, {
+      taskId: task.taskId,
+      agentId: task.agentId,
+      name: task.name,
+      ...(task.description ? { description: task.description } : {}),
+      conversationKey: task.publicConversationKey,
+    });
   }
 
   /**
@@ -314,6 +326,8 @@ export class SubagentCoordinator {
   }
 
   private async completeTask(completion: SubagentCompletion): Promise<void> {
+    const shouldInjectToParent = this.pending.has(completion.taskId);
+
     if (completion.status === "failed") {
       await markAsyncResultFailed({
         eventId: scopedDirectEventId(
@@ -330,6 +344,10 @@ export class SubagentCoordinator {
       });
     }
 
+    if (!shouldInjectToParent) {
+      return;
+    }
+
     this.completions.push(completion);
     this.notifyCompletion();
     logInfo("Subagent task completed", {
@@ -340,11 +358,7 @@ export class SubagentCoordinator {
     });
   }
 
-  private nextCompletion(): Promise<void> {
-    if (this.completions.length > 0) {
-      return Promise.resolve();
-    }
-
+  private nextStateChange(): Promise<void> {
     return new Promise((resolve) => {
       this.waiters.add(resolve);
     });

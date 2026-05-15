@@ -133,9 +133,9 @@ flowchart TD
   Agent -->|"run_subagent tool call"| Coordinator
   Coordinator --> ChildRuns["subagents.ts<br/>in-process child agent loops"]
   ChildRuns -->|"queued completion"| Coordinator
-  Coordinator -->|"inject result event"| Session
+  Coordinator -->|"inject batched result events"| Session
   Coordinator -->|"heartbeat comments while parent waits"| Caller
-  HandlerLoop -->|"rerun after injected result"| Agent
+  HandlerLoop -->|"rerun after batched results"| Agent
 
   Async --> Pending["status.ts<br/>processing"]
   Pending --> AsyncTable["AsyncResults"]
@@ -149,7 +149,7 @@ flowchart TD
   Status --> AsyncTable
 ```
 
-The async path stays inside `harness-processing`: `POST /async` stores a processing record, returns a status URL, and starts an internal async Lambda self-invocation. The worker runs the same account-scoped agent turn and updates `AsyncResults`. Subagent dispatch does not require a separate child Lambda for SSE continuation; child agent loops run concurrently inside the parent invocation, and their results are injected as parent conversation events before the parent loop runs again.
+The async path stays inside `harness-processing`: `POST /async` stores a processing record, returns a status URL, and starts an internal async Lambda self-invocation. The worker runs the same account-scoped agent turn and updates `AsyncResults`. Subagent dispatch does not require a separate child Lambda for SSE continuation; child agent loops run concurrently inside the parent invocation, and their results are batched into parent conversation events before the parent loop runs again.
 
 ## Channel Webhooks
 

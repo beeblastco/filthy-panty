@@ -37,7 +37,7 @@ type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 const CONVERSATIONS_TABLE_NAME = requireEnv("CONVERSATIONS_TABLE_NAME");
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
 const CHANNEL_APPROVAL_DENIAL_REASON = "Tool approval is only supported through the direct API.";
-const LAMBDA_TIMEOUT_SAFETY_MS = 15_000;
+const LAMBDA_TIMEOUT_SAFETY_MS = 5 * 60 * 1000;
 const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const textEncoder = new TextEncoder();
 const lambda = new LambdaClient({ region: process.env.AWS_REGION });
@@ -550,7 +550,8 @@ async function runParentContinuationLoop(options: {
       };
     }
 
-    const injected = await drainOrWaitForSubagents(options.coordinator, {
+    // Wait for any injected subagents to complete.
+    const injected = await waitAndDrainSubagents(options.coordinator, {
       onHeartbeat: options.onHeartbeat,
     });
     if (injected === 0) {
@@ -568,29 +569,25 @@ async function runParentContinuationLoop(options: {
  * Bridges one completed parent model pass to the next continuation pass.
  *
  * After the parent stream ends, subagent results may already be queued, still be
- * running, or be absent. This helper injects queued results immediately, waits
- * for the next child completion when needed, emits SSE heartbeats through the
- * coordinator wait path, and injects timeout notices near the Lambda deadline.
+ * running, or be absent. This helper waits for the whole outstanding child
+ * batch, emits SSE heartbeats while waiting, and injects one parent-visible
+ * batch containing all completions plus timeout notices near the Lambda
+ * deadline.
  */
-async function drainOrWaitForSubagents(
+async function waitAndDrainSubagents(
   coordinator: SubagentCoordinator,
   options: { onHeartbeat?: (pendingCount: number) => void } = {},
 ): Promise<number> {
-  const immediate = await coordinator.drainCompletionsToParent();
-  if (immediate > 0) {
-    return immediate;
-  }
-
   if (coordinator.pendingCount === 0) {
-    return 0;
-  }
-
-  const hasCompletion = await coordinator.waitForNextCompletion(options);
-  if (hasCompletion) {
     return coordinator.drainCompletionsToParent();
   }
 
-  return coordinator.injectTimeoutsToParent();
+  const status = await coordinator.waitForIdle(options);
+  if (status === "idle") {
+    return coordinator.drainCompletionsToParent();
+  }
+
+  return coordinator.drainCompletionsAndTimeoutsToParent();
 }
 
 async function pipeAgentSseStream(
