@@ -18,8 +18,8 @@ import type { LambdaFunctionURLEvent } from "aws-lambda";
 import {
   getAccount,
   resolveBearerAuth,
-  toRuntimeAccountConfig,
-  type AccountConfig,
+  toRuntimeAgentConfig,
+  type AgentConfig,
   type AccountRecord,
   type AuthContext,
 } from "../_shared/accounts.ts";
@@ -66,7 +66,7 @@ type DirectIngressEvent =
 export interface DirectInboundEvent {
   accountId: string;
   agentId: string;
-  accountConfig: AccountConfig;
+  agentConfig: AgentConfig;
   eventId: string;
   publicEventId: string;
   conversationKey: string;
@@ -90,7 +90,7 @@ export interface StatusInboundEvent {
 export interface ChannelInboundEvent {
   accountId?: string;
   agentId?: string;
-  accountConfig?: AccountConfig;
+  agentConfig?: AgentConfig;
   eventId: string;
   conversationKey: string;
   content: UserContent;
@@ -256,8 +256,8 @@ async function handleChannelWebhook(
   adapter: ChannelAdapter,
   request: ChannelRequest,
   handlers: IntegrationHandlers,
-  account?: AccountRecord,
-  agent?: AgentRecord,
+  account: AccountRecord,
+  agent: AgentRecord,
 ): Promise<LambdaResponse> {
   try {
     if (!(await adapter.authenticate(request))) {
@@ -284,20 +284,16 @@ async function handleChannelWebhook(
       body: response.body ?? "",
       afterResponse: processChannelMessage(
         {
-          eventId: account && agent ? accountAgentScopedKey(account.accountId, agent.agentId, message.eventId) : message.eventId,
-          conversationKey: account && agent ? accountAgentScopedKey(account.accountId, agent.agentId, message.conversationKey) : message.conversationKey,
+          eventId: accountAgentScopedKey(account.accountId, agent.agentId, message.eventId),
+          conversationKey: accountAgentScopedKey(account.accountId, agent.agentId, message.conversationKey),
           content: message.content,
           events: [{ role: "user", content: message.content }],
           channelName: message.channelName,
           source: message.source,
           channel,
-          ...(account
-            ? {
-              accountId: account.accountId,
-              ...(agent ? { agentId: agent.agentId } : {}),
-              accountConfig: toRuntimeAccountConfig(agent?.config ?? account.config),
-            }
-            : {}),
+          accountId: account.accountId,
+          agentId: agent.agentId,
+          agentConfig: toRuntimeAgentConfig(agent.config),
         },
         handlers,
       ),
@@ -373,7 +369,7 @@ function directApiDisabledResponse(): LambdaResponse {
   return errorResponse(404, "Direct API is disabled");
 }
 
-function createChannelRegistry(config: AccountConfig): ChannelRegistry {
+function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const telegramChannel = createTelegramChannelFromConfig(config);
   const githubChannel = createGitHubChannelFromConfig(config);
   const slackChannel = createSlackChannelFromConfig(config);
@@ -434,7 +430,7 @@ async function parseDirectPayload(
   return {
     accountId: account.accountId,
     agentId: agent.agentId,
-    accountConfig: toRuntimeAccountConfig(agent.config),
+    agentConfig: toRuntimeAgentConfig(agent.config),
     eventId: scopedDirectEventId(account.accountId, agent.agentId, rawEventId),
     publicEventId: rawEventId,
     conversationKey: scopedDirectConversationKey(account.accountId, agent.agentId, rawConversationKey),
@@ -601,7 +597,7 @@ function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
 
 class DirectNotFoundError extends Error { }
 
-function createTelegramChannelFromConfig(config: AccountConfig): ChannelAdapter | null {
+function createTelegramChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
   const channel = config.channels?.telegram;
   if (!channel?.botToken || !channel.webhookSecret || !channel.allowedChatIds) {
     return null;
@@ -615,7 +611,7 @@ function createTelegramChannelFromConfig(config: AccountConfig): ChannelAdapter 
   );
 }
 
-function createGitHubChannelFromConfig(config: AccountConfig): ChannelAdapter | null {
+function createGitHubChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
   const channel = config.channels?.github;
   if (!channel?.webhookSecret || !channel.appId || !channel.privateKey) {
     return null;
@@ -629,7 +625,7 @@ function createGitHubChannelFromConfig(config: AccountConfig): ChannelAdapter | 
   );
 }
 
-function createSlackChannelFromConfig(config: AccountConfig): ChannelAdapter | null {
+function createSlackChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
   const channel = config.channels?.slack;
   if (!channel?.botToken || !channel.signingSecret) {
     return null;
@@ -642,7 +638,7 @@ function createSlackChannelFromConfig(config: AccountConfig): ChannelAdapter | n
   );
 }
 
-function createDiscordChannelFromConfig(config: AccountConfig): ChannelAdapter | null {
+function createDiscordChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
   const channel = config.channels?.discord;
   if (!channel?.botToken || !channel.publicKey) {
     return null;

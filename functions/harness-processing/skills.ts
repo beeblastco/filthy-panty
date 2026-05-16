@@ -4,7 +4,7 @@
  */
 
 import type { SystemModelMessage } from "ai";
-import type { AccountConfig } from "../_shared/accounts.ts";
+import type { AgentConfig } from "../_shared/accounts.ts";
 import {
   assertAccountOwnsSkillPath,
   normalizeBundlePath,
@@ -21,13 +21,13 @@ export type { SkillMetadata } from "../_shared/skills.ts";
 
 export async function listConfiguredSkillMetadata(
   accountId: string | undefined,
-  accountConfig: AccountConfig,
+  agentConfig: AgentConfig,
 ): Promise<SkillMetadata[]> {
-  if (!isSkillsEnabled(accountConfig) || !accountId) {
+  if (!(agentConfig.skills?.enabled === true) || !accountId) {
     return [];
   }
 
-  return listSkillMetadataForConfig(accountId, accountConfig.skills?.allowed ?? []);
+  return listSkillMetadataForConfig(accountId, agentConfig.skills?.allowed ?? []);
 }
 
 export async function loadConfiguredSkillPrompt(
@@ -113,8 +113,4 @@ function formatLoadedSkillPrompt(loaded: Awaited<ReturnType<typeof loadSkillCont
   return `<loaded-skill path="${loaded.skillPath}" name="${loaded.skill.name}">
 ${parts}
 </loaded-skill>`;
-}
-
-function isSkillsEnabled(accountConfig: AccountConfig): boolean {
-  return accountConfig.skills?.enabled === true;
 }

@@ -13,9 +13,9 @@ import {
   type ToolApprovalRequestOutput,
   type ToolSet,
 } from "ai";
-import type { AccountConfig } from "../_shared/accounts.ts";
+import type { AgentConfig } from "../_shared/accounts.ts";
 import { logError, logInfo, logWarn } from "../_shared/log.ts";
-import { modelSettingsFromModelConfig, resolveConfiguredModel } from "./model.ts";
+import { modelSettingsFromModelConfig, resolveConfiguredModel } from "./provider.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
 import type { Session, TurnContextSnapshot } from "./session.ts";
 import type { RunAsyncToolDispatch } from "./async-tools.ts";
@@ -49,14 +49,14 @@ export interface AgentLoopOptions {
 export async function runAgentLoop(
   session: Session,
   turnContext: TurnContextSnapshot,
-  accountConfig: AccountConfig,
+  agentConfig: AgentConfig,
   reply?: AgentReplyHooks,
   options: AgentLoopOptions = {},
 ) {
   let didFail = false;
   let failureText: string | null = null;
   let systemContextSnapshot = turnContext.systemContextSnapshot;
-  const configuredModel = resolveConfiguredModel(accountConfig);
+  const configuredModel = resolveConfiguredModel(agentConfig);
 
   const tools = {
     ...createTools({
@@ -76,10 +76,10 @@ export async function runAgentLoop(
             options.dispatchSubagents!(tasks, stripReasoningFromMessages(messages), turnContext.ephemeralSystem),
         }
         : {}),
-    }, accountConfig),
+    }, agentConfig),
   } satisfies ToolSet;
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;
-  const modelSettings = modelSettingsFromModelConfig(accountConfig);
+  const modelSettings = modelSettingsFromModelConfig(agentConfig);
   let approvalSummaries: ToolApprovalSummary[] = [];
 
   const stream = streamText({
@@ -89,8 +89,8 @@ export async function runAgentLoop(
     system: turnContext.system,
     messages: turnContext.messages,
     ...(enabledTools ? { tools: enabledTools } : {}),
-    ...(accountConfig.model?.options ? { providerOptions: accountConfig.model.options as never } : {}),
-    stopWhen: stepCountIs(accountConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS),
+    ...(agentConfig.model?.options ? { providerOptions: agentConfig.model.options as never } : {}),
+    stopWhen: stepCountIs(agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS),
     prepareStep: async () => {
       // `systemContextSnapshot` is the persisted system-message snapshot from
       // session.ts. Refresh it before each step so dynamic system context added

@@ -5,7 +5,7 @@
 
 import { readFileSync } from "node:fs";
 
-import type { AccountConfig } from "../functions/_shared/accounts.ts";
+import type { AgentConfig } from "../functions/_shared/accounts.ts";
 import { DEFAULT_SYSTEM_PROMPT } from "../functions/_shared/.generated/system-prompt.ts";
 import {
   accountModelProviderNames,
@@ -100,7 +100,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-export function createScriptAccountRuntimeConfig(): AccountConfig {
+export function createScriptAgentConfig(): AgentConfig {
   const provider = parseAccountModelProvider(optionalScriptEnv("ACCOUNT_MODEL_PROVIDER") ?? DEFAULT_ACCOUNT_MODEL_PROVIDER);
   const modelId = optionalScriptEnv("ACCOUNT_MODEL_ID") ?? DEFAULT_ACCOUNT_MODEL_ID;
   const knowledgeCutoff = optionalScriptEnv("ACCOUNT_MODEL_KNOWLEDGE_CUTOFF") ?? DEFAULT_ACCOUNT_KNOWLEDGE_CUTOFF;
@@ -136,7 +136,7 @@ export async function upsertScriptAccount(input: {
   description: string | undefined;
   agentName?: string;
   agentDescription?: string;
-  config: AccountConfig;
+  config: AgentConfig;
 }): Promise<ScriptAccountAgent> {
   const existing = await findExistingAccount(input.accountServiceUrl, input.adminSecret, input.username);
   const accountBody = {
@@ -219,7 +219,7 @@ async function upsertScriptAgent(
     accountId: string;
     name: string;
     description: string | undefined;
-    config: AccountConfig;
+    config: AgentConfig;
   },
 ): Promise<PublicAgent> {
   const agentsResponse = await accountApi(

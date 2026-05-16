@@ -4,7 +4,7 @@ Use this page as a routing guide for extension work. Keep detailed implementatio
 
 ## Add an External Tool
 
-Use [External Tools](tools.md) for Tavily-style, Google Search-style, or other account-configured integrations that call outside services from the model loop.
+Use [External Tools](tools.md) for Tavily-style, Google Search-style, or other agent-configured integrations that call outside services from the model loop.
 
 ## Add a Channel
 

@@ -160,7 +160,7 @@ describe("session pruning", () => {
 });
 
 describe("session compaction", () => {
-  const compactingAccountConfig = {
+  const compactingAgentConfig = {
     provider: {
       google: {
         apiKey: "google-key",
@@ -185,7 +185,7 @@ describe("session compaction", () => {
       conversationKey: "conversation",
       system: [],
       messages: [{ role: "user", content: "hello" }],
-      accountConfig: {},
+      agentConfig: {},
     });
 
     expect(result).toBeNull();
@@ -203,7 +203,7 @@ describe("session compaction", () => {
         { role: "assistant", content: "old assistant content that should be summarized" },
         { role: "user", content: "current request" },
       ],
-      accountConfig: compactingAccountConfig,
+      agentConfig: compactingAgentConfig,
     });
 
     expect(result).toBeDefined();
@@ -227,7 +227,7 @@ describe("session compaction", () => {
         { role: "assistant", content: "new assistant content" },
         { role: "user", content: "current request" },
       ],
-      accountConfig: compactingAccountConfig,
+      agentConfig: compactingAgentConfig,
     });
 
     const options = generateTextMock.mock.calls[0]?.[0] as { messages: Array<{ content: string }> } | undefined;
@@ -254,7 +254,7 @@ describe("session compaction", () => {
         },
         { role: "user", content: "current request" },
       ],
-      accountConfig: compactingAccountConfig,
+      agentConfig: compactingAgentConfig,
     });
 
     const options = generateTextMock.mock.calls[0]?.[0] as { messages: Array<{ content: string }> } | undefined;
@@ -328,7 +328,7 @@ describe("session compaction", () => {
           }],
         },
       ] as actualAi.ModelMessage[],
-      accountConfig: compactingAccountConfig,
+      agentConfig: compactingAgentConfig,
     });
 
     expect(result).toBeNull();

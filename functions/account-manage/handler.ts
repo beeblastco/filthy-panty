@@ -304,16 +304,7 @@ function toSkillResponse(skill: SkillMetadata | StoredSkill): Record<string, unk
 }
 
 function parseAccountPatch(event: LambdaFunctionURLEvent): unknown {
-    const body = parseJsonBody(event);
-    if (!isRecord(body)) {
-        return body;
-    }
-
-    if ("username" in body || "description" in body || "config" in body) {
-        return body;
-    }
-
-    return { config: body };
+    return parseJsonBody(event);
 }
 
 function errorResponseForError(err: unknown): LambdaResponse {
@@ -327,8 +318,4 @@ function errorResponseForError(err: unknown): LambdaResponse {
         return errorResponse(404, err.message);
     }
     return errorResponse(400, err instanceof Error ? err.message : "Invalid request");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

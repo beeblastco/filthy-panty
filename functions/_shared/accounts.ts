@@ -1,6 +1,6 @@
 /**
- * Shared account configuration, auth, and DynamoDB persistence.
- * Keep account-level storage and secret handling here for all Lambdas.
+ * Shared account auth, tenant metadata, and runtime config validation.
+ * Keep account storage here; active agent config storage lives in agents.ts.
  */
 
 import {
@@ -15,9 +15,7 @@ import {
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
     dynamo,
-    fromAttributeValue,
     isConditionalCheckFailed,
-    toAttributeValue,
 } from "./dynamo.ts";
 import { optionalEnv, requireEnv } from "./env.ts";
 import {
@@ -42,111 +40,110 @@ export interface AccountRecord {
   description?: string;
   secretHash: string;
   status: AccountStatus;
-  config: AccountConfig;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface AccountConfig {
-  agent?: AccountAgentConfig;
-  model?: AccountModelConfig;
-  provider?: AccountProviderConfig;
-  workspace?: AccountWorkspaceConfig;
-  session?: AccountSessionConfig;
-  channels?: AccountChannelsConfig;
-  tools?: AccountToolsConfig;
-  skills?: AccountSkillsConfig;
-  subagent?: AccountSubagentConfig;
+export interface AgentConfig {
+  agent?: AgentBehaviorConfig;
+  model?: AgentModelConfig;
+  provider?: AgentProviderConfig;
+  workspace?: AgentWorkspaceConfig;
+  session?: AgentSessionConfig;
+  channels?: AgentChannelsConfig;
+  tools?: AgentToolsConfig;
+  skills?: AgentSkillsConfig;
+  subagent?: AgentSubagentConfig;
   [key: string]: unknown;
 }
 
-export interface AccountAgentConfig {
+export interface AgentBehaviorConfig {
   maxTurn?: number;
   system?: string;
   [key: string]: unknown;
 }
 
-export interface AccountSkillsConfig {
+export interface AgentSkillsConfig {
   enabled?: boolean;
   allowed?: string[];
   [key: string]: unknown;
 }
 
-export interface AccountSubagentConfig {
+export interface AgentSubagentConfig {
   enabled?: boolean;
   allowed?: string[];
   context?: "new" | "inherited";
   [key: string]: unknown;
 }
 
-export interface AccountModelConfig {
+export interface AgentModelConfig {
   provider?: AccountModelProviderName;
   modelId?: string;
   options?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
-export type AccountProviderConfig = Partial<Record<AccountModelProviderName, AccountProviderSettings>>;
+export type AgentProviderConfig = Partial<Record<AccountModelProviderName, AgentProviderSettings>>;
 
-export interface AccountProviderSettings {
+export interface AgentProviderSettings {
   [key: string]: unknown;
 }
 
-export interface AccountWorkspaceConfig {
+export interface AgentWorkspaceConfig {
   enabled?: boolean;
   needsApproval?: boolean;
-  memory?: AccountWorkspaceMemoryConfig;
-  filesystem?: AccountWorkspaceToolConfig;
-  tasks?: AccountWorkspaceToolConfig;
+  memory?: AgentWorkspaceMemoryConfig;
+  filesystem?: AgentWorkspaceToolConfig;
+  tasks?: AgentWorkspaceToolConfig;
   [key: string]: unknown;
 }
 
-export interface AccountWorkspaceMemoryConfig {
+export interface AgentWorkspaceMemoryConfig {
   enabled?: boolean;
   namespace?: string;
   [key: string]: unknown;
 }
 
-export interface AccountWorkspaceToolConfig {
+export interface AgentWorkspaceToolConfig {
   enabled?: boolean;
   [key: string]: unknown;
 }
 
-export interface AccountSessionConfig {
-  pruning?: AccountSessionPruningConfig;
-  compaction?: AccountSessionCompactionConfig;
+export interface AgentSessionConfig {
+  pruning?: AgentSessionPruningConfig;
+  compaction?: AgentSessionCompactionConfig;
   [key: string]: unknown;
 }
 
-export interface AccountSessionPruningConfig {
+export interface AgentSessionPruningConfig {
   enabled?: boolean;
   [key: string]: unknown;
 }
 
-export interface AccountSessionCompactionConfig {
+export interface AgentSessionCompactionConfig {
   enabled?: boolean;
   maxContextLength?: number;
   [key: string]: unknown;
 }
 
-export type AccountToolsConfig = Record<string, AccountToolConfig>;
+export type AgentToolsConfig = Record<string, AgentToolConfig>;
 
-export interface AccountToolConfig {
+export interface AgentToolConfig {
   enabled?: boolean;
   needsApproval?: boolean;
   async?: boolean;
   [key: string]: unknown;
 }
 
-export interface AccountChannelsConfig {
-  telegram?: TelegramAccountConfig;
-  github?: GitHubAccountConfig;
-  slack?: SlackAccountConfig;
-  discord?: DiscordAccountConfig;
+export interface AgentChannelsConfig {
+  telegram?: AgentTelegramChannelConfig;
+  github?: AgentGitHubChannelConfig;
+  slack?: AgentSlackChannelConfig;
+  discord?: AgentDiscordChannelConfig;
   [key: string]: unknown;
 }
 
-export interface TelegramAccountConfig {
+export interface AgentTelegramChannelConfig {
   botToken?: string;
   webhookSecret?: string;
   allowedChatIds?: number[];
@@ -154,7 +151,7 @@ export interface TelegramAccountConfig {
   [key: string]: unknown;
 }
 
-export interface GitHubAccountConfig {
+export interface AgentGitHubChannelConfig {
   webhookSecret?: string;
   appId?: string;
   privateKey?: string;
@@ -162,14 +159,14 @@ export interface GitHubAccountConfig {
   [key: string]: unknown;
 }
 
-export interface SlackAccountConfig {
+export interface AgentSlackChannelConfig {
   botToken?: string;
   signingSecret?: string;
   allowedChannelIds?: string[];
   [key: string]: unknown;
 }
 
-export interface DiscordAccountConfig {
+export interface AgentDiscordChannelConfig {
   botToken?: string;
   publicKey?: string;
   allowedGuildIds?: string[];
@@ -185,12 +182,11 @@ export interface PublicAccountRecord {
   username: string;
   description?: string;
   status: AccountStatus;
-  config: AccountConfig;
   createdAt: string;
   updatedAt: string;
 }
 
-interface EncryptedAccountConfig {
+interface EncryptedAgentConfig {
     encrypted: true;
     algorithm: typeof CONFIG_ENCRYPTION_ALGORITHM;
     iv: string;
@@ -206,10 +202,9 @@ export interface CreateAccountInput {
 export interface UpdateAccountInput {
   username?: string;
   description?: string | null;
-  config?: unknown;
 }
 
-type AccountConfigPatch = Record<string, unknown>;
+type AgentConfigPatch = Record<string, unknown>;
 
 export function createAccountId(): string {
   return `acct_${randomBytes(12).toString("hex")}`;
@@ -269,7 +264,6 @@ export async function createAccount(input: CreateAccountInput): Promise<{
     ...(normalizedInput.description ? { description: normalizedInput.description } : {}),
     secretHash: hashAccountSecret(accountSecret),
     status: DEFAULT_ACCOUNT_STATUS,
-    config: {},
     createdAt: now,
     updatedAt: now,
   };
@@ -330,17 +324,13 @@ export async function updateAccount(
     accountId: string,
     input: UpdateAccountInput,
 ): Promise<AccountRecord | null> {
+    const normalizedInput = normalizeUpdateAccountInput(input);
     const existing = await getAccount(accountId);
     if (!existing) {
         return null;
     }
 
-    const normalizedInput = normalizeUpdateAccountInput(input);
-    const mergedConfig = normalizedInput.config === undefined
-        ? existing.config
-        : mergeAccountConfig(existing.config, normalizeAccountConfigPatch(normalizedInput.config));
     const setExpressions = [
-        "#config = :config",
         "updatedAt = :updatedAt",
         ...(normalizedInput.username !== undefined ? ["username = :username"] : []),
         ...(normalizedInput.description !== undefined && normalizedInput.description !== null
@@ -356,11 +346,7 @@ export async function updateAccount(
             ...(removeExpressions.length > 0 ? [`REMOVE ${removeExpressions.join(", ")}`] : []),
         ].join(" "),
         ConditionExpression: "attribute_exists(accountId)",
-        ExpressionAttributeNames: {
-            "#config": "config",
-        },
         ExpressionAttributeValues: {
-            ":config": toAttributeValue(encryptAccountConfig(mergedConfig)),
             ":updatedAt": { S: new Date().toISOString() },
             ...(normalizedInput.username !== undefined ? { ":username": { S: normalizedInput.username } } : {}),
             ...(normalizedInput.description !== undefined && normalizedInput.description !== null
@@ -425,13 +411,12 @@ export function toPublicAccount(account: AccountRecord): PublicAccountRecord {
     username: account.username,
     ...(account.description ? { description: account.description } : {}),
     status: account.status,
-    config: redactAccountConfig(account.config),
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };
 }
 
-export function toRuntimeAccountConfig(config: AccountConfig): AccountConfig {
+export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
   const {
     agent,
     model,
@@ -443,7 +428,7 @@ export function toRuntimeAccountConfig(config: AccountConfig): AccountConfig {
     subagent,
   } = config;
 
-  return normalizeAccountConfig({
+  return normalizeAgentConfig({
     ...(agent !== undefined ? { agent } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(provider !== undefined ? { provider } : {}),
@@ -455,7 +440,7 @@ export function toRuntimeAccountConfig(config: AccountConfig): AccountConfig {
   });
 }
 
-export function normalizeAccountConfig(value: unknown): AccountConfig {
+export function normalizeAgentConfig(value: unknown): AgentConfig {
   if (value == null) {
     return {};
   }
@@ -465,7 +450,7 @@ export function normalizeAccountConfig(value: unknown): AccountConfig {
   }
 
   const config = value as Record<string, unknown>;
-  normalizeAgentConfig(config.agent);
+  normalizeAgentBehaviorConfig(config.agent);
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
   normalizeWorkspaceConfig(config.workspace);
@@ -475,10 +460,10 @@ export function normalizeAccountConfig(value: unknown): AccountConfig {
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
 
-  return config as AccountConfig;
+  return config as AgentConfig;
 }
 
-export function normalizeAccountConfigPatch(value: unknown): AccountConfigPatch {
+export function normalizeAgentConfigPatch(value: unknown): AgentConfigPatch {
   if (!isPlainObject(value)) {
     throw new Error("config must be an object");
   }
@@ -497,7 +482,7 @@ function normalizeCreateAccountInput(value: unknown): Required<Pick<CreateAccoun
   const username = normalizeRequiredString(value.username, "username");
   const description = normalizeOptionalString(value.description, "description");
   if ("config" in value) {
-    throw new Error("Account config is now created through /accounts/me/agents");
+    throw new Error("Agent config is created through /accounts/me/agents");
   }
   return {
     username,
@@ -509,16 +494,23 @@ function normalizeUpdateAccountInput(value: UpdateAccountInput): UpdateAccountIn
   if (!isPlainObject(value)) {
     throw new Error("Request body must be an object");
   }
+  if ("config" in value) {
+    throw new Error("Agent config must be updated through /accounts/me/agents/{agentId}");
+  }
 
-  return {
+  const normalized = {
     ...(value.username !== undefined
       ? { username: normalizeRequiredString(value.username, "username") }
       : {}),
     ...(value.description !== undefined
       ? { description: value.description === null ? null : normalizeOptionalString(value.description, "description") }
       : {}),
-    ...("config" in value ? { config: value.config } : {}),
   };
+  if (Object.keys(normalized).length === 0) {
+    throw new Error("Request body must include username or description");
+  }
+
+  return normalized;
 }
 
 function normalizeChannelsConfig(value: unknown): void {
@@ -536,7 +528,7 @@ function normalizeChannelsConfig(value: unknown): void {
   normalizeDiscordConfig(channels.discord);
 }
 
-function normalizeAgentConfig(value: unknown): void {
+function normalizeAgentBehaviorConfig(value: unknown): void {
   if (value == null) {
     return;
   }
@@ -813,7 +805,7 @@ function validateConfigPatch(value: unknown, path: string): void {
   const withoutNulls = removeNullConfigValues(candidate);
 
   if (path === "config") {
-    normalizeAccountConfig(withoutNulls);
+    normalizeAgentConfig(withoutNulls);
     return;
   }
 
@@ -893,7 +885,6 @@ function accountToItem(account: AccountRecord): Record<string, AttributeValue> {
     ...(account.description ? { description: { S: account.description } } : {}),
     secretHash: { S: account.secretHash },
     status: { S: account.status },
-    config: toAttributeValue(encryptAccountConfig(account.config)),
     createdAt: { S: account.createdAt },
     updatedAt: { S: account.updatedAt },
   };
@@ -918,7 +909,6 @@ function itemToAccount(item: Record<string, AttributeValue>): AccountRecord | nu
     ...(description ? { description } : {}),
     secretHash,
     status,
-    config: decodeStoredAccountConfig(item.config ? fromAttributeValue(item.config) : {}),
     createdAt,
     updatedAt,
   };
@@ -1028,17 +1018,17 @@ function timingSafeStringEqual(actual: string, expected: string): boolean {
   return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 
-export function decodeStoredAccountConfig(value: unknown): AccountConfig {
-    if (isEncryptedAccountConfig(value)) {
-        return decryptAccountConfig(value);
+export function decodeStoredAgentConfig(value: unknown): AgentConfig {
+    if (isEncryptedAgentConfig(value)) {
+        return decryptAgentConfig(value);
     }
 
-    throw new Error("Stored account config must be encrypted");
+    throw new Error("Stored agent config must be encrypted");
 }
 
-export function encryptAccountConfig(config: AccountConfig): EncryptedAccountConfig {
+export function encryptAgentConfig(config: AgentConfig): EncryptedAgentConfig {
     const iv = randomBytes(12);
-    const cipher = createCipheriv(CONFIG_ENCRYPTION_ALGORITHM, accountConfigEncryptionKey(), iv);
+    const cipher = createCipheriv(CONFIG_ENCRYPTION_ALGORITHM, agentConfigEncryptionKey(), iv);
     const plaintext = JSON.stringify(config);
     const ciphertext = Buffer.concat([
         cipher.update(plaintext, "utf-8"),
@@ -1054,10 +1044,10 @@ export function encryptAccountConfig(config: AccountConfig): EncryptedAccountCon
     };
 }
 
-function decryptAccountConfig(config: EncryptedAccountConfig): AccountConfig {
+function decryptAgentConfig(config: EncryptedAgentConfig): AgentConfig {
     const decipher = createDecipheriv(
         CONFIG_ENCRYPTION_ALGORITHM,
-        accountConfigEncryptionKey(),
+        agentConfigEncryptionKey(),
         Buffer.from(config.iv, "base64url"),
     );
     decipher.setAuthTag(Buffer.from(config.tag, "base64url"));
@@ -1066,16 +1056,16 @@ function decryptAccountConfig(config: EncryptedAccountConfig): AccountConfig {
         decipher.final(),
     ]).toString("utf-8");
 
-    return normalizeAccountConfig(JSON.parse(plaintext));
+    return normalizeAgentConfig(JSON.parse(plaintext));
 }
 
-function accountConfigEncryptionKey(): Buffer {
+function agentConfigEncryptionKey(): Buffer {
     return createHash("sha256")
         .update(requireEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET"))
         .digest();
 }
 
-function isEncryptedAccountConfig(value: unknown): value is EncryptedAccountConfig {
+function isEncryptedAgentConfig(value: unknown): value is EncryptedAgentConfig {
     if (!isPlainObject(value)) {
         return false;
     }
@@ -1087,8 +1077,8 @@ function isEncryptedAccountConfig(value: unknown): value is EncryptedAccountConf
         typeof value.ciphertext === "string";
 }
 
-export function mergeAccountConfig(existing: AccountConfig, patch: AccountConfigPatch): AccountConfig {
-    return normalizeAccountConfig(mergeConfigValue(existing, patch));
+export function mergeAgentConfig(existing: AgentConfig, patch: AgentConfigPatch): AgentConfig {
+    return normalizeAgentConfig(mergeConfigValue(existing, patch));
 }
 
 function mergeConfigValue(existing: unknown, patch: unknown): unknown {
@@ -1122,8 +1112,8 @@ function mergeConfigValue(existing: unknown, patch: unknown): unknown {
     return merged;
 }
 
-export function redactAccountConfig(config: AccountConfig): AccountConfig {
-  return redactSecrets(config) as AccountConfig;
+export function redactAgentConfig(config: AgentConfig): AgentConfig {
+  return redactSecrets(config) as AgentConfig;
 }
 
 function redactSecrets(value: unknown): unknown {

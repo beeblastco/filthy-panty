@@ -5,7 +5,7 @@
  */
 
 import { optionalEnv } from "../functions/_shared/env.ts";
-import { accountServiceUrl, agentServiceUrl, createScriptAccountRuntimeConfig, upsertScriptAccount } from "./utils.ts";
+import { accountServiceUrl, agentServiceUrl, createScriptAgentConfig, upsertScriptAccount } from "./utils.ts";
 
 const slackBotToken = optionalEnv("SLACK_BOT_TOKEN");
 const slackSigningSecret = optionalEnv("SLACK_SIGNING_SECRET");
@@ -43,7 +43,7 @@ console.log(`Register this URL in your Slack app's Event Subscriptions: ${webhoo
 
 async function upsertSlackAccount() {
     const config = {
-        ...createScriptAccountRuntimeConfig(),
+        ...createScriptAgentConfig(),
         channels: {
             slack: {
                 botToken: slackBotToken,

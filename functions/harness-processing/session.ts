@@ -21,7 +21,7 @@ import {
   systemModelMessageSchema,
 } from "ai";
 import { DEFAULT_SYSTEM_PROMPT } from "../_shared/.generated/system-prompt.ts";
-import type { AccountConfig } from "../_shared/accounts.ts";
+import type { AgentConfig } from "../_shared/accounts.ts";
 import { getAgent } from "../_shared/agents.ts";
 import { isMissingS3Error, readS3Text } from "../_shared/s3.ts";
 import {
@@ -133,7 +133,7 @@ export class Session {
     public readonly conversationKey: string,
     public readonly accountId: string | undefined,
     public readonly agentId: string | undefined,
-    private readonly accountConfig: AccountConfig = {},
+    private readonly agentConfig: AgentConfig = {},
   ) { }
 
   async claim(): Promise<boolean> {
@@ -268,7 +268,7 @@ export class Session {
       conversationKey: this.conversationKey,
       system,
       messages,
-      accountConfig: this.accountConfig,
+      agentConfig: this.agentConfig,
     }).catch((error) => {
       logError("Session context compaction failed; continuing without compaction", {
         conversationKey: this.conversationKey,
@@ -289,14 +289,14 @@ export class Session {
       messages = selectPostCompactionPendingMessages(messages);
 
       return {
-        messages: pruneSessionMessages(messages, this.accountConfig),
+        messages: pruneSessionMessages(messages, this.agentConfig),
         system: await this.buildSystemPromptParts(compactedSystemContextSnapshot.messages, ephemeralSystem),
         ephemeralSystem: ephemeralSystem,
         systemContextSnapshot: compactedSystemContextSnapshot,
       };
     }
 
-    messages = pruneSessionMessages(messages, this.accountConfig);
+    messages = pruneSessionMessages(messages, this.agentConfig);
 
     return { messages, system, ephemeralSystem, systemContextSnapshot };
   }
@@ -308,7 +308,7 @@ export class Session {
     // Ephemeral child turns are in-memory only, but they still need the same
     // source `ephemeralSystem` list so system prompt refreshes preserve it.
     return {
-      messages: pruneSessionMessages(messages, this.accountConfig),
+      messages: pruneSessionMessages(messages, this.agentConfig),
       system: await this.buildSystemPromptParts([], ephemeralSystem),
       ephemeralSystem: ephemeralSystem,
       systemContextSnapshot: { cursor: null, messages: [] },
@@ -374,7 +374,7 @@ export class Session {
         content: formatSkillsSystemPrompt(skillMetadata),
       }]
       : [];
-    const subagentSystem: SystemModelMessage[] = this.accountConfig.subagent?.enabled === true
+    const subagentSystem: SystemModelMessage[] = this.agentConfig.subagent?.enabled === true
       ? [{
         role: "system",
         content: formatSubagentSystemPrompt(subagentMetadata),
@@ -388,7 +388,7 @@ export class Session {
       },
       {
         role: "system",
-        content: this.accountConfig.agent?.system ?? DEFAULT_SYSTEM_PROMPT,
+        content: this.agentConfig.agent?.system ?? DEFAULT_SYSTEM_PROMPT,
       },
       ...memorySystem,
       ...skillsSystem,
@@ -476,7 +476,7 @@ export class Session {
   }
 
   filesystemNamespace(): string {
-    const logicalNamespace = this.accountConfig.workspace?.memory?.namespace ?? this.conversationKey;
+    const logicalNamespace = this.agentConfig.workspace?.memory?.namespace ?? this.conversationKey;
     const accountScope = this.accountId && this.agentId ? `${this.accountId}:${this.agentId}` : this.accountId;
     const scopedNamespace = accountScope
       ? `${accountScope}:${logicalNamespace}`
@@ -486,24 +486,24 @@ export class Session {
   }
 
   private isWorkspaceEnabled(): boolean {
-    return this.accountConfig.workspace?.enabled === true;
+    return this.agentConfig.workspace?.enabled === true;
   }
 
   private isMemoryEnabled(): boolean {
-    return this.isWorkspaceEnabled() && this.accountConfig.workspace?.memory?.enabled !== false;
+    return this.isWorkspaceEnabled() && this.agentConfig.workspace?.memory?.enabled !== false;
   }
 
   private async loadSkillMetadata(): Promise<SkillMetadata[]> {
-    return listConfiguredSkillMetadata(this.accountId, this.accountConfig);
+    return listConfiguredSkillMetadata(this.accountId, this.agentConfig);
   }
 
   private async loadSubagentMetadata(): Promise<SubagentMetadata[]> {
-    if (this.accountConfig.subagent?.enabled !== true || !this.accountId) {
+    if (this.agentConfig.subagent?.enabled !== true || !this.accountId) {
       return [];
     }
     if (!this.subagentMetadataPromise) {
       this.subagentMetadataPromise = Promise.all(
-        (this.accountConfig.subagent.allowed ?? []).map(async (agentId) => {
+        (this.agentConfig.subagent.allowed ?? []).map(async (agentId) => {
           const agent = await getAgent(this.accountId!, agentId);
           if (!agent || agent.status !== "active") {
             return null;

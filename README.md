@@ -18,7 +18,7 @@ The design goal is simple infrastructure for low-volume multi-tenant usage: Bun 
 
 - Runtime: Bun on Lambda `provided.al2023` with ARM64 binaries built by [`scripts/build.ts`](scripts/build.ts).
 - Infra: SST v4.
-- Model SDK: Vercel AI SDK `ai` with account-configured Google, OpenAI, Bedrock, and Gateway providers.
+- Model SDK: Vercel AI SDK `ai` with agent-configured Google, OpenAI, Bedrock, and Gateway providers.
 - Persistence: DynamoDB + S3.
 - Streaming: SSE for sync direct API callers only.
 - Agent config: stored in DynamoDB with encrypted config payloads; account API secrets are hashed.
@@ -103,4 +103,4 @@ bun run discord:sync
 - [`functions/harness-processing/async-tools.ts`](functions/harness-processing/async-tools.ts): async external tool dispatch, result injection, and parent continuation support.
 - [`functions/harness-processing/subagents.ts`](functions/harness-processing/subagents.ts): in-process subagent dispatch, child runs, result injection, and parent continuation.
 - [`functions/harness-processing/harness.ts`](functions/harness-processing/harness.ts): configured model execution loop and inline tool orchestration.
-- [`functions/harness-processing/tools/index.ts`](functions/harness-processing/tools/index.ts): static tool factory registry and account-configured tool selection.
+- [`functions/harness-processing/tools/index.ts`](functions/harness-processing/tools/index.ts): static tool factory registry and agent-configured tool selection.

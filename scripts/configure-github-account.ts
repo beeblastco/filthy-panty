@@ -5,7 +5,7 @@
  */
 
 import { optionalEnv } from "../functions/_shared/env.ts";
-import { accountServiceUrl, agentServiceUrl, createScriptAccountRuntimeConfig, upsertScriptAccount } from "./utils.ts";
+import { accountServiceUrl, agentServiceUrl, createScriptAgentConfig, upsertScriptAccount } from "./utils.ts";
 
 const githubAppId = optionalEnv("GITHUB_APP_ID");
 const githubPrivateKey = optionalEnv("GITHUB_PRIVATE_KEY");
@@ -49,7 +49,7 @@ console.log(`Register this webhook URL in your GitHub App: ${webhookUrl}`);
 
 async function upsertGitHubAccount() {
   const config = {
-    ...createScriptAccountRuntimeConfig(),
+    ...createScriptAgentConfig(),
     channels: {
       github: {
         appId: githubAppId,

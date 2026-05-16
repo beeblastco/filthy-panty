@@ -13,13 +13,13 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { randomBytes } from "node:crypto";
 import {
-  decodeStoredAccountConfig,
-  encryptAccountConfig,
-  mergeAccountConfig,
-  normalizeAccountConfig,
-  normalizeAccountConfigPatch,
-  redactAccountConfig,
-  type AccountConfig,
+  decodeStoredAgentConfig,
+  encryptAgentConfig,
+  mergeAgentConfig,
+  normalizeAgentConfig,
+  normalizeAgentConfigPatch,
+  redactAgentConfig,
+  type AgentConfig,
 } from "./accounts.ts";
 import {
   dynamo,
@@ -42,7 +42,7 @@ export interface AgentRecord {
   name: string;
   description?: string;
   status: AgentStatus;
-  config: AccountConfig;
+  config: AgentConfig;
   createdAt: string;
   updatedAt: string;
 }
@@ -53,7 +53,7 @@ export interface PublicAgentRecord {
   name: string;
   description?: string;
   status: AgentStatus;
-  config: AccountConfig;
+  config: AgentConfig;
   createdAt: string;
   updatedAt: string;
 }
@@ -198,7 +198,7 @@ export async function updateAgent(
       ...(normalized.status !== undefined ? { "#status": "status" } : {}),
     },
     ExpressionAttributeValues: {
-      ":config": toAttributeValue(encryptAccountConfig(normalized.config)),
+      ":config": toAttributeValue(encryptAgentConfig(normalized.config)),
       ":updatedAt": { S: new Date().toISOString() },
       ...(normalized.name !== undefined ? { ":name": { S: normalized.name } } : {}),
       ...(normalized.description !== undefined && normalized.description !== null
@@ -248,13 +248,13 @@ export function toPublicAgent(agent: AgentRecord): PublicAgentRecord {
     name: agent.name,
     ...(agent.description ? { description: agent.description } : {}),
     status: agent.status,
-    config: redactAccountConfig(agent.config),
+    config: redactAgentConfig(agent.config),
     createdAt: agent.createdAt,
     updatedAt: agent.updatedAt,
   };
 }
 
-export async function validateAgentSkillPaths(accountId: string, config: AccountConfig): Promise<void> {
+export async function validateAgentSkillPaths(accountId: string, config: AgentConfig): Promise<void> {
   for (const skillPath of config.skills?.allowed ?? []) {
     try {
       await assertAccountOwnsSkillPath(accountId, skillPath);
@@ -270,7 +270,7 @@ export async function validateAgentSkillPaths(accountId: string, config: Account
   }
 }
 
-export async function validateAgentSubagentIds(accountId: string, config: AccountConfig): Promise<void> {
+export async function validateAgentSubagentIds(accountId: string, config: AgentConfig): Promise<void> {
   for (const agentId of config.subagent?.allowed ?? []) {
     const agent = await getAgent(accountId, agentId);
     if (!agent || agent.status !== "active") {
@@ -282,7 +282,7 @@ export async function validateAgentSubagentIds(accountId: string, config: Accoun
 async function normalizeCreateAgentInput(accountId: string, value: CreateAgentInput): Promise<{
   name: string;
   description?: string;
-  config: AccountConfig;
+  config: AgentConfig;
 }> {
   if (!isPlainObject(value)) {
     throw new Error("Request body must be an object");
@@ -290,7 +290,7 @@ async function normalizeCreateAgentInput(accountId: string, value: CreateAgentIn
 
   const name = normalizeRequiredString(value.name, "name");
   const description = normalizeOptionalString(value.description, "description");
-  const config = normalizeAccountConfig(value.config);
+  const config = normalizeAgentConfig(value.config);
   await validateAgentSkillPaths(accountId, config);
   await validateAgentSubagentIds(accountId, config);
   return {
@@ -302,15 +302,15 @@ async function normalizeCreateAgentInput(accountId: string, value: CreateAgentIn
 
 async function normalizeUpdateAgentInput(
   accountId: string,
-  existingConfig: AccountConfig,
+  existingConfig: AgentConfig,
   value: UpdateAgentInput,
-): Promise<UpdateAgentInput & { config: AccountConfig }> {
+): Promise<UpdateAgentInput & { config: AgentConfig }> {
   if (!isPlainObject(value)) {
     throw new Error("Request body must be an object");
   }
 
   const config = "config" in value
-    ? mergeAccountConfig(existingConfig, normalizeAccountConfigPatch(value.config))
+    ? mergeAgentConfig(existingConfig, normalizeAgentConfigPatch(value.config))
     : existingConfig;
   await validateAgentSkillPaths(accountId, config);
   await validateAgentSubagentIds(accountId, config);
@@ -332,7 +332,7 @@ function agentToItem(agent: AgentRecord): Record<string, AttributeValue> {
     name: { S: agent.name },
     ...(agent.description ? { description: { S: agent.description } } : {}),
     status: { S: agent.status },
-    config: toAttributeValue(encryptAccountConfig(agent.config)),
+    config: toAttributeValue(encryptAgentConfig(agent.config)),
     createdAt: { S: agent.createdAt },
     updatedAt: { S: agent.updatedAt },
   };
@@ -357,7 +357,7 @@ function itemToAgent(item: Record<string, AttributeValue>): AgentRecord | null {
     name,
     ...(description ? { description } : {}),
     status,
-    config: decodeStoredAccountConfig(item.config ? fromAttributeValue(item.config) : {}),
+    config: decodeStoredAgentConfig(item.config ? fromAttributeValue(item.config) : {}),
     createdAt,
     updatedAt,
   };

@@ -259,7 +259,7 @@ Agents control model selection, channel credentials, optional skills, subagents,
 - [`functions/harness-processing/async-tools.ts`](../functions/harness-processing/async-tools.ts): async external tool dispatch, result injection, and parent continuation support.
 - [`functions/harness-processing/subagents.ts`](../functions/harness-processing/subagents.ts): subagent dispatch, child model runs, status rows, and parent result injection.
 - [`functions/harness-processing/harness.ts`](../functions/harness-processing/harness.ts): configured model execution loop and inline tool orchestration.
-- [`functions/harness-processing/tools/index.ts`](../functions/harness-processing/tools/index.ts): static tool factory registry and account-configured tool selection.
+- [`functions/harness-processing/tools/index.ts`](../functions/harness-processing/tools/index.ts): static tool factory registry and agent-configured tool selection.
 
 ## Storage Boundaries
 
@@ -272,4 +272,4 @@ Agents control model selection, channel credentials, optional skills, subagents,
 - S3 memory bucket: account/agent-scoped `MEMORY.md`, filesystem, and task state.
 - S3 skills bucket: account-scoped skill bundles under `<accountId>/<skill-name>`.
 
-Tool execution is inline in `harness-processing` unless an account-configured local `execute` tool sets `async: true`, in which case it is detached within the same invocation and resumed through parent result injection. Async direct API requests use Lambda async self-invocation to run the same harness code in the background. Subagents run as in-process child agent loops for the active parent invocation; status rows are persisted in `AsyncAgentResult`, but parent SSE continuation does not poll child Lambda workers.
+Tool execution is inline in `harness-processing` unless an agent-configured local `execute` tool sets `async: true`, in which case it is detached within the same invocation and resumed through parent result injection. Async direct API requests use Lambda async self-invocation to run the same harness code in the background. Subagents run as in-process child agent loops for the active parent invocation; status rows are persisted in `AsyncAgentResult`, but parent SSE continuation does not poll child Lambda workers.

@@ -325,7 +325,7 @@ describe("runAgentLoop", () => {
     expect(streamTextMock.mock.calls[0]?.[0].system).toEqual([]);
   });
 
-  it("passes account model config into streamText", async () => {
+  it("passes agent model config into streamText", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
 
@@ -592,7 +592,7 @@ describe("runAgentLoop", () => {
     );
   });
 
-  it("creates an OpenAI provider from account provider config", async () => {
+  it("creates an OpenAI provider from agent provider config", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
 
@@ -636,7 +636,7 @@ describe("runAgentLoop", () => {
     });
   });
 
-  it("creates a MiniMax provider from account provider config", async () => {
+  it("creates a MiniMax provider from agent provider config", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
 
@@ -719,7 +719,7 @@ describe("runAgentLoop", () => {
     })).rejects.toThrow("config.provider.openai.apiKey is required");
   });
 
-  it("creates Bedrock and Gateway providers from account provider config", async () => {
+  it("creates Bedrock and Gateway providers from agent provider config", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
 

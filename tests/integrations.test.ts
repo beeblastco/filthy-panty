@@ -370,7 +370,7 @@ describe("direct API ingress", () => {
     expect(directEvent.eventId).toBe("acct:acct_test:agent:agent_test:api:one");
     expect(directEvent.accountId).toBe("acct_test");
     expect(directEvent.agentId).toBe("agent_test");
-    expect(directEvent.accountConfig).toEqual({
+    expect(directEvent.agentConfig).toEqual({
       model: {
         provider: "google",
         modelId: "gemini-test",

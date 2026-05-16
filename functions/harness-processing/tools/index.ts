@@ -1,13 +1,13 @@
 /**
  * Harness tool registry.
- * Keep static tool imports and account-configured tool selection here.
+ * Keep static tool imports and agent-configured tool selection here.
  */
 
 import type { ToolSet } from "ai";
 import {
-  type AccountConfig,
+  type AgentConfig,
   type AccountModelProviderName,
-  type AccountToolConfig,
+  type AgentToolConfig,
 } from "../../_shared/accounts.ts";
 import type { Session } from "../session.ts";
 import type { RunAsyncToolDispatch } from "../async-tools.ts";
@@ -26,7 +26,7 @@ import testAsyncTool from "./test.async.tool.ts";
 export interface ToolContext {
   conversationKey: string;
   filesystemNamespace: string;
-  config: AccountToolConfig;
+  config: AgentToolConfig;
   modelProviderName: AccountModelProviderName;
   modelProvider: unknown;
   session?: Session;
@@ -36,7 +36,7 @@ export interface ToolContext {
 
 type ToolFactory = (context: ToolContext) => ToolSet;
 
-// Account-configured tools. Workspace and subagent tools are registered below
+// Agent-configured tools. Workspace and subagent tools are registered below
 // because their enablement is controlled outside config.tools.
 const toolFactories = {
   tavilySearch: tavilySearchTool,
@@ -45,20 +45,20 @@ const toolFactories = {
   test_async: testAsyncTool,
 } satisfies Record<string, ToolFactory>;
 
-export function createTools(context: Omit<ToolContext, "config">, accountConfig: AccountConfig): ToolSet {
+export function createTools(context: Omit<ToolContext, "config">, agentConfig: AgentConfig): ToolSet {
   const tools: ToolSet = {};
-  assertSupportedConfiguredTools(accountConfig.tools);
+  assertSupportedConfiguredTools(agentConfig.tools);
 
-  if (accountConfig.workspace?.enabled === true) {
-    const needsApproval = accountConfig.workspace.needsApproval === true;
+  if (agentConfig.workspace?.enabled === true) {
+    const needsApproval = agentConfig.workspace.needsApproval === true;
     Object.assign(
       tools,
-      ...(accountConfig.workspace.filesystem?.enabled === false ? [] : [
+      ...(agentConfig.workspace.filesystem?.enabled === false ? [] : [
         withToolApproval(filesystemTool({ ...context, config: {} }), {
           filesystem: needsApproval,
         }),
       ]),
-      ...(accountConfig.workspace.tasks?.enabled === false ? [] : [
+      ...(agentConfig.workspace.tasks?.enabled === false ? [] : [
         withToolApproval(tasksTool({ ...context, config: {} }), {
           tasks: needsApproval,
         }),
@@ -68,14 +68,14 @@ export function createTools(context: Omit<ToolContext, "config">, accountConfig:
 
   // Subagent execution is orchestrated by the handler/coordinator. The registry
   // exposes only the model-facing tool when config and runtime dispatcher agree.
-  if (accountConfig.subagent?.enabled === true && context.dispatchSubagents) {
+  if (agentConfig.subagent?.enabled === true && context.dispatchSubagents) {
     Object.assign(tools, runSubagentTool({
       dispatchSubagents: context.dispatchSubagents,
     }));
   }
 
-  const allowedSkillPaths = accountConfig.skills?.allowed ?? [];
-  if (accountConfig.skills?.enabled === true && allowedSkillPaths.length > 0 && context.session) {
+  const allowedSkillPaths = agentConfig.skills?.allowed ?? [];
+  if (agentConfig.skills?.enabled === true && allowedSkillPaths.length > 0 && context.session) {
     Object.assign(tools, loadSkillTool(
       context.session,
       (skillPath, resourcePaths) => context.session!.loadSkillPrompt(allowedSkillPaths, skillPath, resourcePaths),
@@ -83,7 +83,7 @@ export function createTools(context: Omit<ToolContext, "config">, accountConfig:
   }
 
   for (const [toolName, toolFactory] of Object.entries(toolFactories)) {
-    const toolConfig = accountConfig.tools?.[toolName];
+    const toolConfig = agentConfig.tools?.[toolName];
     if (!isToolEnabled(toolConfig)) {
       continue;
     }
@@ -97,7 +97,7 @@ export function createTools(context: Omit<ToolContext, "config">, accountConfig:
   }
 
   return context.dispatchAsyncTools
-    ? context.dispatchAsyncTools(tools, asyncConfiguredToolNames(accountConfig.tools))
+    ? context.dispatchAsyncTools(tools, asyncConfiguredToolNames(agentConfig.tools))
     : tools;
 }
 
@@ -110,7 +110,7 @@ function withToolApproval(tools: ToolSet, approvals: Record<string, boolean>): T
   ) satisfies ToolSet;
 }
 
-function assertSupportedConfiguredTools(tools: AccountConfig["tools"]): void {
+function assertSupportedConfiguredTools(tools: AgentConfig["tools"]): void {
   for (const toolName of Object.keys(tools ?? {})) {
     if (!(toolName in toolFactories)) {
       throw new Error(`config.tools.${toolName} is not a supported tool`);
@@ -118,11 +118,11 @@ function assertSupportedConfiguredTools(tools: AccountConfig["tools"]): void {
   }
 }
 
-function isToolEnabled(config: AccountToolConfig | undefined): config is AccountToolConfig {
+function isToolEnabled(config: AgentToolConfig | undefined): config is AgentToolConfig {
   return config !== undefined && config.enabled !== false;
 }
 
-function asyncConfiguredToolNames(tools: AccountConfig["tools"]): Set<string> {
+function asyncConfiguredToolNames(tools: AgentConfig["tools"]): Set<string> {
   return new Set(
     Object.entries(tools ?? {})
       .filter(([, config]) => isToolEnabled(config) && config.async === true)
@@ -130,7 +130,7 @@ function asyncConfiguredToolNames(tools: AccountConfig["tools"]): Set<string> {
   );
 }
 
-function externalToolRuntimeConfig(config: AccountToolConfig): AccountToolConfig {
+function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {
   const {
     enabled: _enabled,
     needsApproval: _needsApproval,

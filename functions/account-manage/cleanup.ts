@@ -250,10 +250,6 @@ function resolveFilesystemNamespaces(
   const logicalNamespaces = new Set<string>();
   const accountPrefix = accountScopedPrefix(account.accountId);
 
-  if (account.config.workspace?.memory?.namespace) {
-    logicalNamespaces.add(account.config.workspace.memory.namespace);
-  }
-
   for (const agent of agents) {
     if (agent.config.workspace?.memory?.namespace) {
       logicalNamespaces.add(`${agent.agentId}:${agent.config.workspace.memory.namespace}`);

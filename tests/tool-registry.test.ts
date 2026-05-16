@@ -1,6 +1,6 @@
 /**
  * Harness tool registry tests.
- * Cover account-configured allowlisting without invoking tool providers.
+ * Cover agent-configured allowlisting without invoking tool providers.
  */
 
 import { beforeEach, describe, expect, it, mock } from "bun:test";
@@ -21,7 +21,7 @@ beforeEach(() => {
 });
 
 describe("createTools", () => {
-  it("returns no tools when account config does not list tools", async () => {
+  it("returns no tools when agent config does not list tools", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
     expect(createTools(createToolContext(), {})).toEqual({});

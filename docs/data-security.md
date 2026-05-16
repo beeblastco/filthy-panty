@@ -8,7 +8,8 @@ This is an experiment product, so the security model is simple by design. It avo
 flowchart TD
   Account["Account record"] --> Meta["Plain metadata<br/>accountId, username, description, status"]
   Account --> Hash["Account secret hash<br/>secretHash"]
-  Account --> Config["Encrypted config blob<br/>model, tool, subagent, and channel settings"]
+  Account --> Agent["Agent records"]
+  Agent --> Config["Encrypted agent config blob<br/>model, tool, subagent, and channel settings"]
 
   Config --> Model["model provider/options"]
   Config --> Tools["tool allowlist/options"]
@@ -21,7 +22,7 @@ flowchart TD
 
 The account API secret is never stored directly. It is returned once on create or rotation, then only `secretHash` is stored.
 
-Provider credentials and account-specific runtime options must be usable at runtime, so they cannot be hashed. They are stored inside the encrypted account config. Normal account responses recursively redact secret-like field names such as `token`, `secret`, `privateKey`, and `apiKey`, including inside tool config.
+Provider credentials and account-specific runtime options must be usable at runtime, so they cannot be hashed. They are stored inside encrypted account-owned agent config. Normal account and agent responses recursively redact secret-like field names such as `token`, `secret`, `privateKey`, and `apiKey`, including inside tool config.
 
 ## How Config Encryption Works
 
@@ -29,12 +30,12 @@ Provider credentials and account-specific runtime options must be usable at runt
 sequenceDiagram
   participant API as account-manage
   participant Crypto as AES-256-GCM
-  participant DDB as DynamoDB AccountConfig
+  participant DDB as DynamoDB AgentConfig
   participant Harness as harness-processing
 
   API->>Crypto: encrypt config with ACCOUNT_CONFIG_ENCRYPTION_SECRET
   Crypto->>DDB: store ciphertext + iv + auth tag
-  Harness->>DDB: load account record
+  Harness->>DDB: load selected agent record
   Harness->>Crypto: decrypt config
   Harness->>Harness: verify webhooks / send replies
 ```
@@ -44,7 +45,7 @@ Current implementation:
 - AES-256-GCM encrypts the config before DynamoDB write.
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET` comes from SST secrets.
 - DynamoDB stores encrypted config, not readable provider credentials.
-- Lambdas decrypt config only when they need account runtime settings.
+- Lambdas decrypt config only when they need selected agent runtime settings.
 
 ## API Responses
 
@@ -62,7 +63,7 @@ This keeps the product easy to run and change:
 
 - No extra Secrets Manager objects per account.
 - No KMS decrypt call on every config read.
-- Account data stays in one DynamoDB item.
+- Account metadata and agent runtime config stay in DynamoDB without per-provider secret resources.
 - Good enough for an experiment product.
 
 ## Limits

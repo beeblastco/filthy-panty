@@ -1,11 +1,11 @@
 /**
  * Script utility tests.
- * Cover generated account runtime config used by CI and manual scripts.
+ * Cover generated agent runtime config used by CI and manual scripts.
  */
 
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "bun:test";
-import { createScriptAccountRuntimeConfig } from "../scripts/utils.ts";
+import { createScriptAgentConfig } from "../scripts/utils.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -36,13 +36,13 @@ describe("integration account setup scripts", () => {
   });
 });
 
-describe("script account runtime config", () => {
+describe("script agent runtime config", () => {
   it("generates default Google model, provider, and tool config", () => {
     process.env = {};
     process.env.ACCOUNT_GOOGLE_API_KEY = "google-key";
     process.env.ACCOUNT_TAVILY_API_KEY = "tavily-key";
 
-    expect(createScriptAccountRuntimeConfig()).toEqual({
+    expect(createScriptAgentConfig()).toEqual({
       model: {
         provider: "google",
         modelId: "gemma-4-31b-it",
@@ -77,7 +77,7 @@ describe("script account runtime config", () => {
       tavilySearch: { enabled: true },
     });
 
-    expect(createScriptAccountRuntimeConfig()).toEqual({
+    expect(createScriptAgentConfig()).toEqual({
       model: {
         provider: "openai",
         modelId: "gpt-custom",
@@ -107,7 +107,7 @@ describe("script account runtime config", () => {
     process.env.ACCOUNT_MINIMAX_API_KEY = "minimax-key";
     process.env.ACCOUNT_MINIMAX_BASE_URL = "https://api.minimax.io/anthropic/v1";
 
-    expect(createScriptAccountRuntimeConfig()).toEqual({
+    expect(createScriptAgentConfig()).toEqual({
       model: {
         provider: "minimax",
         modelId: "MiniMax-M2.7",
@@ -133,6 +133,6 @@ describe("script account runtime config", () => {
     process.env.ACCOUNT_GOOGLE_API_KEY = "google-key";
     process.env.ACCOUNT_MODEL_KNOWLEDGE_CUTOFF = "June 2026";
 
-    expect(createScriptAccountRuntimeConfig().agent?.system).toContain("Knowledge cutoff: June 2026.");
+    expect(createScriptAgentConfig().agent?.system).toContain("Knowledge cutoff: June 2026.");
   });
 });
