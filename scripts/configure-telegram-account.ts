@@ -5,7 +5,7 @@
  */
 
 import { optionalEnv } from "../functions/_shared/env.ts";
-import { accountServiceUrl, agentServiceUrl, createScriptAccountRuntimeConfig, upsertScriptAccount } from "./utils.ts";
+import { accountServiceUrl, agentServiceUrl, createScriptAgentConfig, upsertScriptAccount } from "./utils.ts";
 
 const telegramBotToken = optionalEnv("TELEGRAM_BOT_TOKEN");
 const telegramWebhookSecret = optionalEnv("TELEGRAM_WEBHOOK_SECRET");
@@ -43,7 +43,7 @@ console.log(`Configured Telegram account ${account.accountId}, agent ${agent.age
 
 async function upsertTelegramAccount() {
   const config = {
-    ...createScriptAccountRuntimeConfig(),
+    ...createScriptAgentConfig(),
     channels: {
       telegram: {
         botToken: telegramBotToken,

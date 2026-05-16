@@ -5,7 +5,7 @@
  */
 
 import { optionalEnv } from "../functions/_shared/env.ts";
-import { accountServiceUrl, agentServiceUrl, createScriptAccountRuntimeConfig, upsertScriptAccount } from "./utils.ts";
+import { accountServiceUrl, agentServiceUrl, createScriptAgentConfig, upsertScriptAccount } from "./utils.ts";
 
 const discordBotToken = optionalEnv("DISCORD_BOT_TOKEN");
 const discordPublicKey = optionalEnv("DISCORD_PUBLIC_KEY");
@@ -43,7 +43,7 @@ console.log(`Register this URL in your Discord application: ${webhookUrl}`);
 
 async function upsertDiscordAccount() {
     const config = {
-        ...createScriptAccountRuntimeConfig(),
+        ...createScriptAgentConfig(),
         channels: {
             discord: {
                 botToken: discordBotToken,

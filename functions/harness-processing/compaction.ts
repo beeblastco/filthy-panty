@@ -5,9 +5,9 @@
 
 import { generateText, type ModelMessage, type SystemModelMessage } from "ai";
 import { DEFAULT_COMPACTION_PROMPT } from "../_shared/.generated/compaction-prompt.ts";
-import type { AccountConfig } from "../_shared/accounts.ts";
+import type { AgentConfig } from "../_shared/accounts.ts";
 import { logInfo } from "../_shared/log.ts";
-import { modelSettingsFromModelConfig, resolveConfiguredModel } from "./model.ts";
+import { modelSettingsFromModelConfig, resolveConfiguredModel } from "./provider.ts";
 import { hasPendingToolApprovalResponse, stripReasoningFromMessages } from "./pruning.ts";
 
 const DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH = 100_000; // Runtime default when compaction is enabled without a max.
@@ -18,12 +18,12 @@ export interface CompactionInput {
   conversationKey: string;
   system: SystemModelMessage[];
   messages: ModelMessage[];
-  accountConfig: AccountConfig;
+  agentConfig: AgentConfig;
 }
 
 
 export async function compactSessionContext(input: CompactionInput): Promise<SystemModelMessage | null> {
-  const compactionConfig = input.accountConfig.session?.compaction;
+  const compactionConfig = input.agentConfig.session?.compaction;
   if (compactionConfig?.enabled !== true) {
     return null;
   }
@@ -45,16 +45,16 @@ export async function compactSessionContext(input: CompactionInput): Promise<Sys
     return null;
   }
 
-  const configuredModel = resolveConfiguredModel(input.accountConfig);
+  const configuredModel = resolveConfiguredModel(input.agentConfig);
   const result = await generateText({
-    ...modelSettingsFromModelConfig(input.accountConfig),
+    ...modelSettingsFromModelConfig(input.agentConfig),
     model: configuredModel.model,
     system: DEFAULT_COMPACTION_PROMPT,
     messages: [{
       role: "user",
       content: formatMessagesForCompaction(compactableContext),
     }],
-    ...(input.accountConfig.model?.options ? { providerOptions: input.accountConfig.model.options as never } : {}),
+    ...(input.agentConfig.model?.options ? { providerOptions: input.agentConfig.model.options as never } : {}),
   });
 
   const summary = createCompactionSummaryMessage(result.text);

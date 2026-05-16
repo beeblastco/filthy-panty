@@ -20,11 +20,11 @@ bunx sst secret set AccountConfigEncryptionSecret <long-random-value>
 ```
 
 - `AdminAccountSecret` - Authenticates admin account-management requests.
-- `AccountConfigEncryptionSecret` - Encrypts account config payloads in DynamoDB.
+- `AccountConfigEncryptionSecret` - Encrypts agent config payloads in DynamoDB.
 
-Treat `AdminAccountSecret` and `AccountConfigEncryptionSecret` as stable production secrets; rotating the encryption secret requires a re-encryption migration for existing account configs.
+Treat `AdminAccountSecret` and `AccountConfigEncryptionSecret` as stable production secrets; rotating the encryption secret requires a re-encryption migration for existing agent configs.
 
-Provider API keys are account-specific, not global SST secrets. Each account configures their own provider API key in `config.provider.<provider>.apiKey`. Similarly, tool API keys like Tavily are configured per account in `config.tools.<tool>.apiKey`. This allows different users to use their own API keys.
+Provider API keys are account-specific, not global SST secrets. Each account-owned agent configures its provider API key in `config.provider.<provider>.apiKey`. Similarly, tool API keys like Tavily are configured per agent in `config.tools.<tool>.apiKey`. This allows different users to use their own API keys.
 
 Public account creation is throttled by `ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR`, currently set to `5` in `sst.config.ts`.
 

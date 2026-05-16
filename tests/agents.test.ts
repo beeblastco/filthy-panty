@@ -23,7 +23,7 @@ describe("agent persistence", () => {
     process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
     dynamo.send = sendMock as never;
     const { validateAgentSubagentIds } = await import("../functions/_shared/agents.ts");
-    const { encryptAccountConfig } = await import("../functions/_shared/accounts.ts");
+    const { encryptAgentConfig } = await import("../functions/_shared/accounts.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof GetItemCommand) {
@@ -32,7 +32,7 @@ describe("agent persistence", () => {
         }
 
         return {
-          Item: agentItem("acct_test", "agent_worker", toAttributeValue(encryptAccountConfig({}))),
+          Item: agentItem("acct_test", "agent_worker", toAttributeValue(encryptAgentConfig({}))),
         };
       }
       throw new Error("unexpected command");
@@ -51,13 +51,13 @@ describe("agent persistence", () => {
     process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
     dynamo.send = sendMock as never;
     const { AgentSubagentNotFoundError } = await import("../functions/_shared/agents.ts");
-    const { encryptAccountConfig } = await import("../functions/_shared/accounts.ts");
+    const { encryptAgentConfig } = await import("../functions/_shared/accounts.ts");
 
     sendMock.mockImplementation(async (command: unknown) => {
       if (command instanceof GetItemCommand) {
         if (command.input.Key?.agentId?.S === "agent_worker") {
           return {
-            Item: agentItem("acct_test", "agent_worker", toAttributeValue(encryptAccountConfig({}))),
+            Item: agentItem("acct_test", "agent_worker", toAttributeValue(encryptAgentConfig({}))),
           };
         }
 
@@ -85,8 +85,8 @@ describe("agent persistence", () => {
     process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = "test-secret";
     dynamo.send = sendMock as never;
     const { deleteAccountAgents } = await import("../functions/_shared/agents.ts");
-    const { encryptAccountConfig } = await import("../functions/_shared/accounts.ts");
-    const encryptedConfig = toAttributeValue(encryptAccountConfig({}));
+    const { encryptAgentConfig } = await import("../functions/_shared/accounts.ts");
+    const encryptedConfig = toAttributeValue(encryptAgentConfig({}));
     const pages = [
       {
         Items: [

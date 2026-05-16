@@ -72,6 +72,8 @@ curl -X PATCH "$ACCOUNT_SERVICE_URL/accounts/me" \
   }'
 ```
 
+`PATCH /accounts/me` accepts only account metadata. Create or update runtime `config` through the agent endpoints below.
+
 Agent config patch behavior is a deep merge. Redacted secret placeholders returned by reads (`********`) preserve the existing stored secret if sent back. Set a config field to `null` to delete it, for example `"workspace": { "memory": { "namespace": null } }`.
 
 ## Agents

@@ -181,7 +181,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
     }
 
     let didSettle = false;
-    const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.accountConfig, context, {
+    const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig, context, {
       onFinalText: async (text) => {
         didSettle = true;
         await markAsyncAgentResultCompleted({
@@ -269,7 +269,7 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
     }
 
     try {
-      const subagentCoordinator = new SubagentCoordinator(session, event.accountConfig, waitUntilMs(context));
+      const subagentCoordinator = new SubagentCoordinator(session, event.agentConfig, waitUntilMs(context));
       const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context));
 
       const result = await runParentContinuationLoop({
@@ -277,7 +277,7 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
         subagentCoordinator,
         asyncToolCoordinator,
         initialTurnContext: turnContext,
-        accountConfig: event.accountConfig,
+        agentConfig: event.agentConfig,
         consumeStream: (stream) => pipeAgentNatsStream(stream, publisher),
         onLoopErrorText: async (error) => {
           publisher.publish({ type: "error", error }).catch(() => {});
@@ -328,7 +328,7 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Lamb
  * Publish the final result back to the channel integration sendText() function.
  */
 async function handleChannelRequest(event: ChannelInboundEvent, context?: LambdaInvocation): Promise<void> {
-  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.accountConfig ?? {});
+  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.agentConfig ?? {});
   if (!(await claimSession(session))) {
     return;
   }
@@ -369,7 +369,7 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
         return;
       }
 
-      const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.accountConfig ?? {}, context, {
+      const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig ?? {}, context, {
         onFinalText: (text) => event.channel.sendText(text),
         onErrorText: (error) => event.channel.sendText(formatChannelErrorText(error)),
         onApprovalRequired: async (approvals) => {
@@ -409,7 +409,7 @@ async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaRes
 }
 
 async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn | null> {
-  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.accountConfig);
+  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.agentConfig);
   if (!(await claimSession(session))) {
     return null;
   }
@@ -548,7 +548,7 @@ function createDirectContinuationSseBody(
 ): ReadableStream<Uint8Array> {
   return new ReadableStream({
     async start(controller) {
-      const subagentCoordinator = new SubagentCoordinator(session, event.accountConfig, waitUntilMs(context));
+      const subagentCoordinator = new SubagentCoordinator(session, event.agentConfig, waitUntilMs(context));
       const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context));
 
       try {
@@ -557,7 +557,7 @@ function createDirectContinuationSseBody(
           subagentCoordinator: subagentCoordinator,
           asyncToolCoordinator: asyncToolCoordinator,
           initialTurnContext: initialTurnContext,
-          accountConfig: event.accountConfig,
+          agentConfig: event.agentConfig,
           consumeStream: (stream) => pipeAgentSseStream(stream, controller),
           onLoopErrorText: (error) => sendWebhook(event, {
             eventId: event.publicEventId,
@@ -606,7 +606,7 @@ function createDirectContinuationSseBody(
 async function runAgentLoopUntilSubagentsIdle(
   session: Session,
   initialTurnContext: DirectTurn["turnContext"],
-  accountConfig: DirectInboundEvent["accountConfig"],
+  agentConfig: DirectInboundEvent["agentConfig"],
   context: LambdaInvocation | undefined,
   reply: {
     onFinalText(text: string): Promise<void>;
@@ -614,14 +614,14 @@ async function runAgentLoopUntilSubagentsIdle(
     onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
   },
 ): Promise<{ didFail: boolean; failureText: string | null }> {
-  const subagentCoordinator = new SubagentCoordinator(session, accountConfig, waitUntilMs(context));
+  const subagentCoordinator = new SubagentCoordinator(session, agentConfig, waitUntilMs(context));
   const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context));
   const result = await runParentContinuationLoop({
     session: session,
     subagentCoordinator: subagentCoordinator,
     asyncToolCoordinator: asyncToolCoordinator,
     initialTurnContext: initialTurnContext,
-    accountConfig: accountConfig,
+    agentConfig: agentConfig,
     consumeStream: async (stream) => {
       await stream.consumeStream();
     },
@@ -649,7 +649,7 @@ async function runParentContinuationLoop(options: {
   subagentCoordinator: SubagentCoordinator;
   asyncToolCoordinator: AsyncToolCoordinator;
   initialTurnContext: DirectTurn["turnContext"];
-  accountConfig: DirectInboundEvent["accountConfig"];
+  agentConfig: DirectInboundEvent["agentConfig"];
   consumeStream(stream: AgentLoopStream): Promise<void>;
   onLoopErrorText?(error: string): Promise<void>;
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
@@ -661,7 +661,7 @@ async function runParentContinuationLoop(options: {
   while (true) {
     let loopFinalText = "";
     let approvals: ToolApprovalSummary[] = [];
-    const stream = await runAgentLoop(options.session, turnContext, options.accountConfig, {
+    const stream = await runAgentLoop(options.session, turnContext, options.agentConfig, {
       onFinalText: async (text) => {
         loopFinalText = text.trim();
       },

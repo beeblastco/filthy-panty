@@ -4,7 +4,7 @@
  */
 
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
-import type { AccountConfig } from "../_shared/accounts.ts";
+import type { AgentConfig } from "../_shared/accounts.ts";
 import { getAgent, type AgentRecord } from "../_shared/agents.ts";
 import { logError, logInfo } from "../_shared/log.ts";
 import {
@@ -44,7 +44,7 @@ interface ResolvedSubagentTask {
   taskId: string;
   eventId: string;
   agentId: string;
-  accountConfig: AccountConfig;
+  agentConfig: AgentConfig;
   name: string;
   description?: string;
   publicConversationKey: string;
@@ -63,7 +63,7 @@ export class SubagentCoordinator {
 
   constructor(
     private readonly parentSession: Session,
-    private readonly parentAccountConfig: AccountConfig,
+    private readonly parentAgentConfig: AgentConfig,
     private readonly waitUntilMs: number = Date.now() + DEFAULT_SUBAGENT_WAIT_BUDGET_MS,
   ) { }
 
@@ -163,14 +163,14 @@ export class SubagentCoordinator {
     const accountId = requireParentAccountId(this.parentSession);
     const taskId = `subagent_${crypto.randomUUID()}`;
     const publicConversationKey = `subagent-${taskId}`;
-    const inheritedContext = task.shareContext ?? this.parentAccountConfig.subagent?.context === "inherited";
+    const inheritedContext = task.shareContext ?? this.parentAgentConfig.subagent?.context === "inherited";
     if (task.agentId) {
       const agent = await this.resolveAllowedAgent(accountId, task.agentId);
       return {
         taskId,
         eventId: scopedDirectEventId(accountId, agent.agentId, taskId),
         agentId: agent.agentId,
-        accountConfig: withoutNestedSubagents(agent.config),
+        agentConfig: withoutNestedSubagents(agent.config),
         name: agent.name,
         ...(agent.description ? { description: agent.description } : {}),
         publicConversationKey,
@@ -187,7 +187,7 @@ export class SubagentCoordinator {
       taskId,
       eventId: scopedDirectEventId(accountId, virtualAgentId, taskId),
       agentId: virtualAgentId,
-      accountConfig: withoutNestedSubagents(this.parentAccountConfig),
+      agentConfig: withoutNestedSubagents(this.parentAgentConfig),
       name: task.name ?? "Virtual subagent",
       publicConversationKey,
       conversationKey: scopedDirectConversationKey(accountId, virtualAgentId, publicConversationKey),
@@ -199,7 +199,7 @@ export class SubagentCoordinator {
   }
 
   private async resolveAllowedAgent(accountId: string, agentId: string): Promise<AgentRecord> {
-    const allowed = this.parentAccountConfig.subagent?.allowed ?? [];
+    const allowed = this.parentAgentConfig.subagent?.allowed ?? [];
     if (!allowed.includes(agentId)) {
       throw new Error(`Subagent is not allowed: ${agentId}`);
     }
@@ -270,7 +270,7 @@ export class SubagentCoordinator {
       task.conversationKey,
       requireParentAccountId(this.parentSession),
       task.agentId,
-      task.accountConfig,
+      task.agentConfig,
     );
     const promptMessage: UserModelMessage = {
       role: "user",
@@ -287,7 +287,7 @@ export class SubagentCoordinator {
     let approvalRequested = false;
 
     const session = createEphemeralChildSession(childSession, turnContext.system);
-    const stream = await runAgentLoop(session, turnContext, task.accountConfig, {
+    const stream = await runAgentLoop(session, turnContext, task.agentConfig, {
       onFinalText: async (text) => {
         finalText = text;
       },
@@ -429,7 +429,7 @@ function completionToParentMessage(completion: SubagentCompletion): UserModelMes
   };
 }
 
-function withoutNestedSubagents(config: AccountConfig): AccountConfig {
+function withoutNestedSubagents(config: AgentConfig): AgentConfig {
   return {
     ...config,
     subagent: {

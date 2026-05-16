@@ -1,5 +1,5 @@
 /**
- * Account configuration tests.
+ * Agent configuration tests.
  * Cover pure validation, patch merge, redaction, and runtime config projection.
  */
 
@@ -7,10 +7,11 @@ import { ScanCommand } from "@aws-sdk/client-dynamodb";
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import {
   listAccounts,
-  mergeAccountConfig,
-  normalizeAccountConfig,
+  mergeAgentConfig,
+  normalizeAgentConfig,
   toPublicAccount,
-  toRuntimeAccountConfig,
+  toRuntimeAgentConfig,
+  updateAccount,
   type AccountRecord,
 } from "../functions/_shared/accounts.ts";
 import {
@@ -29,9 +30,9 @@ afterEach(() => {
   sendMock.mockReset();
 });
 
-describe("account config", () => {
+describe("agent config", () => {
   it("deletes config keys with null patch values and preserves redacted secrets", () => {
-    const merged = mergeAccountConfig({
+    const merged = mergeAgentConfig({
       workspace: {
         enabled: true,
         memory: {
@@ -74,34 +75,34 @@ describe("account config", () => {
   });
 
   it("validates runtime numeric config as positive bounded integers", () => {
-    expect(() => normalizeAccountConfig({ agent: { maxTurn: 0 } })).toThrow(
+    expect(() => normalizeAgentConfig({ agent: { maxTurn: 0 } })).toThrow(
       "config.agent.maxTurn must be an integer from 1 to 100",
     );
-    expect(() => normalizeAccountConfig({ session: { compaction: { maxContextLength: 1.5 } } })).toThrow(
+    expect(() => normalizeAgentConfig({ session: { compaction: { maxContextLength: 1.5 } } })).toThrow(
       "config.session.compaction.maxContextLength must be an integer from 1 to 500000",
     );
-    expect(() => normalizeAccountConfig({ workspace: { memory: { namespace: "" } } })).toThrow(
+    expect(() => normalizeAgentConfig({ workspace: { memory: { namespace: "" } } })).toThrow(
       "config.workspace.memory.namespace must be a non-empty string",
     );
-    expect(() => normalizeAccountConfig({ workspace: { enabled: "yes" } })).toThrow(
+    expect(() => normalizeAgentConfig({ workspace: { enabled: "yes" } })).toThrow(
       "config.workspace.enabled must be a boolean",
     );
-    expect(() => normalizeAccountConfig({ workspace: { needsApproval: "yes" } })).toThrow(
+    expect(() => normalizeAgentConfig({ workspace: { needsApproval: "yes" } })).toThrow(
       "config.workspace.needsApproval must be a boolean",
     );
-    expect(() => normalizeAccountConfig({ workspace: { memory: { enabled: "yes" } } })).toThrow(
+    expect(() => normalizeAgentConfig({ workspace: { memory: { enabled: "yes" } } })).toThrow(
       "config.workspace.memory.enabled must be a boolean",
     );
-    expect(() => normalizeAccountConfig({ workspace: { tasks: { enabled: "yes" } } })).toThrow(
+    expect(() => normalizeAgentConfig({ workspace: { tasks: { enabled: "yes" } } })).toThrow(
       "config.workspace.tasks.enabled must be a boolean",
     );
-    expect(() => normalizeAccountConfig({ workspace: { filesystem: { enabled: "yes" } } })).toThrow(
+    expect(() => normalizeAgentConfig({ workspace: { filesystem: { enabled: "yes" } } })).toThrow(
       "config.workspace.filesystem.enabled must be a boolean",
     );
   });
 
-  it("validates account model config", () => {
-    expect(normalizeAccountConfig({
+  it("validates agent model config", () => {
+    expect(normalizeAgentConfig({
       provider: {
         google: {
           apiKey: "google-key",
@@ -161,25 +162,25 @@ describe("account config", () => {
       },
     });
 
-    expect(() => normalizeAccountConfig({
+    expect(() => normalizeAgentConfig({
       model: {
         provider: 12,
       },
     })).toThrow("config.model.provider must be one of: google, openai, bedrock, gateway, minimax");
 
-    expect(() => normalizeAccountConfig({
+    expect(() => normalizeAgentConfig({
       model: {
         options: "bad",
       },
     })).toThrow("config.model.options must be an object");
 
-    expect(() => normalizeAccountConfig({
+    expect(() => normalizeAgentConfig({
       provider: {
         unknown: {},
       },
     })).toThrow("config.provider.unknown is not a supported provider");
 
-    expect(() => normalizeAccountConfig({
+    expect(() => normalizeAgentConfig({
       provider: {
         openai: {
           headers: {
@@ -190,8 +191,8 @@ describe("account config", () => {
     })).toThrow("config.provider.openai.headers must be an object with string values");
   });
 
-  it("validates account tool config", () => {
-    expect(normalizeAccountConfig({
+  it("validates agent tool config", () => {
+    expect(normalizeAgentConfig({
       tools: {
         tavilySearch: {
           async: true,
@@ -249,27 +250,27 @@ describe("account config", () => {
       },
     });
 
-    expect(() => normalizeAccountConfig({
+    expect(() => normalizeAgentConfig({
       tools: {
         unknownTool: { enabled: "yes" },
       },
     })).toThrow("config.tools.unknownTool is not a supported tool");
 
-    expect(() => normalizeAccountConfig({
+    expect(() => normalizeAgentConfig({
       tools: {
         tavilySearch: { needsApproval: "yes" },
       },
     })).toThrow("config.tools.tavilySearch.needsApproval must be a boolean");
 
-    expect(() => normalizeAccountConfig({
+    expect(() => normalizeAgentConfig({
       tools: {
         tavilySearch: { async: "yes" },
       },
     })).toThrow("config.tools.tavilySearch.async must be a boolean");
   });
 
-  it("validates account skills config", () => {
-    expect(normalizeAccountConfig({
+  it("validates agent skills config", () => {
+    expect(normalizeAgentConfig({
       skills: {
         enabled: true,
         allowed: ["acct_test/support-flow"],
@@ -281,21 +282,21 @@ describe("account config", () => {
       },
     });
 
-    expect(() => normalizeAccountConfig({
+    expect(() => normalizeAgentConfig({
       skills: {
         enabled: "yes",
       },
     })).toThrow("config.skills.enabled must be a boolean");
 
-    expect(() => normalizeAccountConfig({
+    expect(() => normalizeAgentConfig({
       skills: {
         allowed: "acct_test/support-flow",
       },
     })).toThrow("config.skills.allowed must be an array of strings");
   });
 
-  it("validates account subagent config", () => {
-    expect(normalizeAccountConfig({
+  it("validates agent subagent config", () => {
+    expect(normalizeAgentConfig({
       subagent: {
         enabled: true,
         allowed: ["agent_worker"],
@@ -309,7 +310,7 @@ describe("account config", () => {
       },
     });
 
-    expect(normalizeAccountConfig({
+    expect(normalizeAgentConfig({
       subagent: {
         enabled: true,
         allowed: [],
@@ -323,19 +324,19 @@ describe("account config", () => {
       },
     });
 
-    expect(() => normalizeAccountConfig({
+    expect(() => normalizeAgentConfig({
       subagent: {
         enabled: "yes",
       },
     })).toThrow("config.subagent.enabled must be a boolean");
 
-    expect(() => normalizeAccountConfig({
+    expect(() => normalizeAgentConfig({
       subagent: {
         allowed: "agent_worker",
       },
     })).toThrow("config.subagent.allowed must be an array of strings");
 
-    expect(() => normalizeAccountConfig({
+    expect(() => normalizeAgentConfig({
       subagent: {
         context: "shared",
       },
@@ -343,7 +344,7 @@ describe("account config", () => {
   });
 
   it("projects only runtime settings for agent sessions", () => {
-    expect(toRuntimeAccountConfig({
+    expect(toRuntimeAgentConfig({
       model: {
         provider: "google",
         modelId: "gemini-custom",
@@ -450,11 +451,17 @@ describe("account config", () => {
     });
   });
 
-  it("redacts secret-like config fields in public account responses", () => {
-    const account: AccountRecord = {
+  it("rejects runtime config updates on account records", async () => {
+    await expect(updateAccount("acct_test", { config: { model: { provider: "google" } } } as never)).rejects.toThrow(
+      "Agent config must be updated through /accounts/me/agents/{agentId}",
+    );
+  });
+
+  it("redacts secret-like config fields in public agent responses", () => {
+    const agent: AgentRecord = {
       accountId: "acct_test",
-      username: "test",
-      secretHash: "hash",
+      agentId: "agent_test",
+      name: "test-agent",
       status: "active",
       config: {
         channels: {
@@ -483,7 +490,7 @@ describe("account config", () => {
       updatedAt: "2026-05-01T00:00:00.000Z",
     };
 
-    expect(toPublicAccount(account).config).toEqual({
+    expect(toPublicAgent(agent).config).toEqual({
       channels: {
         github: {
           privateKey: "********",
@@ -514,7 +521,6 @@ describe("account config", () => {
       username: "test",
       secretHash: "hash",
       status: "active",
-      config: {},
       createdAt: "2026-05-01T00:00:00.000Z",
       updatedAt: "2026-05-01T00:00:00.000Z",
     };

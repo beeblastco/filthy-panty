@@ -27,6 +27,10 @@ declare module "sst" {
       "type": "sst.sst.Secret"
       "value": string
     }
+    "AgentConfig": {
+      "name": string
+      "type": "sst.aws.Dynamo"
+    }
     "AsyncAgentResult": {
       "name": string
       "type": "sst.aws.Dynamo"
@@ -38,10 +42,6 @@ declare module "sst" {
     "Conversations": {
       "name": string
       "type": "sst.aws.Dynamo"
-    }
-    "GoogleApiKey": {
-      "type": "sst.sst.Secret"
-      "value": string
     }
     "HarnessProcessing": {
       "name": string
@@ -56,9 +56,9 @@ declare module "sst" {
       "name": string
       "type": "sst.aws.Dynamo"
     }
-    "TavilyApiKey": {
-      "type": "sst.sst.Secret"
-      "value": string
+    "Skills": {
+      "name": string
+      "type": "sst.aws.Bucket"
     }
   }
 }

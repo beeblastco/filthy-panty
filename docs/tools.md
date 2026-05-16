@@ -1,6 +1,6 @@
 # External Tools
 
-This guide covers account-configured external tools: tools that let the agent call outside services such as Tavily or provider-native Google Search. It does not cover internal workspace tools like `filesystem`, `tasks`, `load_skill`, memory, or `run_subagent`.
+This guide covers agent-configured external tools: tools that let the agent call outside services such as Tavily or provider-native Google Search. It does not cover internal workspace tools like `filesystem`, `tasks`, `load_skill`, memory, or `run_subagent`.
 
 External tools are enabled per agent through `config.tools`. The harness creates them for each model run and passes them to the Vercel AI SDK `streamText()` call. By default they execute inline inside `harness-processing`; local `execute` tools can opt into same-invocation async execution with `async: true`.
 
@@ -53,7 +53,7 @@ Provider-defined tools without local `execute`, such as Google Search, cannot be
 
 For sync direct API callers, approval requests are streamed as SSE and persisted in the conversation. The caller resumes the turn by sending a direct API `tool-approval-response`. Channel webhooks cannot complete approval; the handler denies channel approval requests with a channel-visible error.
 
-## Account Config
+## Agent Config
 
 Use `config.tools` for external tools:
 

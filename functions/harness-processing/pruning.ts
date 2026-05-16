@@ -4,13 +4,13 @@
  */
 
 import { pruneMessages, type ModelMessage } from "ai";
-import type { AccountConfig } from "../_shared/accounts.ts";
+import type { AgentConfig } from "../_shared/accounts.ts";
 
-export function pruneSessionMessages(messages: ModelMessage[], accountConfig: AccountConfig): ModelMessage[] {
+export function pruneSessionMessages(messages: ModelMessage[], agentConfig: AgentConfig): ModelMessage[] {
   const approvalResume = hasPendingToolApprovalResponse(messages);
   const modelMessages = approvalResume ? messages : stripReasoningFromMessages(messages);
 
-  if (accountConfig.session?.pruning?.enabled === false) {
+  if (agentConfig.session?.pruning?.enabled === false) {
     return modelMessages;
   }
 

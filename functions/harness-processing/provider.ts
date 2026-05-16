@@ -1,5 +1,5 @@
 /**
- * Account-configured model resolution for harness-processing.
+ * Agent-configured provider resolution for harness-processing.
  * Keep provider construction and AI SDK setting projection here.
  */
 
@@ -10,9 +10,9 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createMinimax } from "vercel-minimax-ai-provider";
 import type { LanguageModel } from "ai";
 import type {
-  AccountConfig,
+  AgentConfig,
   AccountModelProviderName,
-  AccountProviderSettings,
+  AgentProviderSettings,
 } from "../_shared/accounts.ts";
 
 export interface ResolvedModelProvider {
@@ -21,10 +21,10 @@ export interface ResolvedModelProvider {
   model: LanguageModel;
 }
 
-export function resolveConfiguredModel(accountConfig: AccountConfig): ResolvedModelProvider {
-  const providerName = requireModelProvider(accountConfig);
-  const modelId = requireModelId(accountConfig);
-  const providerConfig = requireProviderSettings(accountConfig, providerName);
+export function resolveConfiguredModel(agentConfig: AgentConfig): ResolvedModelProvider {
+  const providerName = requireModelProvider(agentConfig);
+  const modelId = requireModelId(agentConfig);
+  const providerConfig = requireProviderSettings(agentConfig, providerName);
 
   switch (providerName) {
     case "google":
@@ -40,13 +40,13 @@ export function resolveConfiguredModel(accountConfig: AccountConfig): ResolvedMo
   }
 }
 
-export function modelSettingsFromModelConfig(accountConfig: AccountConfig): Record<string, unknown> {
+export function modelSettingsFromModelConfig(agentConfig: AgentConfig): Record<string, unknown> {
   const {
     provider: _provider,
     modelId: _modelId,
     options: _options,
     ...settings
-  } = accountConfig.model ?? {};
+  } = agentConfig.model ?? {};
 
   return settings;
 }
@@ -63,16 +63,16 @@ function resolveProviderModel(
   };
 }
 
-function requireModelProvider(accountConfig: AccountConfig): AccountModelProviderName {
-  const provider = accountConfig.model?.provider;
+function requireModelProvider(agentConfig: AgentConfig): AccountModelProviderName {
+  const provider = agentConfig.model?.provider;
   if (!provider) {
     throw new Error("config.model.provider is required");
   }
   return provider;
 }
 
-function requireModelId(accountConfig: AccountConfig): string {
-  const modelId = accountConfig.model?.modelId;
+function requireModelId(agentConfig: AgentConfig): string {
+  const modelId = agentConfig.model?.modelId;
   if (!modelId) {
     throw new Error("config.model.modelId is required");
   }
@@ -80,10 +80,10 @@ function requireModelId(accountConfig: AccountConfig): string {
 }
 
 function requireProviderSettings(
-  accountConfig: AccountConfig,
+  agentConfig: AgentConfig,
   providerName: AccountModelProviderName,
-): AccountProviderSettings {
-  const providerConfig = accountConfig.provider?.[providerName];
+): AgentProviderSettings {
+  const providerConfig = agentConfig.provider?.[providerName];
   if (!providerConfig) {
     throw new Error(`config.provider.${providerName} is required`);
   }

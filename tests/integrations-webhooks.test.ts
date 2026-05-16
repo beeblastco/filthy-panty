@@ -97,7 +97,7 @@ describe("account webhook ingress", () => {
     expect(handledEvents[0]).toMatchObject({
       accountId: "acct_test",
       agentId: "agent_test",
-      accountConfig: {},
+      agentConfig: {},
       eventId: "acct:acct_test:agent:agent_test:tg:7",
       conversationKey: "acct:acct_test:agent:agent_test:tg:123",
       content: "hello",
