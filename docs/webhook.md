@@ -10,6 +10,8 @@ flowchart LR
   Events --> Webhook["signed HTTPS POST"]
 ```
 
+Check out the [webhook example](../examples/webhook.ts) for how to setup and use.
+
 ## Agent Config
 
 Configure lifecycle delivery in the encrypted agent config:
