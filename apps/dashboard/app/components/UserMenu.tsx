@@ -1,11 +1,11 @@
 "use client";
 
 /** Displays the authenticated user avatar with a dropdown menu for account actions. */
-import { LogOut, Moon, Sun, User, FileText, HelpCircle } from "lucide-react";
+import { LogOut, Moon, Sun, FileText, HelpCircle, Settings } from "lucide-react";
 import { signOut, useWorkOSSession } from "@/lib/workos";
 import { useConvexAuth } from "convex/react";
 import { useTheme } from "next-themes";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/app/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/app/components/ui/dropdown-menu";
 
@@ -14,6 +14,8 @@ export function UserMenu() {
     const { identity, claims } = useWorkOSSession();
     const { theme, setTheme } = useTheme();
     const router = useRouter();
+    const params = useParams<{ projectId?: string }>();
+    const projectId = params.projectId;
 
     if (!isLoading && !isAuthenticated) { return null; }
     if (isLoading) {
@@ -51,9 +53,11 @@ export function UserMenu() {
                 <DropdownMenuItem onSelect={(e) => e.preventDefault()} onClick={() => setTheme(isDark ? "light" : "dark")}>
                     {isDark ? <Sun /> : <Moon />}{isDark ? "Light mode" : "Dark mode"}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => router.push("/account")}>
-                    <User />Account Settings
-                </DropdownMenuItem>
+                {projectId && (
+                    <DropdownMenuItem onClick={() => router.push(`/${projectId}/settings`)}>
+                        <Settings />Settings
+                    </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem><FileText />Documents</DropdownMenuItem>
                 <DropdownMenuItem><HelpCircle />Support</DropdownMenuItem>
