@@ -1,11 +1,65 @@
+/* eslint-disable */
 /**
- * Frontend-only Convex client contract for pnzu-frontend.
+ * Generated `api` utility.
  *
- * `pnzu/convex` is the backend source of truth. pnzu-frontend keeps only this typed
- * client entrypoint so the UI can reference the deployed backend without
- * owning backend implementation files locally.
+ * THIS CODE IS AUTOMATICALLY GENERATED.
+ *
+ * To regenerate, run `npx convex dev`.
+ * @module
  */
 
-export declare const api: any;
-export declare const internal: any;
-export declare const components: Record<string, never>;
+import type * as auth from "../auth.js";
+import type * as environment from "../environment.js";
+import type * as http from "../http.js";
+import type * as lib_slug from "../lib/slug.js";
+import type * as model_ownership_environment from "../model/ownership/environment.js";
+import type * as model_ownership_project from "../model/ownership/project.js";
+import type * as project from "../project.js";
+import type * as user from "../user.js";
+
+import type {
+  ApiFromModules,
+  FilterApi,
+  FunctionReference,
+} from "convex/server";
+
+declare const fullApi: ApiFromModules<{
+  auth: typeof auth;
+  environment: typeof environment;
+  http: typeof http;
+  "lib/slug": typeof lib_slug;
+  "model/ownership/environment": typeof model_ownership_environment;
+  "model/ownership/project": typeof model_ownership_project;
+  project: typeof project;
+  user: typeof user;
+}>;
+
+/**
+ * A utility for referencing Convex functions in your app's public API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = api.myModule.myFunction;
+ * ```
+ */
+export declare const api: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "public">
+>;
+
+/**
+ * A utility for referencing Convex functions in your app's internal API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = internal.myModule.myFunction;
+ * ```
+ */
+export declare const internal: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "internal">
+>;
+
+export declare const components: {
+  workOSAuthKit: import("@convex-dev/workos-authkit/_generated/component.js").ComponentApi<"workOSAuthKit">;
+};

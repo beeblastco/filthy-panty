@@ -9,7 +9,6 @@ import { ArrowUpRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { resolvePlan, isMaxPlan, PLAN_CONFIGS, UPGRADE_URL } from "@/lib/pricing";
 import type { PlanTier } from "@/lib/pricing";
-import { AccountTabs } from "@/app/components/AccountTabs";
 import { Section } from "@/app/components/Section";
 import { Avatar, AvatarFallback, AvatarImage } from "@/app/components/ui/avatar";
 import { Badge } from "@/app/components/ui/badge";
@@ -25,13 +24,13 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/app/components/ui/dialog";
-import { useShooSession } from "@/lib/shoo";
+import { useWorkOSSession } from "@/lib/workos";
 
 const DELETE_CONFIRM_PHRASE = "delete my account";
 const HANDLE_REGEX = /^[a-z0-9_-]{3,32}$/;
 
 export default function AccountSettingsPage() {
-    const { identity, claims } = useShooSession();
+    const { identity, claims } = useWorkOSSession();
     const { theme, setTheme } = useTheme();
     const currentUser = useQuery(api.user.getCurrent);
     const updateProfile = useMutation(api.user.updateProfile);
@@ -81,7 +80,7 @@ export default function AccountSettingsPage() {
         (name.trim() !== savedProfile.name ||
             normalizedHandle !== savedProfile.accountHandle);
     const avatarUrl = currentUser?.avatarUrl ?? claimAvatar;
-    const accountId = currentUser?._id ?? identity.userId;
+    const accountId = currentUser?._id ?? identity?.userId ?? "";
     const email = currentUser?.email ?? claimEmail;
     const userPlan: PlanTier = resolvePlan(currentUser?.plan as PlanTier | undefined);
     const planConfig = PLAN_CONFIGS[userPlan];
@@ -153,7 +152,7 @@ export default function AccountSettingsPage() {
         }
     }
 
-    if (!identity.userId || currentUser === undefined) {
+    if (!identity?.userId || currentUser === undefined) {
         return (
             <div className="flex h-full items-center justify-center">
                 <p className="text-sm text-muted-foreground">Loading...</p>
@@ -167,8 +166,6 @@ export default function AccountSettingsPage() {
             <p className="mb-8 text-sm text-muted-foreground">
                 Update your account attributes, preferences, and lifecycle settings.
             </p>
-            <AccountTabs />
-
             <div className="grid gap-8">
                 <Section title="Profile" description="Editable attributes for your account.">
                     <div className="grid gap-4">
@@ -213,6 +210,7 @@ export default function AccountSettingsPage() {
                             </p>
                             <Button
                                 size="sm"
+                                className="cursor-pointer"
                                 onClick={handleSaveProfile}
                                 disabled={!hasChanges || hasHandleError || !name.trim() || isSaving}
                             >
@@ -261,7 +259,7 @@ export default function AccountSettingsPage() {
                         </div>
                         <div className="flex items-center justify-between border-b border-border px-4 py-3">
                             <span className="text-xs text-muted-foreground">Auth provider</span>
-                            <span className="text-sm text-foreground">Google via Shoo</span>
+                            <span className="text-sm text-foreground">Google via WorkOS</span>
                         </div>
                         <div className="flex items-center justify-between px-4 py-3">
                             <span className="text-xs text-muted-foreground">Plan</span>
@@ -294,6 +292,7 @@ export default function AccountSettingsPage() {
                         <div className="flex items-center gap-2">
                             <Button
                                 size="sm"
+                                className="cursor-pointer"
                                 variant={theme === "light" ? "default" : "outline"}
                                 onClick={() => setTheme("light")}
                             >
@@ -301,6 +300,7 @@ export default function AccountSettingsPage() {
                             </Button>
                             <Button
                                 size="sm"
+                                className="cursor-pointer"
                                 variant={theme === "dark" ? "default" : "outline"}
                                 onClick={() => setTheme("dark")}
                             >
@@ -342,7 +342,7 @@ export default function AccountSettingsPage() {
                                 <Button
                                     variant="destructive"
                                     size="sm"
-                                    className="shrink-0"
+                                    className="shrink-0 cursor-pointer"
                                     onClick={() => {
                                         setDeleteError(null);
                                         setDeletePhrase("");
@@ -384,6 +384,7 @@ export default function AccountSettingsPage() {
                         <Button
                             type="button"
                             variant="ghost"
+                            className="cursor-pointer"
                             onClick={() => setDeleteDialogOpen(false)}
                         >
                             Cancel
@@ -391,6 +392,7 @@ export default function AccountSettingsPage() {
                         <Button
                             type="button"
                             variant="destructive"
+                            className="cursor-pointer"
                             disabled={
                                 deletePhrase.trim().toLowerCase() !== DELETE_CONFIRM_PHRASE || isDeleting
                             }

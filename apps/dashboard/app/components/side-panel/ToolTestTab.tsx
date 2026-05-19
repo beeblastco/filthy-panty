@@ -6,7 +6,7 @@ import { Textarea } from "@/app/components/ui/textarea";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { toErrorMessage } from "@/lib/errors";
-import { useAuth } from "@/lib/shoo";
+import { useAuth } from "@/lib/workos";
 import { useQuery } from "convex/react";
 import { Loader2, Play } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -115,7 +115,7 @@ export function ToolTestTab({
         setElapsedMs(0);
         setIsRunning(true);
         try {
-            const token = await fetchAccessToken({ forceRefreshToken: false });
+            const token = await fetchAccessToken();
             const headers: Record<string, string> = {
                 "Content-Type": "application/json",
             };

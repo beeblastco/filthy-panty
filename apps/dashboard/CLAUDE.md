@@ -19,12 +19,15 @@ Before any Next.js work, find and read the relevant doc in `node_modules/next/di
 
 ## Authentication
 
-WorkOS AuthKit handles SSO. Two user tables exist:
+WorkOS AuthKit handles SSO with Google OAuth. The `users` table is synced from WorkOS webhooks:
 
-1. WorkOS-synced user (auth source of truth)
-2. App-specific user (custom fields)
+- `convex/auth.ts` — AuthKit instance and webhook event handlers (`user.created`, `user.updated`, `user.deleted`)
+- `convex/auth.config.ts` — JWT provider config for WorkOS token validation
+- `convex/user.ts` — Public API (`getCurrent`, `updateProfile`, `requestAccountDeletion`)
+- `proxy.ts` — Next.js middleware for session management
+- `lib/workos.ts` — Client-side auth hooks (`useAuth`, `useWorkOSSession`, `signIn`, `signOut`)
 
-WorkOS events trigger webhooks → Convex handlers sync data. See auth-related files in `convex/` for implementation.
+All authenticated Convex functions use `authKit.getAuthUser(ctx)` for access control.
 
 ## Workflows
 

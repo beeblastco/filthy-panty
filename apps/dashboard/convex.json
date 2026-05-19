@@ -1,0 +1,7 @@
+{
+  "authKit": {
+    "redirectUris": ["http://localhost:3000/auth/callback"],
+    "appHomepageUrl": "http://localhost:3000",
+    "corsOrigins": ["http://localhost:3000"]
+  }
+}

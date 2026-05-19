@@ -17,9 +17,7 @@ export default function MainLayout({
     const pathname = usePathname();
     const bypassOnboarding =
         pathname === "/account" ||
-        pathname.startsWith("/account/") ||
-        pathname === "/roadmap" ||
-        pathname.startsWith("/roadmap/");
+        pathname.startsWith("/account/");
 
     useEffect(() => {
         if (!isLoading && !isAuthenticated) {

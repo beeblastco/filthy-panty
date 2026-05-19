@@ -3,8 +3,9 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
-const SHOO_ISSUER = "https://shoo.dev";
-const SHOO_JWKS = createRemoteJWKSet(new URL("/.well-known/jwks.json", SHOO_ISSUER));
+const clientId = process.env.WORKOS_CLIENT_ID;
+const WORKOS_ISSUER = `https://api.workos.com/user_management/${clientId}`;
+const WORKOS_JWKS = createRemoteJWKSet(new URL(`/user_management/jwks/${clientId}`, "https://api.workos.com"));
 
 type ExecuteRequestBody = {
     language: "javascript" | "python";
@@ -19,7 +20,7 @@ type ExecutorConfig = {
     secretHeaderName: string;
 };
 
-/** Verify the Shoo JWT from the Authorization header per https://docs.shoo.dev/docs/server-verification. */
+/** Verify the WorkOS JWT from the Authorization header. */
 async function verifyAuthToken(request: Request): Promise<boolean> {
     const authHeader = request.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -28,11 +29,11 @@ async function verifyAuthToken(request: Request): Promise<boolean> {
 
     const token = authHeader.slice(7);
     try {
-        const { payload } = await jwtVerify(token, SHOO_JWKS, {
-            issuer: SHOO_ISSUER,
+        const { payload } = await jwtVerify(token, WORKOS_JWKS, {
+            issuer: WORKOS_ISSUER,
         });
 
-        if (typeof payload.pairwise_sub !== "string") {
+        if (typeof payload.sub !== "string") {
             return false;
         }
 
