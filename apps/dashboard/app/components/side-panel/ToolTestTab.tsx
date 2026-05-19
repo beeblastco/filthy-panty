@@ -6,8 +6,7 @@ import { Textarea } from "@/app/components/ui/textarea";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { toErrorMessage } from "@/lib/errors";
-import { useAuth } from "@/lib/workos";
-import { useQuery } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { Loader2, Play } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -51,8 +50,8 @@ export function ToolTestTab({
     environmentId: Id<"environments"> | null;
     nodeId: string;
 }) {
-    const { fetchAccessToken } = useAuth();
     const canQueryTool = !!projectId && !!environmentId;
+    const executeTool = useAction(api.toolService.execute);
     const toolService = useQuery(
         api.toolService.getByNode,
         canQueryTool
@@ -115,32 +114,11 @@ export function ToolTestTab({
         setElapsedMs(0);
         setIsRunning(true);
         try {
-            const token = await fetchAccessToken();
-            const headers: Record<string, string> = {
-                "Content-Type": "application/json",
-            };
-            if (token) {
-                headers["Authorization"] = `Bearer ${token}`;
-            }
-
-            const response = await fetch("/api/tools/execute", {
-                method: "POST",
-                headers: headers,
-                body: JSON.stringify({
-                    language: toolService.language,
-                    sourceCode: toolService.sourceCode,
-                    input: parsedInput,
-                }),
+            const body = await executeTool({
+                language: toolService.language,
+                sourceCode: toolService.sourceCode,
+                input: parsedInput,
             });
-
-            const body = await response.json().catch(() => ({} as Record<string, unknown>));
-            if (!response.ok) {
-                throw new Error(
-                    typeof body.error === "string"
-                        ? body.error
-                        : `Execution failed with status ${response.status}`,
-                );
-            }
 
             if ((body as { success?: boolean }).success === false) {
                 throw new Error(
@@ -148,7 +126,8 @@ export function ToolTestTab({
                 );
             }
 
-            setRunOutput(formatValue((body as { output?: unknown }).output ?? null));
+            const output = (body as { output?: unknown }).output ?? body;
+            setRunOutput(formatValue(output));
         } catch (error) {
             setRunError(toErrorMessage(error));
         } finally {

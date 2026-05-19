@@ -31,6 +31,65 @@ export const environmentsFields = {
     updatedAt: v.number(),
 };
 
+/** Minimal agent config fields; extra UI settings are stored as optional fields. */
+export const agentConfigsFields = {
+    authId: v.string(),
+    name: v.string(),
+    description: v.optional(v.string()),
+    agentId: v.optional(v.string()),
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+    provider: v.optional(v.string()),
+    modelId: v.optional(v.string()),
+    systemPrompt: v.optional(v.string()),
+    maxTurns: v.optional(v.number()),
+    allowedTools: v.optional(v.array(v.string())),
+    permissionMode: v.optional(v.string()),
+    outputFormat: v.optional(v.any()),
+    providerOptions: v.optional(v.any()),
+    temperature: v.optional(v.number()),
+    maxTokens: v.optional(v.number()),
+    publicAccessEnabled: v.optional(v.boolean()),
+    webSocketEnabled: v.optional(v.boolean()),
+    memoryToolEnabled: v.optional(v.boolean()),
+    searchToolEnabled: v.optional(v.boolean()),
+    searchToolConfig: v.optional(v.any()),
+    runtimeVariables: v.optional(v.array(v.object({ key: v.string(), value: v.string() }))),
+    updatedAt: v.number(),
+};
+
+export const canvasLayoutsFields = {
+    authId: v.string(),
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+    nodes: v.array(v.any()),
+    edges: v.array(v.any()),
+    updatedAt: v.number(),
+};
+
+export const agentDeploymentsFields = {
+    authId: v.string(),
+    agentConfigId: v.id("agentConfigs"),
+    status: v.union(v.literal("active"), v.literal("revoked")),
+    endpointId: v.string(),
+    projectSlug: v.string(),
+    environmentSlug: v.string(),
+    apiKey: v.optional(v.string()),
+    updatedAt: v.number(),
+};
+
+export const toolServicesFields = {
+    authId: v.string(),
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+    nodeId: v.string(),
+    nodeLabel: v.string(),
+    language: v.union(v.literal("javascript"), v.literal("python")),
+    sourceCode: v.string(),
+    status: v.union(v.literal("enabled"), v.literal("disabled")),
+    updatedAt: v.number(),
+};
+
 export default defineSchema({
     users: defineTable(usersFields)
         .index("by_authId", ["authId"])
@@ -41,4 +100,17 @@ export default defineSchema({
     environments: defineTable(environmentsFields)
         .index("by_projectId", ["projectId"])
         .index("by_authId_and_projectId", ["authId", "projectId"]),
+    agentConfigs: defineTable(agentConfigsFields)
+        .index("by_authId", ["authId"])
+        .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
+    canvasLayouts: defineTable(canvasLayoutsFields)
+        .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
+    agentDeployments: defineTable(agentDeploymentsFields)
+        .index("by_agentConfigId", ["agentConfigId"]),
+    toolServices: defineTable(toolServicesFields)
+        .index("by_projectId_environmentId_and_nodeId", [
+            "projectId",
+            "environmentId",
+            "nodeId",
+        ]),
 });

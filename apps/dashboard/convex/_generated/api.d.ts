@@ -8,13 +8,17 @@
  * @module
  */
 
+import type * as agentConfig from "../agentConfig.js";
+import type * as agentDeployments from "../agentDeployments.js";
 import type * as auth from "../auth.js";
+import type * as canvas from "../canvas.js";
 import type * as environment from "../environment.js";
 import type * as http from "../http.js";
 import type * as lib_slug from "../lib/slug.js";
 import type * as model_ownership_environment from "../model/ownership/environment.js";
 import type * as model_ownership_project from "../model/ownership/project.js";
 import type * as project from "../project.js";
+import type * as toolService from "../toolService.js";
 import type * as user from "../user.js";
 
 import type {
@@ -24,13 +28,17 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  agentConfig: typeof agentConfig;
+  agentDeployments: typeof agentDeployments;
   auth: typeof auth;
+  canvas: typeof canvas;
   environment: typeof environment;
   http: typeof http;
   "lib/slug": typeof lib_slug;
   "model/ownership/environment": typeof model_ownership_environment;
   "model/ownership/project": typeof model_ownership_project;
   project: typeof project;
+  toolService: typeof toolService;
   user: typeof user;
 }>;
 

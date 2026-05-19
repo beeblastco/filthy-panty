@@ -8,6 +8,51 @@ import { uniqueProjectSlug } from "./lib/slug";
 import { getOwnedProject } from "./model/ownership/project";
 
 /**
+ * Returns the user's default workspace project, creating one when missing.
+ * @returns Default project document id
+ */
+export const getOrCreateDefault = mutation({
+    args: {},
+    handler: async (ctx) => {
+        // Check authenticated user
+        const authUser = await authKit.getAuthUser(ctx);
+        if (!authUser) {
+            throw new Error("User not found or not authenticated");
+        }
+
+        const projects = await ctx.db
+            .query("projects")
+            .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
+            .collect();
+
+        const existingProject = projects.sort((left, right) => right.updatedAt - left.updatedAt)[0];
+        if (existingProject) {
+            return existingProject._id;
+        }
+
+        const now = Date.now();
+        const slug = await uniqueProjectSlug(ctx, authUser.id, "Workspace");
+        const projectId = await ctx.db.insert("projects", {
+            authId: authUser.id,
+            name: "Workspace",
+            description: undefined,
+            slug: slug,
+            updatedAt: now,
+        });
+
+        await ctx.db.insert("environments", {
+            authId: authUser.id,
+            projectId: projectId,
+            name: "Production",
+            isDefault: true,
+            updatedAt: now,
+        });
+
+        return projectId;
+    },
+});
+
+/**
  * Lists all projects owned by the authenticated user.
  * @returns Project documents ordered by most recently updated
  */

@@ -48,7 +48,7 @@ export function ToolDetailsTab({
     const [statusError, setStatusError] = useState<string | null>(null);
 
     const isEnabled = toolService?.status !== "disabled";
-    const functionName = toolService?.name ?? "generated_on_save";
+    const functionName = toolService?.nodeLabel ?? "generated_on_save";
     const language = toolService?.language ?? "javascript";
     const switchDisabled = isSavingStatus || !projectId || !environmentId || toolService === undefined;
 

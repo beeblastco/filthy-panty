@@ -48,7 +48,16 @@ async function checkGatewayHealth(): Promise<boolean> {
 
     if (pendingCheck) return pendingCheck;
 
-    pendingCheck = fetchHealthWithTimeout("/api/agents/health", 5000)
+    const gatewayUrl = process.env.NEXT_PUBLIC_AGENT_GATEWAY_URL?.replace(/\/+$/, "");
+    if (!gatewayUrl) {
+        healthCache = { healthy: false, checkedAt: Date.now() };
+        pendingCheck = null;
+        notifyListeners();
+
+        return false;
+    }
+
+    pendingCheck = fetchHealthWithTimeout(`${gatewayUrl}/healthz`, 5000)
         .then((res) => {
             healthCache = { healthy: res.ok, checkedAt: Date.now() };
             pendingCheck = null;

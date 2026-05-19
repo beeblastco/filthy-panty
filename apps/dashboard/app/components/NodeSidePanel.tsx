@@ -318,7 +318,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             return provider;
         }
 
-        return inferProviderFromModelId(agentConfig.modelId);
+        return inferProviderFromModelId(agentConfig.modelId ?? "");
     }, [agentConfig]);
     const runtimeVariables = useMemo<RuntimeVariable[]>(
         () =>

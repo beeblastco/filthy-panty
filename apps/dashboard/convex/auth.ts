@@ -22,7 +22,8 @@ export const { authKitEvent } = authKit.events({
         const firstName = event.data.firstName ?? "";
         const lastName = event.data.lastName ?? "";
         const name = `${firstName} ${lastName}`.trim() || event.data.email;
-        const avatarUrl = event.data.picture ?? undefined;
+        const avatarUrl =
+            (event.data as { picture?: string | null }).picture ?? undefined;
 
         const existing = await ctx.db
             .query("users")
@@ -60,10 +61,8 @@ export const { authKitEvent } = authKit.events({
         const firstName = event.data.firstName ?? "";
         const lastName = event.data.lastName ?? "";
         const name = `${firstName} ${lastName}`.trim() || event.data.email;
-        const avatarUrl =
-            event.data.picture === null
-                ? undefined
-                : (event.data.picture ?? user.avatarUrl);
+        const picture = (event.data as { picture?: string | null }).picture;
+        const avatarUrl = picture === null ? undefined : (picture ?? user.avatarUrl);
 
         await ctx.db.patch(user._id, {
             email: event.data.email,

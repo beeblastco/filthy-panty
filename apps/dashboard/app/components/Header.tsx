@@ -23,7 +23,12 @@ export function Header() {
     return (
         <header className={`flex h-12 shrink-0 items-center border-b ${isProjectPage ? "border-border" : "border-transparent"}`}>
             <div className={`flex w-full items-center gap-3 ${isProjectPage ? "px-5" : "mx-auto max-w-5xl"}`}>
-                <Link href="/" className="text-base font-bold text-foreground hover:opacity-80 transition-opacity">pnzu-frontend</Link>
+                <Link
+                    href={isProjectPage ? `/${params.projectId}` : "/"}
+                    className="text-base font-bold text-foreground hover:opacity-80 transition-opacity cursor-pointer"
+                >
+                    pnzu-frontend
+                </Link>
 
                 {isProjectPage && <ProjectHeaderLeft />}
 
