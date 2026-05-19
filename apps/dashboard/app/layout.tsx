@@ -3,8 +3,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-    title: "pnzu-frontend",
-    description: "Frontend UX/UI for pnzu, backed by pnzu cloud services.",
+    title: "BeeBlast Managed Agent",
+    description: "",
 };
 
 export default function RootLayout({
