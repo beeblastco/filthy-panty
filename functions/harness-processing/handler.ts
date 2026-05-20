@@ -43,6 +43,11 @@ import {
   settleExternalAsyncToolResult,
   type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
+import {
+  loadChannelConversationStatePrompt,
+  prepareChannelConversationState,
+  recordChannelAgentReply,
+} from "./conversation-state.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 
@@ -433,6 +438,16 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
   }
 
   try {
+    const statePreparation = await prepareChannelConversationState(event);
+    if (statePreparation.duplicate || !statePreparation.canAutoReply) {
+      logInfo("Channel request stopped by conversation state", {
+        eventId: session.eventId,
+        conversationKey: session.conversationKey,
+        reason: statePreparation.reason ?? (statePreparation.duplicate ? "duplicate_message" : "reply_mode_blocked"),
+      });
+      return;
+    }
+
     await session.appendIngressEvents(event.events);
   } catch (err) {
     logError("Channel request pre-processing failed", {
@@ -454,14 +469,34 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
 
   try {
     while (true) {
-      const turnContext = await session.createTurnContext();
+      const stateContext = await loadChannelConversationStatePrompt(event);
+      if (!stateContext.canAutoReply) {
+        logInfo("Channel request stopped by refreshed conversation state", {
+          eventId: session.eventId,
+          conversationKey: session.conversationKey,
+          reason: stateContext.reason ?? "reply_mode_blocked",
+        });
+        return;
+      }
+
+      const turnContext = await session.createTurnContext(stateContext.prompt ? [stateContext.prompt] : []);
       if (!isRunnableModelInput(turnContext.messages.at(-1))) {
         return;
       }
 
       const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig ?? {}, context, {
         // Sending prettify JSON if json, else string
-        onFinalText: (response) => event.channel.sendText(typeof response === "string" ? response : JSON.stringify(response, null, 2)),
+        onFinalText: async (response) => {
+          const responseText = typeof response === "string" ? response : JSON.stringify(response, null, 2);
+          await event.channel.sendText(responseText);
+          await recordChannelAgentReply(event, responseText).catch((err) => {
+            logError("Failed to record channel agent reply", {
+              eventId: session.eventId,
+              conversationKey: session.conversationKey,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        },
         onErrorText: (error) => event.channel.sendText(formatChannelErrorText(error)),
         onApprovalRequired: async (approvals) => {
           await session.persistModelMessages([createChannelApprovalDenial(approvals)]);

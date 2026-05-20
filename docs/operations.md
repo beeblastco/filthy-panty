@@ -24,6 +24,14 @@ bunx sst secret set AccountConfigEncryptionSecret <long-random-value>
 
 Treat `AdminAccountSecret` and `AccountConfigEncryptionSecret` as stable production secrets; rotating the encryption secret requires a re-encryption migration for existing agent configs.
 
+Optional Supabase conversation-state persistence is enabled only when `SUPABASE_URL` is present at deploy time. Set `SUPABASE_URL` as a repository variable and set the service key as an SST secret:
+
+```bash
+bunx sst secret set SupabaseServiceRoleKey <supabase-service-role-key>
+```
+
+In GitHub Actions, either `SST_SECRET_SUPABASESERVICEROLEKEY` or `SUPABASE_SERVICE_ROLE_KEY` can provide the secret value. When Supabase is not configured, channel webhooks continue without the Supabase state/message recording layer.
+
 Provider API keys are account-specific, not global SST secrets. Each account-owned agent configures its provider API key in `config.provider.<provider>.apiKey`. Similarly, tool API keys like Tavily are configured per agent in `config.tools.<tool>.apiKey`. This allows different users to use their own API keys.
 
 Public account creation is throttled by `ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR`, currently set to `5` in `sst.config.ts`.
