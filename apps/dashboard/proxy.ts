@@ -1,9 +1,11 @@
 import { authkitMiddleware } from "@workos-inc/authkit-nextjs";
+import { getWorkOSRedirectUri } from "@/lib/authUrls";
 
 /**
  * WorkOS AuthKit middleware for session management.
  */
 export default authkitMiddleware({
+    redirectUri: getWorkOSRedirectUri(),
     middlewareAuth: {
         enabled: true,
         unauthenticatedPaths: [
