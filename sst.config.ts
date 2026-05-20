@@ -155,7 +155,6 @@ export default $config({
 
     const adminAccountSecret = new sst.Secret("AdminAccountSecret");
     const accountConfigEncryptionSecret = new sst.Secret("AccountConfigEncryptionSecret");
-    const supabaseServiceRoleKey = process.env.SUPABASE_URL ? new sst.Secret("SupabaseServiceRoleKey") : null;
 
     const accountConfigsTable = new sst.aws.Dynamo("AccountConfig", {
       fields: {
@@ -543,12 +542,6 @@ export default $config({
         MOCK_EXTERNAL_ASYNC_TOOL_URL: mockExternalAsyncTool.url,
         SANDBOX_NODE_FUNCTION_NAME: sandboxNode.name,
         SANDBOX_PYTHON_FUNCTION_NAME: sandboxPython.name,
-        ...(supabaseServiceRoleKey
-          ? {
-            SUPABASE_URL: process.env.SUPABASE_URL ?? "",
-            SUPABASE_SERVICE_ROLE_KEY: supabaseServiceRoleKey.value,
-          }
-          : {}),
         ...(NATS_URL ? { NATS_URL } : {}),
       },
       permissions: [

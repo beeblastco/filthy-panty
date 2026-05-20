@@ -187,7 +187,11 @@
     "pancake": {
       "pageId": "page-id",
       "pageAccessToken": "...",
-      "senderId": "optional-staff-user-id"
+      "senderId": "optional-staff-user-id",
+      "supabase": {
+        "url": "https://project.supabase.co",
+        "serviceRoleKey": "optional-customer-service-role-key"
+      }
     }
   }
 }

@@ -10,6 +10,7 @@ import type {
   ChannelParseResult,
 } from "./channels.ts";
 import { logWarn } from "./log.ts";
+import { createPancakeSupabaseLayer, type PancakeSupabaseConfig } from "./pancake-supabase.ts";
 import { PANCAKE_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 interface PancakeWebhookPayload {
@@ -69,7 +70,10 @@ export function createPancakeChannel(
   pageId: string,
   pageAccessToken: string,
   senderId?: string,
+  supabase?: PancakeSupabaseConfig,
 ): ChannelAdapter {
+  const supabaseLayer = supabase ? createPancakeSupabaseLayer(supabase) : null;
+
   return {
     name: "pancake",
 
@@ -129,7 +133,17 @@ export function createPancakeChannel(
     },
 
     actions(msg): ChannelActions {
-      return createPancakeActions(pageAccessToken, toPancakeSource(msg.source), senderId);
+      const actions = createPancakeActions(pageAccessToken, toPancakeSource(msg.source), senderId);
+      if (!supabaseLayer) {
+        return actions;
+      }
+
+      return {
+        ...actions,
+        prepareMessage: supabaseLayer.prepareMessage,
+        loadContext: supabaseLayer.loadContext,
+        recordReply: supabaseLayer.recordReply,
+      };
     },
   };
 }

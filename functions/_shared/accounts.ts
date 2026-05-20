@@ -249,6 +249,14 @@ export interface AgentPancakeChannelConfig {
   pageId?: string;
   pageAccessToken?: string;
   senderId?: string;
+  supabase?: AgentPancakeSupabaseConfig;
+  [key: string]: unknown;
+}
+
+export interface AgentPancakeSupabaseConfig {
+  enabled?: boolean;
+  url?: string;
+  serviceRoleKey?: string;
   [key: string]: unknown;
 }
 
@@ -1117,6 +1125,25 @@ function normalizePancakeConfig(value: unknown): void {
   assertOptionalString(config.pageId, "config.channels.pancake.pageId");
   assertOptionalString(config.pageAccessToken, "config.channels.pancake.pageAccessToken");
   assertOptionalString(config.senderId, "config.channels.pancake.senderId");
+  normalizePancakeSupabaseConfig(config.supabase);
+}
+
+function normalizePancakeSupabaseConfig(value: unknown): void {
+  if (value == null) return;
+  if (!isPlainObject(value)) throw new Error("config.channels.pancake.supabase must be an object");
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, "config.channels.pancake.supabase.enabled");
+  assertOptionalString(config.url, "config.channels.pancake.supabase.url");
+  assertOptionalString(config.serviceRoleKey, "config.channels.pancake.supabase.serviceRoleKey");
+  if (config.enabled === false) {
+    return;
+  }
+  if (typeof config.url !== "string" || config.url.trim().length === 0) {
+    throw new Error("config.channels.pancake.supabase.url must be a non-empty string");
+  }
+  if (typeof config.serviceRoleKey !== "string" || config.serviceRoleKey.trim().length === 0) {
+    throw new Error("config.channels.pancake.supabase.serviceRoleKey must be a non-empty string");
+  }
 }
 
 function accountConfigsTableName(): string {

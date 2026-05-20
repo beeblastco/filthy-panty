@@ -22,10 +22,14 @@ flowchart TD
   Auth --> Parse["parse(req)"]
   Parse -->|"message"| Ack["provider ACK"]
   Ack --> After["afterResponse"]
-  After --> Handler["handler.ts<br/>handleChannelRequest"]
+  After --> Prepare["ChannelActions.prepareMessage?"]
+  Prepare --> Handler["handler.ts<br/>handleChannelRequest"]
   Handler --> Session["session.ts"]
+  Handler --> Context["ChannelActions.loadContext?"]
+  Context --> Session
   Session --> Harness["harness.ts<br/>model + tools"]
   Harness --> Actions["ChannelActions"]
+  Actions --> Record["ChannelActions.recordReply?"]
   Actions --> Provider
 ```
 
@@ -47,6 +51,14 @@ Each channel implements `ChannelAdapter` from [`functions/_shared/channels.ts`](
 | `authenticate(req)` | Provider-native signature or secret verification |
 | `parse(req)` | Converts the webhook into `message`, `ignore`, or direct `response` |
 | `actions(msg)` | Returns reply, typing, and reaction actions scoped to the inbound message |
+
+`ChannelActions` may also expose optional lifecycle hooks for channel-specific behavior, such as Pancake's customer Supabase state layer:
+
+| Hook | Purpose |
+| --- | --- |
+| `prepareMessage(context)` | Run after ACK and before the session append; can stop duplicates or handoff conversations |
+| `loadContext(context)` | Add ephemeral system context or stop reply immediately before a model turn |
+| `recordReply(context, text)` | Record a sent reply after `sendText()` succeeds |
 
 `parse()` returns one of three outcomes:
 
@@ -79,6 +91,24 @@ The normalized `InboundMessage` contains:
 The full config field reference lives in the [API Reference](/api-reference) under `AgentConfig.channels`.
 
 Pancake's public webhook docs do not define a signature or secret header. The adapter validates `page_id` against `config.channels.pancake.pageId`, acknowledges unsupported events, and replies through the page-scoped message API with `pageAccessToken`.
+
+Pancake can optionally persist customer conversation state to a customer's Supabase project through `config.channels.pancake.supabase`. This is channel-scoped customization: if the Pancake config omits `supabase`, the runtime does not install the Supabase hooks and no global SST or GitHub Supabase secrets are required.
+
+```json
+{
+  "channels": {
+    "pancake": {
+      "pageId": "page-id",
+      "pageAccessToken": "...",
+      "senderId": "optional-staff-user-id",
+      "supabase": {
+        "url": "https://project.supabase.co",
+        "serviceRoleKey": "customer-service-role-key"
+      }
+    }
+  }
+}
+```
 
 ## Add a Channel
 

@@ -6,7 +6,7 @@
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { ToolModelMessage, JSONValue } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
-import { formatChannelErrorText } from "../_shared/channels.ts";
+import { formatChannelErrorText, type ChannelLifecycleContext } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
 import { toRuntimeAgentConfig } from "../_shared/accounts.ts";
 import { booleanEnv, requireEnv } from "../_shared/env.ts";
@@ -43,11 +43,6 @@ import {
   settleExternalAsyncToolResult,
   type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
-import {
-  loadChannelConversationStatePrompt,
-  prepareChannelConversationState,
-  recordChannelAgentReply,
-} from "./conversation-state.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 
@@ -438,12 +433,12 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
   }
 
   try {
-    const statePreparation = await prepareChannelConversationState(event);
-    if (statePreparation.duplicate || !statePreparation.canAutoReply) {
-      logInfo("Channel request stopped by conversation state", {
+    const preparation = await event.channel.prepareMessage?.(channelLifecycleContext(event));
+    if (preparation && !preparation.shouldContinue) {
+      logInfo("Channel request stopped by channel preparation", {
         eventId: session.eventId,
         conversationKey: session.conversationKey,
-        reason: statePreparation.reason ?? (statePreparation.duplicate ? "duplicate_message" : "reply_mode_blocked"),
+        reason: preparation.reason ?? "channel_preparation_blocked",
       });
       return;
     }
@@ -469,17 +464,17 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
 
   try {
     while (true) {
-      const stateContext = await loadChannelConversationStatePrompt(event);
-      if (!stateContext.canAutoReply) {
-        logInfo("Channel request stopped by refreshed conversation state", {
+      const channelContext = await event.channel.loadContext?.(channelLifecycleContext(event));
+      if (channelContext && !channelContext.canReply) {
+        logInfo("Channel request stopped by channel context", {
           eventId: session.eventId,
           conversationKey: session.conversationKey,
-          reason: stateContext.reason ?? "reply_mode_blocked",
+          reason: channelContext.reason ?? "channel_context_blocked",
         });
         return;
       }
 
-      const turnContext = await session.createTurnContext(stateContext.prompt ? [stateContext.prompt] : []);
+      const turnContext = await session.createTurnContext(channelContext?.system ?? []);
       if (!isRunnableModelInput(turnContext.messages.at(-1))) {
         return;
       }
@@ -489,8 +484,8 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
         onFinalText: async (response) => {
           const responseText = typeof response === "string" ? response : JSON.stringify(response, null, 2);
           await event.channel.sendText(responseText);
-          await recordChannelAgentReply(event, responseText).catch((err) => {
-            logError("Failed to record channel agent reply", {
+          await event.channel.recordReply?.(channelLifecycleContext(event), responseText).catch((err) => {
+            logError("Failed to run channel reply recorder", {
               eventId: session.eventId,
               conversationKey: session.conversationKey,
               error: err instanceof Error ? err.message : String(err),
@@ -510,6 +505,18 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
   } finally {
     await session.releaseConversationLease().catch(() => { });
   }
+}
+
+function channelLifecycleContext(event: ChannelInboundEvent): ChannelLifecycleContext {
+  return {
+    accountId: event.accountId,
+    agentId: event.agentId,
+    eventId: event.eventId,
+    conversationKey: event.conversationKey,
+    channelName: event.channelName,
+    content: event.content,
+    source: event.source,
+  };
 }
 
 /**

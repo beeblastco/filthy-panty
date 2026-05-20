@@ -20,6 +20,7 @@ import {
   resolveBearerAuth,
   toRuntimeAgentConfig,
   type AgentConfig,
+  type AgentPancakeSupabaseConfig,
   type AccountRecord,
   type AuthContext,
 } from "../_shared/accounts.ts";
@@ -45,6 +46,7 @@ import {
 } from "../_shared/http.ts";
 import { logError } from "../_shared/log.ts";
 import { createPancakeChannel } from "../_shared/pancake-channel.ts";
+import type { PancakeSupabaseConfig } from "../_shared/pancake-supabase.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
 import { createTelegramChannel } from "../_shared/telegram-channel.ts";
@@ -706,5 +708,17 @@ function createPancakeChannelFromConfig(config: AgentConfig): ChannelAdapter | n
     channel.pageId,
     channel.pageAccessToken,
     channel.senderId,
+    toPancakeSupabaseConfig(channel.supabase),
   );
+}
+
+function toPancakeSupabaseConfig(config: AgentPancakeSupabaseConfig | undefined): PancakeSupabaseConfig | undefined {
+  if (!config || config.enabled === false || !config.url || !config.serviceRoleKey) {
+    return undefined;
+  }
+
+  return {
+    url: config.url,
+    serviceRoleKey: config.serviceRoleKey,
+  };
 }

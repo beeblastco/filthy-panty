@@ -1,39 +1,32 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type { ChannelInboundEvent } from "../functions/harness-processing/integrations.ts";
-import {
-  loadChannelConversationStatePrompt,
-  prepareChannelConversationState,
-  recordChannelAgentReply,
-} from "../functions/harness-processing/conversation-state.ts";
+/**
+ * Pancake Supabase layer tests.
+ * Cover opt-in channel hooks for customer-specific conversation state.
+ */
 
-const ORIGINAL_ENV = { ...process.env };
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import type { ChannelLifecycleContext } from "../functions/_shared/channels.ts";
+import { createPancakeChannel } from "../functions/_shared/pancake-channel.ts";
+
 const ORIGINAL_FETCH = globalThis.fetch;
 
-describe("conversation state Supabase helper", () => {
+describe("pancake Supabase channel layer", () => {
   beforeEach(() => {
-    process.env = { ...ORIGINAL_ENV };
-    delete process.env.SUPABASE_URL;
-    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
     globalThis.fetch = ORIGINAL_FETCH;
   });
 
   afterEach(() => {
-    process.env = { ...ORIGINAL_ENV };
     globalThis.fetch = ORIGINAL_FETCH;
   });
 
-  it("is disabled when Supabase env is not configured", async () => {
-    const fetchMock = mock(async () => new Response(null, { status: 500 }));
-    globalThis.fetch = fetchMock as never;
+  it("does not install Supabase hooks unless Pancake config opts in", () => {
+    const actions = createPancakeChannel("page-1", "page-token").actions(createPancakeMessage());
 
-    const result = await prepareChannelConversationState(createPancakeEvent());
-
-    expect(result).toEqual({ enabled: false, duplicate: false, canAutoReply: true });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(actions.prepareMessage).toBeUndefined();
+    expect(actions.loadContext).toBeUndefined();
+    expect(actions.recordReply).toBeUndefined();
   });
 
   it("upserts conversation state and inserts the inbound customer message", async () => {
-    configureSupabaseEnv();
     const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
     globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
       fetchCalls.push({ url: String(url), init });
@@ -42,12 +35,11 @@ describe("conversation state Supabase helper", () => {
       }
       return new Response(null, { status: 201 });
     }) as never;
+    const actions = createSupabaseActions();
 
-    const result = await prepareChannelConversationState(createPancakeEvent());
+    const result = await actions.prepareMessage!(createLifecycleContext());
 
-    expect(result.enabled).toBe(true);
-    expect(result.duplicate).toBe(false);
-    expect(result.canAutoReply).toBe(true);
+    expect(result).toEqual({ shouldContinue: true });
     expect(fetchCalls).toHaveLength(2);
     expect(fetchCalls[0]!.url).toContain("/rest/v1/conversation_states?");
     expect(fetchCalls[0]!.init?.method).toBe("POST");
@@ -77,45 +69,38 @@ describe("conversation state Supabase helper", () => {
   });
 
   it("blocks duplicate provider messages", async () => {
-    configureSupabaseEnv();
     let callCount = 0;
-    globalThis.fetch = mock(async (_url: string | URL, _init?: RequestInit) => {
+    globalThis.fetch = mock(async () => {
       callCount += 1;
       if (callCount === 1) {
         return jsonResponse([stateRow({ reply_mode: "auto" })]);
       }
       return new Response(JSON.stringify({ code: "23505" }), { status: 409 });
     }) as never;
+    const actions = createSupabaseActions();
 
-    const result = await prepareChannelConversationState(createPancakeEvent());
+    const result = await actions.prepareMessage!(createLifecycleContext());
 
-    expect(result.enabled).toBe(true);
-    expect(result.duplicate).toBe(true);
-    expect(result.canAutoReply).toBe(false);
-    expect(result.reason).toBe("duplicate_message");
+    expect(result).toEqual({ shouldContinue: false, reason: "duplicate_message" });
   });
 
   it("blocks auto-reply when the state is in human mode", async () => {
-    configureSupabaseEnv();
     let callCount = 0;
-    globalThis.fetch = mock(async (_url: string | URL, _init?: RequestInit) => {
+    globalThis.fetch = mock(async () => {
       callCount += 1;
       if (callCount === 1) {
         return jsonResponse([stateRow({ reply_mode: "human" })]);
       }
       return new Response(null, { status: 201 });
     }) as never;
+    const actions = createSupabaseActions();
 
-    const result = await prepareChannelConversationState(createPancakeEvent());
+    const result = await actions.prepareMessage!(createLifecycleContext());
 
-    expect(result.enabled).toBe(true);
-    expect(result.duplicate).toBe(false);
-    expect(result.canAutoReply).toBe(false);
-    expect(result.reason).toBe("reply_mode_human");
+    expect(result).toEqual({ shouldContinue: false, reason: "reply_mode_human" });
   });
 
   it("loads a compact system prompt for auto-mode conversation state", async () => {
-    configureSupabaseEnv();
     globalThis.fetch = mock(async () => jsonResponse([
       stateRow({
         reply_mode: "auto",
@@ -124,24 +109,25 @@ describe("conversation state Supabase helper", () => {
         intent: "price_check",
       }),
     ])) as never;
+    const actions = createSupabaseActions();
 
-    const result = await loadChannelConversationStatePrompt(createPancakeEvent());
+    const result = await actions.loadContext!(createLifecycleContext());
 
-    expect(result.canAutoReply).toBe(true);
-    expect(result.prompt?.role).toBe("system");
-    expect(result.prompt?.content).toContain("current_product_name: AquaSilk Serum");
-    expect(result.prompt?.content).toContain("intent: price_check");
+    expect(result.canReply).toBe(true);
+    expect(result.system?.[0]?.role).toBe("system");
+    expect(result.system?.[0]?.content).toContain("current_product_name: AquaSilk Serum");
+    expect(result.system?.[0]?.content).toContain("intent: price_check");
   });
 
   it("records agent replies after channel send succeeds", async () => {
-    configureSupabaseEnv();
     const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
     globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
       fetchCalls.push({ url: String(url), init });
       return new Response(null, { status: fetchCalls.length === 1 ? 201 : 204 });
     }) as never;
+    const actions = createSupabaseActions();
 
-    await recordChannelAgentReply(createPancakeEvent(), "Agent reply");
+    await actions.recordReply!(createLifecycleContext(), "Agent reply");
 
     expect(fetchCalls).toHaveLength(2);
     expect(fetchCalls[0]!.url).toBe("https://supabase.example/rest/v1/conversation_messages");
@@ -157,21 +143,19 @@ describe("conversation state Supabase helper", () => {
   });
 });
 
-function configureSupabaseEnv() {
-  process.env.SUPABASE_URL = "https://supabase.example";
-  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-key";
+function createSupabaseActions() {
+  return createPancakeChannel("page-1", "page-token", undefined, {
+    url: "https://supabase.example",
+    serviceRoleKey: "service-key",
+  }).actions(createPancakeMessage());
 }
 
-function createPancakeEvent(): ChannelInboundEvent {
+function createPancakeMessage() {
   return {
-    accountId: "acct_test",
-    agentId: "agent_test",
-    agentConfig: {},
-    eventId: "acct:acct_test:agent:agent_test:pancake:page-1:message-1:abc",
-    conversationKey: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
-    content: [{ type: "text", text: "hello pancake" }],
-    events: [{ role: "user", content: [{ type: "text", text: "hello pancake" }] }],
+    eventId: "pancake:page-1:message-1:abc",
+    conversationKey: "pancake:page-1:conversation-1",
     channelName: "pancake",
+    content: [{ type: "text" as const, text: "hello pancake" }],
     source: {
       pageId: "page-1",
       conversationId: "conversation-1",
@@ -183,10 +167,27 @@ function createPancakeEvent(): ChannelInboundEvent {
       insertedAt: "2026-05-20T01:02:03.000000",
       rawPayload: { event_type: "messaging" },
     },
-    channel: {
-      sendText: async () => { },
-      sendTyping: async () => { },
-      reactToMessage: async () => { },
+  };
+}
+
+function createLifecycleContext(): ChannelLifecycleContext {
+  return {
+    accountId: "acct_test",
+    agentId: "agent_test",
+    eventId: "acct:acct_test:agent:agent_test:pancake:page-1:message-1:abc",
+    conversationKey: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
+    channelName: "pancake",
+    content: [{ type: "text", text: "hello pancake" }],
+    source: {
+      pageId: "page-1",
+      conversationId: "conversation-1",
+      messageId: "message-1",
+      messageType: "INBOX",
+      fromId: "customer-1",
+      fromName: "Ada",
+      pageCustomerId: "page-customer-1",
+      insertedAt: "2026-05-20T01:02:03.000000",
+      rawPayload: { event_type: "messaging" },
     },
   };
 }
