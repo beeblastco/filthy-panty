@@ -1781,3 +1781,7 @@ components:
             senderId:
               type: string
               description: Optional staff user ID for replies
+            options:
+              type: object
+              description: Opaque channel extension options used by harness lifecycle components
+              additionalProperties: true

@@ -56,6 +56,7 @@ import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../_shared/runtime-keys.ts";
+import { createChannelLifecycleComponents, type ChannelLifecycleComponent } from "./channel-lifecycle/index.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 
 type DirectIngressEvent =
@@ -106,6 +107,7 @@ export interface ChannelInboundEvent {
   channelName: string;
   source: Record<string, unknown>;
   channel: ChannelActions;
+  lifecycle?: ChannelLifecycleComponent[];
   commandToken?: string;
 }
 
@@ -312,6 +314,7 @@ async function handleChannelWebhook(
 
     const { message, ack } = parsed;
     const channel = adapter.actions(message);
+    const lifecycle = createChannelLifecycleComponents(agent.config, message.channelName);
     const response = ack ?? { statusCode: 200 };
 
     return {
@@ -327,6 +330,7 @@ async function handleChannelWebhook(
           channelName: message.channelName,
           source: message.source,
           channel: channel,
+          lifecycle,
           accountId: account.accountId,
           agentId: agent.agentId,
           agentConfig: toRuntimeAgentConfig(agent.config),

@@ -17,15 +17,23 @@ flowchart TD
   Integrations --> Account["load active account"]
   Account --> Agent["load active agent config"]
   Agent --> Registry["createChannelRegistry(config)"]
+  Agent --> Lifecycle["createChannelLifecycleComponents(config)"]
   Registry --> Adapter["ChannelAdapter"]
   Adapter --> Auth["authenticate(req)"]
   Auth --> Parse["parse(req)"]
   Parse -->|"message"| Ack["provider ACK"]
   Ack --> After["afterResponse"]
-  After --> Handler["handler.ts<br/>handleChannelRequest"]
+  Lifecycle --> Prepare
+  After --> Prepare["lifecycle.beforeSessionAppend?"]
+  Prepare --> Handler["handler.ts<br/>handleChannelRequest"]
   Handler --> Session["session.ts"]
+  Lifecycle --> Context
+  Handler --> Context["lifecycle.beforeModel?"]
+  Context --> Session
   Session --> Harness["harness.ts<br/>model + tools"]
   Harness --> Actions["ChannelActions"]
+  Lifecycle --> Record
+  Actions --> Record["lifecycle.afterChannelSend?"]
   Actions --> Provider
 ```
 
@@ -66,6 +74,16 @@ The normalized `InboundMessage` contains:
 
 `integrations.ts` scopes `eventId` and `conversationKey` with `accountId` and `agentId` before the session sees them.
 
+## Lifecycle Components
+
+Harness-owned lifecycle components can extend channel request handling without changing provider adapters. They are built by [`functions/harness-processing/channel-lifecycle/index.ts`](../functions/harness-processing/channel-lifecycle/index.ts) from generic channel `options`.
+
+| Hook | Purpose |
+| --- | --- |
+| `beforeSessionAppend(context)` | Run after ACK and before the session append; can stop duplicates or handoff conversations |
+| `beforeModel(context)` | Add ephemeral system context or stop processing immediately before a model turn |
+| `afterChannelSend(context, result)` | Run after `sendText()` succeeds, usually for audit logs or analytics |
+
 ## Current Channels
 
 | Channel | Adapter | Required config |
@@ -79,6 +97,29 @@ The normalized `InboundMessage` contains:
 The full config field reference lives in the [API Reference](/api-reference) under `AgentConfig.channels`.
 
 Pancake's public webhook docs do not define a signature or secret header. The adapter validates `page_id` against `config.channels.pancake.pageId`, acknowledges unsupported events, and replies through the page-scoped message API with `pageAccessToken`.
+
+Pancake can optionally persist customer conversation state to a customer's Supabase project through a lifecycle component configured under `config.channels.pancake.options`. This keeps Supabase out of the Pancake adapter and avoids global SST or GitHub Supabase secrets.
+
+```json
+{
+  "channels": {
+    "pancake": {
+      "pageId": "page-id",
+      "pageAccessToken": "...",
+      "senderId": "optional-staff-user-id",
+      "options": {
+        "components": {
+          "conversationState": {
+            "provider": "supabase",
+            "url": "https://project.supabase.co",
+            "serviceRoleKey": "customer-service-role-key"
+          }
+        }
+      }
+    }
+  }
+}
+```
 
 ## Add a Channel
 

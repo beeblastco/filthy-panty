@@ -249,6 +249,7 @@ export interface AgentPancakeChannelConfig {
   pageId?: string;
   pageAccessToken?: string;
   senderId?: string;
+  options?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -1117,6 +1118,9 @@ function normalizePancakeConfig(value: unknown): void {
   assertOptionalString(config.pageId, "config.channels.pancake.pageId");
   assertOptionalString(config.pageAccessToken, "config.channels.pancake.pageAccessToken");
   assertOptionalString(config.senderId, "config.channels.pancake.senderId");
+  if (config.options !== undefined && !isPlainObject(config.options)) {
+    throw new Error("config.channels.pancake.options must be an object");
+  }
 }
 
 function accountConfigsTableName(): string {

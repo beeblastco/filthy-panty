@@ -43,6 +43,12 @@ import {
   settleExternalAsyncToolResult,
   type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
+import {
+  createChannelLifecycleContext,
+  runAfterChannelSend,
+  runBeforeModel,
+  runBeforeSessionAppend,
+} from "./channel-lifecycle/runner.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 
@@ -433,6 +439,12 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
   }
 
   try {
+    const lifecycleContext = createChannelLifecycleContext(event);
+    const preparation = await runBeforeSessionAppend(event.lifecycle, lifecycleContext);
+    if (!preparation.shouldContinue) {
+      return;
+    }
+
     await session.appendIngressEvents(event.events);
   } catch (err) {
     logError("Channel request pre-processing failed", {
@@ -454,14 +466,24 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
 
   try {
     while (true) {
-      const turnContext = await session.createTurnContext();
+      const lifecycleContext = createChannelLifecycleContext(event);
+      const channelContext = await runBeforeModel(event.lifecycle, lifecycleContext);
+      if (!channelContext.shouldContinue) {
+        return;
+      }
+
+      const turnContext = await session.createTurnContext(channelContext.system);
       if (!isRunnableModelInput(turnContext.messages.at(-1))) {
         return;
       }
 
       const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig ?? {}, context, {
         // Sending prettify JSON if json, else string
-        onFinalText: (response) => event.channel.sendText(typeof response === "string" ? response : JSON.stringify(response, null, 2)),
+        onFinalText: async (response) => {
+          const responseText = typeof response === "string" ? response : JSON.stringify(response, null, 2);
+          await event.channel.sendText(responseText);
+          await runAfterChannelSend(event.lifecycle, lifecycleContext, { text: responseText });
+        },
         onErrorText: (error) => event.channel.sendText(formatChannelErrorText(error)),
         onApprovalRequired: async (approvals) => {
           await session.persistModelMessages([createChannelApprovalDenial(approvals)]);
