@@ -4,7 +4,7 @@
 import { Button } from "@/app/components/ui/button";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { cn } from "@/lib/utils";
+import { cn } from "@/app/lib/utils";
 import { useQuery } from "convex/react";
 import { useParams } from "next/navigation";
 import { useState } from "react";

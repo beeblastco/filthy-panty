@@ -37,6 +37,13 @@ export const getByProject = query({
         projectId: v.id("projects"),
         environmentId: v.id("environments"),
     },
+    returns: v.union(
+        v.null(),
+        v.object({
+            nodes: v.array(canvasNodeValidator),
+            edges: v.array(canvasEdgeValidator),
+        }),
+    ),
     handler: async (ctx, args) => {
         const { projectId, environmentId } = args;
 
@@ -89,6 +96,7 @@ export const saveLayout = mutation({
         nodes: v.array(canvasNodeValidator),
         edges: v.array(canvasEdgeValidator),
     },
+    returns: v.id("canvasLayouts"),
     handler: async (ctx, args) => {
         const { projectId, environmentId, nodes, edges } = args;
 

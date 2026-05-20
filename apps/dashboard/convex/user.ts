@@ -6,12 +6,19 @@ import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { usersFields } from "./schema";
 
+const userDoc = v.object({
+    ...usersFields,
+    _id: v.id("users"),
+    _creationTime: v.number(),
+});
+
 /**
  * Returns the current user document, or null if not authenticated.
  * @returns The user document for the authenticated caller, or null
  */
 export const getCurrent = query({
     args: {},
+    returns: v.union(v.null(), userDoc),
     handler: async (ctx) => {
         // Check authenticated user
         const user = await authKit.getAuthUser(ctx);
@@ -40,6 +47,7 @@ export const updateProfile = mutation({
         name: v.string(),
         accountHandle: v.optional(v.string()),
     },
+    returns: v.id("users"),
     handler: async (ctx, args) => {
         const { name, accountHandle } = args;
 
@@ -91,6 +99,7 @@ export const updateProfile = mutation({
  */
 export const requestAccountDeletion = mutation({
     args: {},
+    returns: v.object({ scheduledFor: v.number() }),
     handler: async (ctx) => {
         // Check authenticated user
         const authUser = await authKit.getAuthUser(ctx);

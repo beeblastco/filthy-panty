@@ -4,6 +4,13 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
+import { agentDeploymentsFields } from "./schema";
+
+const agentDeploymentDoc = v.object({
+    ...agentDeploymentsFields,
+    _id: v.id("agentDeployments"),
+    _creationTime: v.number(),
+});
 
 /**
  * Lists deployments for an agent config owned by the authenticated user.
@@ -14,6 +21,7 @@ export const list = query({
     args: {
         agentConfigId: v.id("agentConfigs"),
     },
+    returns: v.array(agentDeploymentDoc),
     handler: async (ctx, args) => {
         const { agentConfigId } = args;
 
@@ -44,6 +52,13 @@ export const create = mutation({
     args: {
         agentConfigId: v.id("agentConfigs"),
     },
+    returns: v.object({
+        _id: v.id("agentDeployments"),
+        endpointId: v.string(),
+        rawApiKey: v.string(),
+        projectSlug: v.string(),
+        environmentSlug: v.string(),
+    }),
     handler: async (ctx, args) => {
         const { agentConfigId } = args;
 
@@ -94,6 +109,7 @@ export const revoke = mutation({
     args: {
         deploymentId: v.id("agentDeployments"),
     },
+    returns: v.id("agentDeployments"),
     handler: async (ctx, args) => {
         const { deploymentId } = args;
 

@@ -6,6 +6,7 @@ import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
+import { agentConfigsFields } from "./schema";
 
 const agentProviderValidator = v.union(
     v.literal("openai"),
@@ -13,6 +14,12 @@ const agentProviderValidator = v.union(
     v.literal("bedrock"),
     v.literal("anthropic"),
 );
+
+const agentConfigDoc = v.object({
+    ...agentConfigsFields,
+    _id: v.id("agentConfigs"),
+    _creationTime: v.number(),
+});
 
 /**
  * Loads an agent config owned by the authenticated user.
@@ -23,6 +30,7 @@ export const getById = query({
     args: {
         configId: v.id("agentConfigs"),
     },
+    returns: v.union(v.null(), agentConfigDoc),
     handler: async (ctx, args) => {
         const { configId } = args;
 
@@ -59,6 +67,7 @@ export const create = mutation({
         systemPrompt: v.optional(v.string()),
         position: v.optional(v.object({ x: v.number(), y: v.number() })),
     },
+    returns: v.id("agentConfigs"),
     handler: async (ctx, args) => {
         const { projectId, environmentId, name, provider, modelId, description, systemPrompt, position } =
             args;
@@ -168,6 +177,7 @@ export const update = mutation({
         runtimeVariables: v.optional(v.array(v.object({ key: v.string(), value: v.string() }))),
         agentId: v.optional(v.string()),
     },
+    returns: v.id("agentConfigs"),
     handler: async (ctx, args) => {
         const { configId, ...updates } = args;
 
@@ -204,6 +214,7 @@ export const remove = mutation({
     args: {
         configId: v.id("agentConfigs"),
     },
+    returns: v.id("agentConfigs"),
     handler: async (ctx, args) => {
         const { configId } = args;
 

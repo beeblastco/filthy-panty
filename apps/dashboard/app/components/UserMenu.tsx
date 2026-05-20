@@ -3,7 +3,7 @@
 /** Displays the authenticated user avatar with a dropdown menu for account actions. */
 import { Avatar, AvatarFallback, AvatarImage } from "@/app/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/app/components/ui/dropdown-menu";
-import { signOut, useWorkOSSession } from "@/lib/workos";
+import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import { useConvexAuth } from "convex/react";
 import { FileText, HelpCircle, LogOut, Moon, Settings, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -11,7 +11,7 @@ import { useParams, useRouter } from "next/navigation";
 
 export function UserMenu() {
     const { isLoading, isAuthenticated } = useConvexAuth();
-    const { identity, claims } = useWorkOSSession();
+    const { user, signOut } = useAuth();
     const { theme, setTheme } = useTheme();
     const router = useRouter();
     const params = useParams<{ projectId?: string }>();
@@ -26,9 +26,11 @@ export function UserMenu() {
         );
     }
 
-    const email = claims?.email ?? null;
-    const name = claims?.name ?? email ?? (identity?.userId ? "Account" : "User");
-    const picture = claims?.picture ?? null;
+    const firstName = user?.firstName ?? "";
+    const lastName = user?.lastName ?? "";
+    const name = (`${firstName} ${lastName}`.trim() || user?.email) ?? "User";
+    const email = user?.email ?? null;
+    const picture = user?.profilePictureUrl ?? null;
     const initials = name.split(" ").filter(Boolean).map((s: string) => s[0]).slice(0, 2).join("").toUpperCase();
     const isDark = theme === "dark";
 
@@ -68,7 +70,7 @@ export function UserMenu() {
                 </DropdownMenuItem>
                 <DropdownMenuItem><HelpCircle />Support</DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" onClick={signOut}>
+                <DropdownMenuItem variant="destructive" onClick={() => signOut()}>
                     <LogOut />Sign out
                 </DropdownMenuItem>
             </DropdownMenuContent>

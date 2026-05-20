@@ -6,6 +6,13 @@ import { action, mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
+import { toolServicesFields } from "./schema";
+
+const toolServiceDoc = v.object({
+    ...toolServicesFields,
+    _id: v.id("toolServices"),
+    _creationTime: v.number(),
+});
 
 /**
  * Loads a tool service configuration for a canvas node.
@@ -20,6 +27,7 @@ export const getByNode = query({
         environmentId: v.id("environments"),
         nodeId: v.string(),
     },
+    returns: v.union(v.null(), toolServiceDoc),
     handler: async (ctx, args) => {
         const { projectId, environmentId, nodeId } = args;
 
@@ -69,6 +77,7 @@ export const upsertForNode = mutation({
         language: v.optional(v.union(v.literal("javascript"), v.literal("python"))),
         status: v.optional(v.union(v.literal("enabled"), v.literal("disabled"))),
     },
+    returns: v.id("toolServices"),
     handler: async (ctx, args) => {
         const { projectId, environmentId, nodeId, nodeLabel, sourceCode, language, status } =
             args;
@@ -140,6 +149,7 @@ export const execute = action({
         input: v.optional(v.any()),
         timeoutMs: v.optional(v.number()),
     },
+    returns: v.any(),
     handler: async (_ctx, args) => {
         const { language, sourceCode, input, timeoutMs } = args;
 

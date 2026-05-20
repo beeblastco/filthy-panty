@@ -5,7 +5,7 @@ import { Button } from "@/app/components/ui/button";
 import { Textarea } from "@/app/components/ui/textarea";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { toErrorMessage } from "@/lib/errors";
+import { toErrorMessage } from "@/app/lib/errors";
 import { useAction, useQuery } from "convex/react";
 import { Loader2, Play } from "lucide-react";
 import { useEffect, useState } from "react";

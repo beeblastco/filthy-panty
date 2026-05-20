@@ -3,7 +3,7 @@
 /** Right-side navigation links for the header bar. */
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { cn } from "@/lib/utils";
+import { cn } from "@/app/lib/utils";
 import { Suspense, useCallback, useEffect } from "react";
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 

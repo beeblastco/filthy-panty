@@ -1,6 +1,7 @@
 import { getSignInUrl } from "@workos-inc/authkit-nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import { getWorkOSRedirectUri } from "@/lib/authUrls";
+
+const redirectUri = process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI ?? "http://localhost:3000/auth/callback";
 
 function parseReturnTo(value: string | null): string | null {
     if (!value?.startsWith("/")) {
@@ -16,7 +17,6 @@ function parseReturnTo(value: string | null): string | null {
  */
 export async function GET(request: NextRequest) {
     const returnTo = parseReturnTo(request.nextUrl.searchParams.get("returnTo")) ?? "/";
-    const redirectUri = getWorkOSRedirectUri();
     const authorizationUrl = await getSignInUrl({ returnTo: returnTo, redirectUri: redirectUri });
 
     return NextResponse.redirect(authorizationUrl);

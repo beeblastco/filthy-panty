@@ -34,7 +34,7 @@ import {
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
-import { cn } from "@/lib/utils";
+import { cn } from "@/app/lib/utils";
 
 /** Color dot indicating environment type: green for production, purple for others. */
 export function EnvironmentDot({ isDefault }: { isDefault: boolean }) {

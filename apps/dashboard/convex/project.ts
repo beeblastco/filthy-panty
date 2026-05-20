@@ -6,6 +6,13 @@ import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { uniqueProjectSlug } from "./lib/slug";
 import { getOwnedProject } from "./model/ownership/project";
+import { projectsFields } from "./schema";
+
+const projectDoc = v.object({
+    ...projectsFields,
+    _id: v.id("projects"),
+    _creationTime: v.number(),
+});
 
 /**
  * Returns the user's default workspace project, creating one when missing.
@@ -13,6 +20,7 @@ import { getOwnedProject } from "./model/ownership/project";
  */
 export const getOrCreateDefault = mutation({
     args: {},
+    returns: v.id("projects"),
     handler: async (ctx) => {
         // Check authenticated user
         const authUser = await authKit.getAuthUser(ctx);
@@ -58,6 +66,7 @@ export const getOrCreateDefault = mutation({
  */
 export const list = query({
     args: {},
+    returns: v.array(projectDoc),
     handler: async (ctx) => {
         // Check authenticated user
         const authUser = await authKit.getAuthUser(ctx);
@@ -80,6 +89,12 @@ export const list = query({
  */
 export const listWithPreview = query({
     args: {},
+    returns: v.array(v.object({
+        _id: v.id("projects"),
+        name: v.string(),
+        canvas: v.null(),
+        deployedAgentCount: v.number(),
+    })),
     handler: async (ctx) => {
         // Check authenticated user
         const authUser = await authKit.getAuthUser(ctx);
@@ -112,6 +127,7 @@ export const getById = query({
     args: {
         projectId: v.id("projects"),
     },
+    returns: v.union(v.null(), projectDoc),
     handler: async (ctx, args) => {
         const { projectId } = args;
 
@@ -136,6 +152,7 @@ export const create = mutation({
         name: v.string(),
         description: v.optional(v.string()),
     },
+    returns: v.id("projects"),
     handler: async (ctx, args) => {
         const { name, description } = args;
 
@@ -186,6 +203,7 @@ export const update = mutation({
         name: v.string(),
         description: v.optional(v.string()),
     },
+    returns: v.id("projects"),
     handler: async (ctx, args) => {
         const { projectId, name, description } = args;
 
@@ -230,6 +248,7 @@ export const remove = mutation({
     args: {
         projectId: v.id("projects"),
     },
+    returns: v.id("projects"),
     handler: async (ctx, args) => {
         const { projectId } = args;
 

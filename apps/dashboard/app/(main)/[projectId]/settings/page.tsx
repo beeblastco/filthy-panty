@@ -17,10 +17,10 @@ import { Label } from "@/app/components/ui/label";
 import { Separator } from "@/app/components/ui/separator";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import type { ConfiguredPlanTier, PlanTier } from "@/lib/pricing";
-import { isMaxPlan, PLAN_CONFIGS, resolvePlan, UPGRADE_URL } from "@/lib/pricing";
-import { cn } from "@/lib/utils";
-import { useWorkOSSession } from "@/lib/workos";
+import type { ConfiguredPlanTier, PlanTier } from "@/app/lib/pricing";
+import { isMaxPlan, PLAN_CONFIGS, resolvePlan, UPGRADE_URL } from "@/app/lib/pricing";
+import { cn } from "@/app/lib/utils";
+import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import { useMutation, useQuery } from "convex/react";
 import {
     ArrowUpRight,
@@ -96,7 +96,7 @@ export default function SettingsPage() {
     const projectId = params.projectId as Id<"projects">;
     const router = useRouter();
     const { theme, setTheme } = useTheme();
-    const { identity, claims } = useWorkOSSession();
+    const { user: authUser } = useAuth();
 
     const currentUser = useQuery(api.user.getCurrent);
     const updateProfile = useMutation(api.user.updateProfile);
@@ -105,9 +105,11 @@ export default function SettingsPage() {
     const activeTab = (searchParams.get("tab") as SettingsTab) || "account";
 
     // Account state
-    const claimName = typeof claims?.name === "string" ? claims.name : "User";
-    const claimEmail = typeof claims?.email === "string" ? claims.email : "Not available";
-    const claimAvatar = typeof claims?.picture === "string" ? claims.picture : null;
+    const authFirstName = authUser?.firstName ?? "";
+    const authLastName = authUser?.lastName ?? "";
+    const claimName = (`${authFirstName} ${authLastName}`.trim() || authUser?.email) ?? "User";
+    const claimEmail = authUser?.email ?? "Not available";
+    const claimAvatar = authUser?.profilePictureUrl ?? null;
     const claimNameRef = useRef(claimName);
     claimNameRef.current = claimName;
 
@@ -140,7 +142,7 @@ export default function SettingsPage() {
         savedProfile !== null &&
         (name.trim() !== savedProfile.name || normalizedHandle !== savedProfile.accountHandle);
     const avatarUrl = currentUser?.avatarUrl ?? claimAvatar;
-    const accountId = currentUser?._id ?? identity?.userId ?? "";
+    const accountId = currentUser?._id ?? authUser?.id ?? "";
     const email = currentUser?.email ?? claimEmail;
     const userPlan: ConfiguredPlanTier = resolvePlan(currentUser?.plan as PlanTier | undefined);
     const planConfig = PLAN_CONFIGS[userPlan];

@@ -6,6 +6,13 @@ import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
+import { environmentsFields } from "./schema";
+
+const environmentDoc = v.object({
+    ...environmentsFields,
+    _id: v.id("environments"),
+    _creationTime: v.number(),
+});
 
 /**
  * Lists environments for a project owned by the authenticated user.
@@ -16,6 +23,7 @@ export const list = query({
     args: {
         projectId: v.id("projects"),
     },
+    returns: v.array(environmentDoc),
     handler: async (ctx, args) => {
         const { projectId } = args;
 
@@ -54,6 +62,7 @@ export const ensureDefault = mutation({
     args: {
         projectId: v.id("projects"),
     },
+    returns: v.id("environments"),
     handler: async (ctx, args) => {
         const { projectId } = args;
 
@@ -106,6 +115,7 @@ export const create = mutation({
         name: v.string(),
         duplicateFromId: v.optional(v.id("environments")),
     },
+    returns: v.id("environments"),
     handler: async (ctx, args) => {
         const { projectId, name, duplicateFromId } = args;
 
@@ -160,6 +170,7 @@ export const remove = mutation({
     args: {
         environmentId: v.id("environments"),
     },
+    returns: v.id("environments"),
     handler: async (ctx, args) => {
         const { environmentId } = args;
 

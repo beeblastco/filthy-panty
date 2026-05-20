@@ -1,16 +1,16 @@
-import { authkitMiddleware } from "@workos-inc/authkit-nextjs";
-import { getWorkOSRedirectUri } from "@/lib/authUrls";
+import { authkitProxy } from "@workos-inc/authkit-nextjs";
+
+const redirectUri = process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI ?? "http://localhost:3000/auth/callback";
 
 /**
  * WorkOS AuthKit middleware for session management.
  */
-export default authkitMiddleware({
-    redirectUri: getWorkOSRedirectUri(),
+export default authkitProxy({
+    redirectUri: redirectUri,
     middlewareAuth: {
         enabled: true,
         unauthenticatedPaths: [
             "/healthz",
-            "/login",
             "/auth/callback",
             "/auth/sign-in",
         ],

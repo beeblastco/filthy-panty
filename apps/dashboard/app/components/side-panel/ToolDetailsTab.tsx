@@ -6,7 +6,7 @@ import { Input } from "@/app/components/ui/input";
 import { Switch } from "@/app/components/ui/switch";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { toErrorMessage } from "@/lib/errors";
+import { toErrorMessage } from "@/app/lib/errors";
 import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 
