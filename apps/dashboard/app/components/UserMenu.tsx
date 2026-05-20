@@ -1,13 +1,13 @@
 "use client";
 
 /** Displays the authenticated user avatar with a dropdown menu for account actions. */
-import { LogOut, Moon, Sun, FileText, HelpCircle, Settings } from "lucide-react";
-import { signOut, useWorkOSSession } from "@/lib/workos";
-import { useConvexAuth } from "convex/react";
-import { useTheme } from "next-themes";
-import { useParams, useRouter } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/app/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/app/components/ui/dropdown-menu";
+import { signOut, useWorkOSSession } from "@/lib/workos";
+import { useConvexAuth } from "convex/react";
+import { FileText, HelpCircle, LogOut, Moon, Settings, Sun } from "lucide-react";
+import { useTheme } from "next-themes";
+import { useParams, useRouter } from "next/navigation";
 
 export function UserMenu() {
     const { isLoading, isAuthenticated } = useConvexAuth();
@@ -59,7 +59,13 @@ export function UserMenu() {
                     </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem><FileText />Documents</DropdownMenuItem>
+                <DropdownMenuItem
+                    className="cursor-pointer"
+                    asChild>
+                    <a href="https://docs.beeblast.co/" target="_blank" rel="noopener noreferrer">
+                        <FileText />Documents
+                    </a>
+                </DropdownMenuItem>
                 <DropdownMenuItem><HelpCircle />Support</DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem variant="destructive" onClick={signOut}>
