@@ -45,7 +45,7 @@ describe("Supabase conversation-state lifecycle component", () => {
     }) as never;
     const component = createSupabaseComponent();
 
-    const result = await component.prepareMessage!(createLifecycleContext());
+    const result = await component.beforeSessionAppend!(createLifecycleContext());
 
     expect(result).toEqual({ shouldContinue: true });
     expect(fetchCalls).toHaveLength(2);
@@ -87,7 +87,7 @@ describe("Supabase conversation-state lifecycle component", () => {
     }) as never;
     const component = createSupabaseComponent();
 
-    const result = await component.prepareMessage!(createLifecycleContext());
+    const result = await component.beforeSessionAppend!(createLifecycleContext());
 
     expect(result).toEqual({ shouldContinue: false, reason: "duplicate_message" });
   });
@@ -103,7 +103,7 @@ describe("Supabase conversation-state lifecycle component", () => {
     }) as never;
     const component = createSupabaseComponent();
 
-    const result = await component.prepareMessage!(createLifecycleContext());
+    const result = await component.beforeSessionAppend!(createLifecycleContext());
 
     expect(result).toEqual({ shouldContinue: false, reason: "reply_mode_human" });
   });
@@ -119,12 +119,11 @@ describe("Supabase conversation-state lifecycle component", () => {
     ])) as never;
     const component = createSupabaseComponent();
 
-    const result = await component.loadContext!(createLifecycleContext());
+    const result = await component.beforeModel!(createLifecycleContext());
 
-    expect(result.canReply).toBe(true);
-    expect(result.system?.[0]?.role).toBe("system");
-    expect(result.system?.[0]?.content).toContain("current_product_name: AquaSilk Serum");
-    expect(result.system?.[0]?.content).toContain("intent: price_check");
+    expect(result?.system?.[0]?.role).toBe("system");
+    expect(result?.system?.[0]?.content).toContain("current_product_name: AquaSilk Serum");
+    expect(result?.system?.[0]?.content).toContain("intent: price_check");
   });
 
   it("records agent replies after channel send succeeds", async () => {
@@ -135,7 +134,7 @@ describe("Supabase conversation-state lifecycle component", () => {
     }) as never;
     const component = createSupabaseComponent();
 
-    await component.recordReply!(createLifecycleContext(), "Agent reply");
+    await component.afterChannelSend!(createLifecycleContext(), { text: "Agent reply" });
 
     expect(fetchCalls).toHaveLength(2);
     expect(fetchCalls[0]!.url).toBe("https://supabase.example/rest/v1/conversation_messages");

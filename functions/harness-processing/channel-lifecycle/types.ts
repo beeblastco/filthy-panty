@@ -20,15 +20,19 @@ export interface ChannelLifecycleDecision {
   reason?: string;
 }
 
-export interface ChannelLifecycleContextResult {
-  canReply: boolean;
+export interface ChannelBeforeModelResult {
+  shouldContinue?: boolean;
   system?: SystemModelMessage[];
   reason?: string;
 }
 
+export interface ChannelSendResult {
+  text: string;
+}
+
 export interface ChannelLifecycleComponent {
   readonly name: string;
-  prepareMessage?(context: ChannelLifecycleContext): Promise<ChannelLifecycleDecision>;
-  loadContext?(context: ChannelLifecycleContext): Promise<ChannelLifecycleContextResult>;
-  recordReply?(context: ChannelLifecycleContext, responseText: string): Promise<void>;
+  beforeSessionAppend?(context: ChannelLifecycleContext): Promise<ChannelLifecycleDecision | void>;
+  beforeModel?(context: ChannelLifecycleContext): Promise<ChannelBeforeModelResult | void>;
+  afterChannelSend?(context: ChannelLifecycleContext, result: ChannelSendResult): Promise<void>;
 }

@@ -7,10 +7,11 @@ import type { JSONValue, SystemModelMessage } from "ai";
 import { extractText } from "../../_shared/channels.ts";
 import { logError, logInfo, logWarn } from "../../_shared/log.ts";
 import type {
+  ChannelBeforeModelResult,
   ChannelLifecycleComponent,
   ChannelLifecycleContext,
-  ChannelLifecycleContextResult,
   ChannelLifecycleDecision,
+  ChannelSendResult,
 } from "./types.ts";
 
 const SUPABASE_REST_PATH = "rest/v1/";
@@ -73,9 +74,9 @@ export function createSupabaseConversationStateComponent(
 ): ChannelLifecycleComponent {
   return {
     name: "supabase-conversation-state",
-    prepareMessage: (context) => prepareConversationState(config, context),
-    loadContext: (context) => loadConversationStateContext(config, context),
-    recordReply: (context, responseText) => recordAgentReply(config, context, responseText),
+    beforeSessionAppend: (context) => prepareConversationState(config, context),
+    beforeModel: (context) => loadConversationStateContext(config, context),
+    afterChannelSend: (context, result) => recordAgentReply(config, context, result),
   };
 }
 
@@ -134,26 +135,25 @@ async function prepareConversationState(
 async function loadConversationStateContext(
   config: SupabaseConversationStateConfig,
   context: ChannelLifecycleContext,
-): Promise<ChannelLifecycleContextResult> {
+): Promise<ChannelBeforeModelResult> {
   const source = conversationSource(context.source);
   if (!source) {
-    return { canReply: true };
+    return {};
   }
 
   const state = await loadConversationState(config, context.conversationKey);
   if (!state) {
-    return { canReply: true };
+    return {};
   }
 
   if (state.reply_mode !== "auto") {
     return {
-      canReply: false,
+      shouldContinue: false,
       reason: `reply_mode_${state.reply_mode}`,
     };
   }
 
   return {
-    canReply: true,
     system: [{
       role: "system",
       content: formatConversationStatePrompt(state),
@@ -164,7 +164,7 @@ async function loadConversationStateContext(
 async function recordAgentReply(
   config: SupabaseConversationStateConfig,
   context: ChannelLifecycleContext,
-  responseText: string,
+  result: ChannelSendResult,
 ): Promise<void> {
   const source = conversationSource(context.source);
   if (!source || !context.accountId || !context.agentId) {
@@ -183,10 +183,10 @@ async function recordAgentReply(
     senderType: "agent",
     senderId: context.agentId,
     senderName: "agent",
-    body: responseText,
+    body: result.text,
     rawPayload: {
       sourceEventId: context.eventId,
-      responseText,
+      responseText: result.text,
     },
     providerCreatedAt: now,
   });

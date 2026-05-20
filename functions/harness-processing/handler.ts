@@ -4,7 +4,7 @@
  */
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
-import type { ToolModelMessage, JSONValue, SystemModelMessage } from "ai";
+import type { ToolModelMessage, JSONValue } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { formatChannelErrorText } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
@@ -43,7 +43,12 @@ import {
   settleExternalAsyncToolResult,
   type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
-import type { ChannelLifecycleContext } from "./channel-lifecycle/index.ts";
+import {
+  createChannelLifecycleContext,
+  runAfterChannelSend,
+  runBeforeModel,
+  runBeforeSessionAppend,
+} from "./channel-lifecycle/runner.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 
@@ -434,7 +439,8 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
   }
 
   try {
-    const preparation = await runChannelPrepare(event, channelLifecycleContext(event));
+    const lifecycleContext = createChannelLifecycleContext(event);
+    const preparation = await runBeforeSessionAppend(event.lifecycle, lifecycleContext);
     if (!preparation.shouldContinue) {
       return;
     }
@@ -460,8 +466,9 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
 
   try {
     while (true) {
-      const channelContext = await loadChannelContext(event, channelLifecycleContext(event));
-      if (!channelContext.canReply) {
+      const lifecycleContext = createChannelLifecycleContext(event);
+      const channelContext = await runBeforeModel(event.lifecycle, lifecycleContext);
+      if (!channelContext.shouldContinue) {
         return;
       }
 
@@ -475,7 +482,7 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
         onFinalText: async (response) => {
           const responseText = typeof response === "string" ? response : JSON.stringify(response, null, 2);
           await event.channel.sendText(responseText);
-          await recordChannelReply(event, channelLifecycleContext(event), responseText);
+          await runAfterChannelSend(event.lifecycle, lifecycleContext, { text: responseText });
         },
         onErrorText: (error) => event.channel.sendText(formatChannelErrorText(error)),
         onApprovalRequired: async (approvals) => {
@@ -490,84 +497,6 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
   } finally {
     await session.releaseConversationLease().catch(() => { });
   }
-}
-
-async function runChannelPrepare(
-  event: ChannelInboundEvent,
-  lifecycleContext: ChannelLifecycleContext,
-): Promise<{ shouldContinue: boolean }> {
-  for (const component of event.lifecycle ?? []) {
-    const preparation = await component.prepareMessage?.(lifecycleContext);
-    if (preparation && !preparation.shouldContinue) {
-      logInfo("Channel request stopped by lifecycle preparation", {
-        eventId: event.eventId,
-        conversationKey: event.conversationKey,
-        component: component.name,
-        reason: preparation.reason ?? "lifecycle_preparation_blocked",
-      });
-      return { shouldContinue: false };
-    }
-  }
-
-  return { shouldContinue: true };
-}
-
-async function loadChannelContext(
-  event: ChannelInboundEvent,
-  lifecycleContext: ChannelLifecycleContext,
-): Promise<{ canReply: boolean; system: SystemModelMessage[] }> {
-  const system: SystemModelMessage[] = [];
-  for (const component of event.lifecycle ?? []) {
-    const context = await component.loadContext?.(lifecycleContext);
-    if (context && !context.canReply) {
-      logInfo("Channel request stopped by lifecycle context", {
-        eventId: event.eventId,
-        conversationKey: event.conversationKey,
-        component: component.name,
-        reason: context.reason ?? "lifecycle_context_blocked",
-      });
-      return { canReply: false, system };
-    }
-
-    if (context?.system) {
-      system.push(...context.system);
-    }
-  }
-
-  return { canReply: true, system };
-}
-
-async function recordChannelReply(
-  event: ChannelInboundEvent,
-  lifecycleContext: ChannelLifecycleContext,
-  responseText: string,
-): Promise<void> {
-  await Promise.all((event.lifecycle ?? []).map(async (component) => {
-    if (!component.recordReply) {
-      return;
-    }
-
-    await component.recordReply(lifecycleContext, responseText).catch((err) => {
-      logError("Failed to run channel lifecycle reply recorder", {
-        eventId: event.eventId,
-        conversationKey: event.conversationKey,
-        component: component.name,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-  }));
-}
-
-function channelLifecycleContext(event: ChannelInboundEvent): ChannelLifecycleContext {
-  return {
-    accountId: event.accountId,
-    agentId: event.agentId,
-    eventId: event.eventId,
-    conversationKey: event.conversationKey,
-    channelName: event.channelName,
-    content: event.content,
-    source: event.source,
-  };
 }
 
 /**

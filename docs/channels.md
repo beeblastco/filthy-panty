@@ -24,16 +24,16 @@ flowchart TD
   Parse -->|"message"| Ack["provider ACK"]
   Ack --> After["afterResponse"]
   Lifecycle --> Prepare
-  After --> Prepare["lifecycle.prepareMessage?"]
+  After --> Prepare["lifecycle.beforeSessionAppend?"]
   Prepare --> Handler["handler.ts<br/>handleChannelRequest"]
   Handler --> Session["session.ts"]
   Lifecycle --> Context
-  Handler --> Context["lifecycle.loadContext?"]
+  Handler --> Context["lifecycle.beforeModel?"]
   Context --> Session
   Session --> Harness["harness.ts<br/>model + tools"]
   Harness --> Actions["ChannelActions"]
   Lifecycle --> Record
-  Actions --> Record["lifecycle.recordReply?"]
+  Actions --> Record["lifecycle.afterChannelSend?"]
   Actions --> Provider
 ```
 
@@ -80,9 +80,9 @@ Harness-owned lifecycle components can extend channel request handling without c
 
 | Hook | Purpose |
 | --- | --- |
-| `prepareMessage(context)` | Run after ACK and before the session append; can stop duplicates or handoff conversations |
-| `loadContext(context)` | Add ephemeral system context or stop reply immediately before a model turn |
-| `recordReply(context, text)` | Record a sent reply after `sendText()` succeeds |
+| `beforeSessionAppend(context)` | Run after ACK and before the session append; can stop duplicates or handoff conversations |
+| `beforeModel(context)` | Add ephemeral system context or stop processing immediately before a model turn |
+| `afterChannelSend(context, result)` | Run after `sendText()` succeeds, usually for audit logs or analytics |
 
 ## Current Channels
 
