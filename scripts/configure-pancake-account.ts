@@ -4,7 +4,12 @@
  */
 
 import { optionalEnv } from "../functions/_shared/env.ts";
-import { accountServiceUrl, agentServiceUrl, createScriptAgentConfig, upsertScriptAccount } from "./utils.ts";
+import {
+  accountServiceUrl,
+  agentServiceUrl,
+  createScriptAgentConfig,
+  upsertScriptAccount,
+} from "./utils.ts";
 
 const pancakePageId = optionalEnv("PANCAKE_PAGE_ID");
 const pancakePageAccessToken = optionalEnv("PANCAKE_PAGE_ACCESS_TOKEN");

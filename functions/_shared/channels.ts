@@ -32,21 +32,6 @@ export interface InboundMessage {
   source: Record<string, unknown>;
 }
 
-export interface ChannelLifecycleContext extends InboundMessage {
-  accountId?: string;
-  agentId?: string;
-}
-
-export interface ChannelLifecycleResult {
-  stop?: boolean;
-  reason?: string;
-}
-
-export interface ChannelLifecycleComponent {
-  readonly name: string;
-  before?(context: ChannelLifecycleContext): Promise<ChannelLifecycleResult | void>;
-}
-
 export interface ParsedChannelMessage {
   kind: "message";
   message: InboundMessage;

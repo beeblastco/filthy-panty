@@ -61,8 +61,6 @@ export interface PancakeSource {
   fromId?: string;
   fromName?: string;
   pageCustomerId?: string;
-  insertedAt?: string;
-  rawPayload?: unknown;
 }
 
 export function createPancakeChannel(
@@ -121,8 +119,6 @@ export function createPancakeChannel(
             fromId: message.from?.id ?? conversation.from?.id,
             fromName: message.from?.name ?? conversation.from?.name,
             pageCustomerId: message.from?.page_customer_id,
-            insertedAt: message.inserted_at,
-            rawPayload: payload,
           } satisfies PancakeSource,
         },
       };
@@ -210,8 +206,6 @@ function toPancakeSource(source: Record<string, unknown>): PancakeSource {
     fromId: typeof source.fromId === "string" ? source.fromId : undefined,
     fromName: typeof source.fromName === "string" ? source.fromName : undefined,
     pageCustomerId: typeof source.pageCustomerId === "string" ? source.pageCustomerId : undefined,
-    insertedAt: typeof source.insertedAt === "string" ? source.insertedAt : undefined,
-    rawPayload: source.rawPayload,
   };
 }
 

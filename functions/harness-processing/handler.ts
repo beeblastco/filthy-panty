@@ -6,7 +6,7 @@
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { ToolModelMessage, JSONValue } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
-import { formatChannelErrorText, type ChannelLifecycleContext } from "../_shared/channels.ts";
+import { formatChannelErrorText } from "../_shared/channels.ts";
 import { executeCommand } from "../_shared/commands.ts";
 import { toRuntimeAgentConfig } from "../_shared/accounts.ts";
 import { booleanEnv, requireEnv } from "../_shared/env.ts";
@@ -433,11 +433,6 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
   }
 
   try {
-    const lifecycleContext = createChannelLifecycleContext(event);
-    if (await shouldStopChannelRequest(event, lifecycleContext)) {
-      return;
-    }
-
     await session.appendIngressEvents(event.events);
   } catch (err) {
     logError("Channel request pre-processing failed", {
@@ -466,10 +461,7 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
 
       const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig ?? {}, context, {
         // Sending prettify JSON if json, else string
-        onFinalText: async (response) => {
-          const responseText = typeof response === "string" ? response : JSON.stringify(response, null, 2);
-          await event.channel.sendText(responseText);
-        },
+        onFinalText: (response) => event.channel.sendText(typeof response === "string" ? response : JSON.stringify(response, null, 2)),
         onErrorText: (error) => event.channel.sendText(formatChannelErrorText(error)),
         onApprovalRequired: async (approvals) => {
           await session.persistModelMessages([createChannelApprovalDenial(approvals)]);
@@ -505,40 +497,6 @@ async function handleStatusRequest(event: StatusInboundEvent): Promise<LambdaRes
     ...(result.error ? { error: result.error } : {}),
     ...(result.approvals ? { approvals: result.approvals } : {}),
   });
-}
-
-function createChannelLifecycleContext(event: ChannelInboundEvent): ChannelLifecycleContext {
-  return {
-    accountId: event.accountId,
-    agentId: event.agentId,
-    eventId: event.eventId,
-    conversationKey: event.conversationKey,
-    channelName: event.channelName,
-    content: event.content,
-    source: event.source,
-  };
-}
-
-async function shouldStopChannelRequest(
-  event: ChannelInboundEvent,
-  context: ChannelLifecycleContext,
-): Promise<boolean> {
-  for (const component of event.lifecycle ?? []) {
-    const result = await component.before?.(context);
-    if (!result?.stop) {
-      continue;
-    }
-
-    logInfo("Channel request stopped by lifecycle component", {
-      eventId: context.eventId,
-      conversationKey: context.conversationKey,
-      component: component.name,
-      reason: result.reason ?? "lifecycle_blocked",
-    });
-    return true;
-  }
-
-  return false;
 }
 
 async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn | null> {

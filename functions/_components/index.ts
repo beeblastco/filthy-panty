@@ -1,53 +1,41 @@
 /**
- * Optional channel lifecycle component registry.
- * Keep concrete customer/channel components out of the harness runtime contract.
+ * Optional customer/channel component config helpers.
+ * Keep concrete customer behavior out of the harness runtime path.
  */
 
 import {
-  createPancakeSupabaseReplyModeComponent,
   type PancakeSupabaseReplyModeConfig,
 } from "./pancake/supabase-reply-mode.component.ts";
 import type { AgentConfig } from "../_shared/accounts.ts";
-import type { ChannelLifecycleComponent } from "../_shared/channels.ts";
 
-export function createChannelLifecycleComponents(
+export function getPancakeSupabaseReplyModeConfig(
   config: AgentConfig,
-  channelName: string,
-): ChannelLifecycleComponent[] {
-  const channelOptions = getChannelOptions(config, channelName);
+): PancakeSupabaseReplyModeConfig | null {
+  const channelOptions = getPancakeOptions(config);
   const componentsConfig = channelOptions.components;
   if (componentsConfig === undefined) {
-    return [];
-  }
-
-  if (!Array.isArray(componentsConfig)) {
-    throw new Error(`config.channels.${channelName}.options.components must be an array`);
-  }
-
-  return componentsConfig
-    .map((componentConfig, index) =>
-      createChannelLifecycleComponent(componentConfig, `config.channels.${channelName}.options.components[${index}]`)
-    )
-    .filter((component): component is ChannelLifecycleComponent => component !== null);
-}
-
-export function createChannelLifecycleComponent(
-  value: unknown,
-  path: string,
-): ChannelLifecycleComponent | null {
-  const config = recordValue(value);
-  if (!config || config.enabled === false) {
     return null;
   }
 
-  switch (config.type) {
-    case "pancake-supabase-reply-mode":
-      return createPancakeSupabaseReplyModeComponent(parsePancakeSupabaseReplyModeConfig(config, path));
-    case undefined:
-      return null;
-    default:
-      throw new Error(`Unsupported channel lifecycle component type: ${String(config.type)}`);
+  if (!Array.isArray(componentsConfig)) {
+    throw new Error("config.channels.pancake.options.components must be an array");
   }
+
+  for (let index = 0; index < componentsConfig.length; index += 1) {
+    const componentConfig = recordValue(componentsConfig[index]);
+    if (
+      componentConfig &&
+      componentConfig.enabled !== false &&
+      componentConfig.type === "pancake-supabase-reply-mode"
+    ) {
+      return parsePancakeSupabaseReplyModeConfig(
+        componentConfig,
+        `config.channels.pancake.options.components[${index}]`,
+      );
+    }
+  }
+
+  return null;
 }
 
 function parsePancakeSupabaseReplyModeConfig(
@@ -60,8 +48,8 @@ function parsePancakeSupabaseReplyModeConfig(
   return { url, serviceRoleKey };
 }
 
-function getChannelOptions(config: AgentConfig, channelName: string): Record<string, unknown> {
-  const channelConfig = recordValue(config.channels?.[channelName]);
+function getPancakeOptions(config: AgentConfig): Record<string, unknown> {
+  const channelConfig = recordValue(config.channels?.pancake);
   return recordValue(channelConfig?.options) ?? {};
 }
 

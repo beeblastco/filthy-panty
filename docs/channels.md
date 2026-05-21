@@ -17,17 +17,16 @@ flowchart TD
   Integrations --> Account["load active account"]
   Account --> Agent["load active agent config"]
   Agent --> Registry["createChannelRegistry(config)"]
-  Agent --> Lifecycle["createChannelLifecycleComponents(config)"]
   Registry --> Adapter["ChannelAdapter"]
   Adapter --> Auth["authenticate(req)"]
   Auth --> Parse["parse(req)"]
-  Parse -->|"message"| Ack["provider ACK"]
+  Parse -->|"response / ignore"| ProviderAck["provider response"]
+  Parse -->|"message"| Component["optional channel component"]
+  Component -->|"ignore"| ProviderAck
+  Component -->|"message"| Ack["provider ACK"]
   Ack --> After["afterResponse"]
-  Lifecycle --> Before
-  After --> Before["lifecycle.before?"]
-  Before --> Handler["handler.ts<br/>handleChannelRequest"]
+  After --> Handler["handler.ts<br/>handleChannelRequest"]
   Handler --> Session["session.ts"]
-  Before --> Session
   Session --> Harness["harness.ts<br/>model + tools"]
   Harness --> Actions["ChannelActions"]
   Actions --> Provider
@@ -70,13 +69,7 @@ The normalized `InboundMessage` contains:
 
 `integrations.ts` scopes `eventId` and `conversationKey` with `accountId` and `agentId` before the session sees them.
 
-## Lifecycle Components
-
-Lifecycle components run custom code around channel processing without changing provider adapters. Optional customer/channel components live under `functions/_components`.
-
-| Hook | Purpose |
-| --- | --- |
-| `before(context)` | Runs custom component code after provider ACK and before the session append |
+Optional customer/channel components live under `functions/_components`. They are attached by the channel registry and can convert a parsed channel message into `ignore` before the request reaches `handler.ts`. Keep those components channel-specific; do not use them for generic analytics or core agent behavior.
 
 ## Current Channels
 
@@ -92,7 +85,7 @@ The full config field reference lives in the [API Reference](/api-reference) und
 
 Pancake's public webhook docs do not define a signature or secret header. The adapter validates `page_id` against `config.channels.pancake.pageId`, acknowledges unsupported events, and replies through the page-scoped message API with `pageAccessToken`.
 
-Pancake can optionally check `reply_mode` from a customer's Supabase `conversation_states` table through a component configured under `config.channels.pancake.options`. This keeps Supabase out of the Pancake adapter and avoids global SST or GitHub Supabase secrets.
+Pancake can optionally check `reply_mode` from a customer's Supabase `conversation_states` table through a component configured under `config.channels.pancake.options`. This keeps Supabase out of the Pancake adapter and does not require SST-level Supabase secrets; the credentials live in the encrypted agent config only when this component is used.
 
 ```json
 {

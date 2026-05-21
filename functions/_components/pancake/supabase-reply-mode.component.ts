@@ -1,13 +1,11 @@
 /**
- * Pancake Supabase reply-mode component.
- * This only gates whether the agent should reply for a conversation.
+ * Pancake Supabase reply-mode helper.
+ * Keep the customer-specific Supabase gate beside Pancake, outside the core agent loop.
  */
 
-import type {
-  ChannelLifecycleComponent,
-  ChannelLifecycleContext,
-  ChannelLifecycleResult,
-} from "../../_shared/channels.ts";
+import type { ChannelParseResult, ParsedChannelMessage } from "../../_shared/channels.ts";
+import { logInfo } from "../../_shared/log.ts";
+import { accountAgentScopedKey } from "../../_shared/runtime-keys.ts";
 
 const SUPABASE_REST_PATH = "rest/v1/";
 
@@ -18,30 +16,51 @@ export interface PancakeSupabaseReplyModeConfig {
   serviceRoleKey: string;
 }
 
+interface PancakeSupabaseReplyModeScope {
+  accountId: string;
+  agentId: string;
+}
+
 interface ConversationStateRecord {
   conversation_key: string;
   reply_mode: ReplyMode;
 }
 
-export function createPancakeSupabaseReplyModeComponent(
+export async function applyPancakeSupabaseReplyMode(
   config: PancakeSupabaseReplyModeConfig,
-): ChannelLifecycleComponent {
+  scope: PancakeSupabaseReplyModeScope,
+  parsed: ParsedChannelMessage,
+): Promise<ChannelParseResult> {
+  const conversationKey = accountAgentScopedKey(
+    scope.accountId,
+    scope.agentId,
+    parsed.message.conversationKey,
+  );
+  const replyMode = await getPancakeSupabaseReplyMode(config, conversationKey);
+
+  if (replyMode === "auto") {
+    return parsed;
+  }
+
+  logInfo("Pancake Supabase reply mode skipped agent reply", {
+    accountId: scope.accountId,
+    agentId: scope.agentId,
+    conversationKey,
+    replyMode,
+  });
+
   return {
-    name: "pancake-supabase-reply-mode",
-    before: (context) => checkReplyMode(config, context),
+    kind: "ignore",
+    response: parsed.ack ?? { statusCode: 200 },
   };
 }
 
-async function checkReplyMode(
+export async function getPancakeSupabaseReplyMode(
   config: PancakeSupabaseReplyModeConfig,
-  context: ChannelLifecycleContext,
-): Promise<ChannelLifecycleResult> {
-  const state = await upsertConversationState(config, context.conversationKey);
-  if (state.reply_mode === "auto") {
-    return {};
-  }
-
-  return { stop: true, reason: `reply_mode_${state.reply_mode}` };
+  conversationKey: string,
+): Promise<ReplyMode> {
+  const state = await upsertConversationState(config, conversationKey);
+  return state.reply_mode;
 }
 
 async function upsertConversationState(

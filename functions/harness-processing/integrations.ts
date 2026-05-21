@@ -30,12 +30,15 @@ import {
 import type {
   ChannelActions,
   ChannelAdapter,
-  ChannelLifecycleComponent,
+  ChannelParseResult,
   ChannelRequest,
   ChannelResponse,
+  ParsedChannelMessage,
 } from "../_shared/channels.ts";
 import { extractText, formatChannelErrorText } from "../_shared/channels.ts";
 import { parseCommand } from "../_shared/commands.ts";
+import { getPancakeSupabaseReplyModeConfig } from "../_components/index.ts";
+import { applyPancakeSupabaseReplyMode } from "../_components/pancake/supabase-reply-mode.component.ts";
 import { createDiscordChannel } from "../_shared/discord-channel.ts";
 import { createGitHubChannel } from "../_shared/github-channel.ts";
 import {
@@ -57,7 +60,6 @@ import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../_shared/runtime-keys.ts";
-import { createChannelLifecycleComponents } from "../_components/index.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 
 type DirectIngressEvent =
@@ -108,7 +110,6 @@ export interface ChannelInboundEvent {
   channelName: string;
   source: Record<string, unknown>;
   channel: ChannelActions;
-  lifecycle?: ChannelLifecycleComponent[];
   commandToken?: string;
 }
 
@@ -120,8 +121,17 @@ interface IntegrationHandlers {
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
 }
 
-export interface ChannelRegistry {
-  webhookChannels: ChannelAdapter[];
+interface ChannelRegistry {
+  webhookChannels: WebhookChannelRegistration[];
+}
+
+interface WebhookChannelRegistration {
+  adapter: ChannelAdapter;
+  component?: WebhookChannelComponent;
+}
+
+interface WebhookChannelComponent {
+  apply(parsed: ParsedChannelMessage): Promise<ChannelParseResult>;
 }
 
 export interface IntegrationRoutingOptions {
@@ -246,13 +256,18 @@ async function handleLambdaUrlEvent(
       return notFoundResponse();
     }
 
-    const accountChannelRegistry = createChannelRegistry(agent.config);
+    const accountChannelRegistry = createChannelRegistry(agent.config, {
+      accountId: account.accountId,
+      agentId,
+    });
     const channelName = decodeURIComponent(accountWebhookMatch[3]);
-    const accountChannel = accountChannelRegistry.webhookChannels.find((channel) =>
-      channel.name === channelName && channel.canHandle(request)
+    const accountChannel = accountChannelRegistry.webhookChannels.find((registration) =>
+      registration.adapter.name === channelName && registration.adapter.canHandle(request)
     );
     if (!accountChannel) {
-      const isConfigured = accountChannelRegistry.webhookChannels.some((channel) => channel.name === channelName);
+      const isConfigured = accountChannelRegistry.webhookChannels.some((registration) =>
+        registration.adapter.name === channelName
+      );
       return integrationNotConfigured(isConfigured ? `Webhook ${channelName}` : channelName);
     }
 
@@ -292,18 +307,22 @@ async function handleLambdaUrlEvent(
  * This is to handle the response to the external integration webhook
  */
 async function handleChannelWebhook(
-  adapter: ChannelAdapter,
+  registration: WebhookChannelRegistration,
   request: ChannelRequest,
   handlers: IntegrationHandlers,
   account: AccountRecord,
   agent: AgentRecord,
 ): Promise<LambdaResponse> {
+  const adapter = registration.adapter;
   try {
     if (!(await adapter.authenticate(request))) {
       return unauthorizedResponse();
     }
 
-    const parsed = adapter.parse(request);
+    let parsed = adapter.parse(request);
+    if (parsed.kind === "message" && registration.component) {
+      parsed = await registration.component.apply(parsed);
+    }
 
     if (parsed.kind === "response") {
       return toLambdaResponse(parsed.response);
@@ -315,7 +334,6 @@ async function handleChannelWebhook(
 
     const { message, ack } = parsed;
     const channel = adapter.actions(message);
-    const lifecycle = createChannelLifecycleComponents(agent.config, message.channelName);
     const response = ack ?? { statusCode: 200 };
 
     return {
@@ -331,7 +349,6 @@ async function handleChannelWebhook(
           channelName: message.channelName,
           source: message.source,
           channel: channel,
-          lifecycle,
           accountId: account.accountId,
           agentId: agent.agentId,
           agentConfig: toRuntimeAgentConfig(agent.config),
@@ -410,21 +427,46 @@ function directApiDisabledResponse(): LambdaResponse {
   return errorResponse(404, "Direct API is disabled");
 }
 
-function createChannelRegistry(config: AgentConfig): ChannelRegistry {
+function createChannelRegistry(
+  config: AgentConfig,
+  scope: { accountId: string; agentId: string },
+): ChannelRegistry {
   const telegramChannel = createTelegramChannelFromConfig(config);
   const githubChannel = createGitHubChannelFromConfig(config);
   const slackChannel = createSlackChannelFromConfig(config);
   const discordChannel = createDiscordChannelFromConfig(config);
   const pancakeChannel = createPancakeChannelFromConfig(config);
+  const pancakeReplyModeConfig = getPancakeSupabaseReplyModeConfig(config);
 
   return {
     webhookChannels: [
-      telegramChannel,
-      githubChannel,
-      slackChannel,
-      discordChannel,
-      pancakeChannel,
-    ].filter((channel): channel is ChannelAdapter => channel !== null),
+      registerWebhookChannel(telegramChannel),
+      registerWebhookChannel(githubChannel),
+      registerWebhookChannel(slackChannel),
+      registerWebhookChannel(discordChannel),
+      registerWebhookChannel(
+        pancakeChannel,
+        pancakeReplyModeConfig
+          ? {
+            apply: (parsed) => applyPancakeSupabaseReplyMode(pancakeReplyModeConfig, scope, parsed),
+          }
+          : undefined,
+      ),
+    ].filter((registration): registration is WebhookChannelRegistration => registration !== null),
+  };
+}
+
+function registerWebhookChannel(
+  adapter: ChannelAdapter | null,
+  component?: WebhookChannelComponent,
+): WebhookChannelRegistration | null {
+  if (!adapter) {
+    return null;
+  }
+
+  return {
+    adapter,
+    ...(component ? { component } : {}),
   };
 }
 
