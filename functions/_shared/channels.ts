@@ -51,6 +51,10 @@ export interface ChannelAdapter {
   actions(msg: InboundMessage): ChannelActions;
 }
 
+export interface ChannelRuntimeAdapter extends Omit<ChannelAdapter, "parse"> {
+  parse(req: ChannelRequest): ChannelParseResult | Promise<ChannelParseResult>;
+}
+
 export function extractText(content: UserContent): string {
   if (typeof content === "string") return content;
   return content

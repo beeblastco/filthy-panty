@@ -1,6 +1,6 @@
 /**
- * Thin communication-channel integration layer for harness-processing.
- * Keep request normalization, webhook routing, and per-channel lifecycle handling here.
+ * HTTP ingress and channel routing for harness-processing.
+ * Keep request normalization, account/agent lookup, provider ACKs, and normalized channel events here.
  */
 
 import type {
@@ -30,14 +30,12 @@ import {
 import type {
   ChannelActions,
   ChannelAdapter,
-  ChannelParseResult,
   ChannelRequest,
   ChannelResponse,
-  ParsedChannelMessage,
+  ChannelRuntimeAdapter,
 } from "../_shared/channels.ts";
 import { extractText, formatChannelErrorText } from "../_shared/channels.ts";
 import { parseCommand } from "../_shared/commands.ts";
-import { createPancakeWebhookComponent } from "../_components/pancake/index.ts";
 import { createDiscordChannel } from "../_shared/discord-channel.ts";
 import { createGitHubChannel } from "../_shared/github-channel.ts";
 import {
@@ -120,17 +118,8 @@ interface IntegrationHandlers {
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
 }
 
-interface ChannelRegistry {
-  webhookChannels: WebhookChannelRegistration[];
-}
-
-interface WebhookChannelRegistration {
-  adapter: ChannelAdapter;
-  component?: WebhookChannelComponent;
-}
-
-interface WebhookChannelComponent {
-  apply(parsed: ParsedChannelMessage): Promise<ChannelParseResult>;
+export interface ChannelRegistry {
+  webhookChannels: ChannelRuntimeAdapter[];
 }
 
 export interface IntegrationRoutingOptions {
@@ -260,13 +249,11 @@ async function handleLambdaUrlEvent(
       agentId,
     });
     const channelName = decodeURIComponent(accountWebhookMatch[3]);
-    const accountChannel = accountChannelRegistry.webhookChannels.find((registration) =>
-      registration.adapter.name === channelName && registration.adapter.canHandle(request)
+    const accountChannel = accountChannelRegistry.webhookChannels.find((channel) =>
+      channel.name === channelName && channel.canHandle(request)
     );
     if (!accountChannel) {
-      const isConfigured = accountChannelRegistry.webhookChannels.some((registration) =>
-        registration.adapter.name === channelName
-      );
+      const isConfigured = accountChannelRegistry.webhookChannels.some((channel) => channel.name === channelName);
       return integrationNotConfigured(isConfigured ? `Webhook ${channelName}` : channelName);
     }
 
@@ -306,31 +293,35 @@ async function handleLambdaUrlEvent(
  * This is to handle the response to the external integration webhook
  */
 async function handleChannelWebhook(
-  registration: WebhookChannelRegistration,
+  adapter: ChannelRuntimeAdapter,
   request: ChannelRequest,
   handlers: IntegrationHandlers,
   account: AccountRecord,
   agent: AgentRecord,
 ): Promise<LambdaResponse> {
-  const adapter = registration.adapter;
   try {
     if (!(await adapter.authenticate(request))) {
       return unauthorizedResponse();
     }
 
-    let parsed = adapter.parse(request);
-    if (parsed.kind === "message" && registration.component) {
-      parsed = await registration.component.apply(parsed);
-    }
+    const parsed = await adapter.parse(request);
 
+    // Global event check for webhook event.
+    // Provider needs a direct HTTP response, but no agent run. 
+    // Example: Slack URL verification or Discord interaction response.
     if (parsed.kind === "response") {
       return toLambdaResponse(parsed.response);
     }
 
+    // Webhook is valid enough to accept, but should not run the agent. 
+    // Example: unsupported Pancake event, wrong page ID, hidden/removed message, page-originated message, 
+    // or Supabase reply_mode is human/paused
     if (parsed.kind === "ignore") {
       return toLambdaResponse(parsed.response ?? { statusCode: 200 });
     }
 
+    // Else webhook contains a real user message.
+    // Send the webhook ACK immediately then use afterResponse to conitnue into normal channle processing
     const { message, ack } = parsed;
     const channel = adapter.actions(message);
     const response = ack ?? { statusCode: 200 };
@@ -434,31 +425,16 @@ function createChannelRegistry(
   const githubChannel = createGitHubChannelFromConfig(config);
   const slackChannel = createSlackChannelFromConfig(config);
   const discordChannel = createDiscordChannelFromConfig(config);
-  const pancakeChannel = createPancakeChannelFromConfig(config);
-  const pancakeComponent = createPancakeWebhookComponent(config, scope);
+  const pancakeChannel = createPancakeChannelFromConfig(config, scope);
 
   return {
     webhookChannels: [
-      registerWebhookChannel(telegramChannel),
-      registerWebhookChannel(githubChannel),
-      registerWebhookChannel(slackChannel),
-      registerWebhookChannel(discordChannel),
-      registerWebhookChannel(pancakeChannel, pancakeComponent ?? undefined),
-    ].filter((registration): registration is WebhookChannelRegistration => registration !== null),
-  };
-}
-
-function registerWebhookChannel(
-  adapter: ChannelAdapter | null,
-  component?: WebhookChannelComponent,
-): WebhookChannelRegistration | null {
-  if (!adapter) {
-    return null;
-  }
-
-  return {
-    adapter,
-    ...(component ? { component } : {}),
+      telegramChannel,
+      githubChannel,
+      slackChannel,
+      discordChannel,
+      pancakeChannel,
+    ].filter((channel): channel is ChannelRuntimeAdapter => channel !== null),
   };
 }
 
@@ -735,7 +711,10 @@ function createDiscordChannelFromConfig(config: AgentConfig): ChannelAdapter | n
   );
 }
 
-function createPancakeChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
+function createPancakeChannelFromConfig(
+  config: AgentConfig,
+  scope: { accountId: string; agentId: string },
+): ChannelRuntimeAdapter | null {
   const channel = config.channels?.pancake;
   if (!channel?.pageId || !channel.pageAccessToken) {
     return null;
@@ -745,5 +724,10 @@ function createPancakeChannelFromConfig(config: AgentConfig): ChannelAdapter | n
     channel.pageId,
     channel.pageAccessToken,
     channel.senderId,
+    {
+      accountId: scope.accountId,
+      agentId: scope.agentId,
+      configOptions: channel.options,
+    },
   );
 }

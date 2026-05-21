@@ -569,13 +569,10 @@ describe("agent config", () => {
           pageAccessToken: "page-token",
           senderId: "sender-1",
           options: {
-            components: [
-              {
-                type: "pancake-supabase-reply-mode",
-                url: "https://supabase.example",
-                serviceRoleKey: "service-key",
-              },
-            ],
+            supabase: {
+              url: "https://supabase.example",
+              serviceRoleKey: "service-key",
+            },
           },
         },
       },
@@ -586,13 +583,10 @@ describe("agent config", () => {
           pageAccessToken: "page-token",
           senderId: "sender-1",
           options: {
-            components: [
-              {
-                type: "pancake-supabase-reply-mode",
-                url: "https://supabase.example",
-                serviceRoleKey: "service-key",
-              },
-            ],
+            supabase: {
+              url: "https://supabase.example",
+              serviceRoleKey: "service-key",
+            },
           },
         },
       },
@@ -615,6 +609,20 @@ describe("agent config", () => {
         },
       },
     })).toThrow("config.channels.pancake.options must be an object");
+
+    expect(() => normalizeAgentConfig({
+      channels: {
+        pancake: {
+          pageId: "page-1",
+          pageAccessToken: "page-token",
+          options: {
+            supabase: {
+              url: "https://supabase.example",
+            },
+          },
+        },
+      },
+    })).toThrow("config.channels.pancake.options.supabase requires url and serviceRoleKey");
   });
 
   it("projects only runtime settings for agent sessions", () => {

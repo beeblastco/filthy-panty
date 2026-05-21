@@ -1,4 +1,4 @@
-# Channels
+# Channels Reference
 
 Channels are communication integrations such as Telegram, GitHub, Slack, Discord, and Pancake. They translate provider webhooks into the shared agent input shape, then send replies through a channel-specific `ChannelActions` implementation.
 
@@ -21,9 +21,7 @@ flowchart TD
   Adapter --> Auth["authenticate(req)"]
   Auth --> Parse["parse(req)"]
   Parse -->|"response / ignore"| ProviderAck["provider response"]
-  Parse -->|"message"| Component["optional channel component"]
-  Component -->|"ignore"| ProviderAck
-  Component -->|"message"| Ack["provider ACK"]
+  Parse -->|"message"| Ack["provider ACK"]
   Ack --> After["afterResponse"]
   After --> Handler["handler.ts<br/>handleChannelRequest"]
   Handler --> Session["session.ts"]
@@ -34,14 +32,28 @@ flowchart TD
 
 Webhook handling is split deliberately:
 
-- [`functions/harness-processing/integrations.ts`](../functions/harness-processing/integrations.ts) owns routing, account/agent lookup, adapter selection, provider ACKs, and normalized channel events.
-- [`functions/harness-processing/handler.ts`](../functions/harness-processing/handler.ts) owns session setup, command dispatch, agent execution, and final reply handling.
-- [`functions/_shared/channels.ts`](../functions/_shared/channels.ts) owns the shared channel contracts.
+- [`functions/harness-processing/integrations.ts`](../../functions/harness-processing/integrations.ts) owns routing, account/agent lookup, adapter selection, provider ACKs, and normalized channel events.
+- [`functions/harness-processing/handler.ts`](../../functions/harness-processing/handler.ts) owns session setup, command dispatch, agent execution, and final reply handling.
+- [`functions/_shared/channels.ts`](../../functions/_shared/channels.ts) owns the shared channel contracts.
 - `functions/_shared/<channel>-channel.ts` owns provider-specific authentication, parsing, formatting, and reply API calls.
+
+---
+
+## Supported Channels
+
+| Channel | Adapter | Required config | Documentation |
+| --- | --- | --- | --- |
+| `telegram` | [`functions/_shared/telegram-channel.ts`](../../functions/_shared/telegram-channel.ts) | `botToken`, `webhookSecret`, `allowedChatIds` | [Telegram Details](telegram.md) |
+| `github` | [`functions/_shared/github-channel.ts`](../../functions/_shared/github-channel.ts) | `webhookSecret`, `appId`, `privateKey` | [GitHub Details](github.md) |
+| `slack` | [`functions/_shared/slack-channel.ts`](../../functions/_shared/slack-channel.ts) | `botToken`, `signingSecret` | [Slack Details](slack.md) |
+| `discord` | [`functions/_shared/discord-channel.ts`](../../functions/_shared/discord-channel.ts) | `botToken`, `publicKey` | [Discord Details](discord.md) |
+| `pancake` | [`functions/_shared/pancake-channel.ts`](../../functions/_shared/pancake-channel.ts) | `pageId`, `pageAccessToken` | [Pancake Details](pancake.md) |
+
+---
 
 ## Channel Contract
 
-Each channel implements `ChannelAdapter` from [`functions/_shared/channels.ts`](../functions/_shared/channels.ts):
+Each channel implements `ChannelAdapter` from [`functions/_shared/channels.ts`](../../functions/_shared/channels.ts):
 
 | Method | Purpose |
 | --- | --- |
@@ -69,58 +81,23 @@ The normalized `InboundMessage` contains:
 
 `integrations.ts` scopes `eventId` and `conversationKey` with `accountId` and `agentId` before the session sees them.
 
-Optional customer/channel components live under `functions/_components`. They are attached by the channel registry and can convert a parsed channel message into `ignore` before the request reaches `handler.ts`. Keep those components channel-specific; do not use them for generic analytics or core agent behavior.
-
-## Current Channels
-
-| Channel | Adapter | Required config |
-| --- | --- | --- |
-| `telegram` | [`functions/_shared/telegram-channel.ts`](../functions/_shared/telegram-channel.ts) | `botToken`, `webhookSecret`, `allowedChatIds` |
-| `github` | [`functions/_shared/github-channel.ts`](../functions/_shared/github-channel.ts) | `webhookSecret`, `appId`, `privateKey` |
-| `slack` | [`functions/_shared/slack-channel.ts`](../functions/_shared/slack-channel.ts) | `botToken`, `signingSecret` |
-| `discord` | [`functions/_shared/discord-channel.ts`](../functions/_shared/discord-channel.ts) | `botToken`, `publicKey` |
-| `pancake` | [`functions/_shared/pancake-channel.ts`](../functions/_shared/pancake-channel.ts) | `pageId`, `pageAccessToken` |
-
-The full config field reference lives in the [API Reference](/api-reference) under `AgentConfig.channels`.
-
-Pancake's public webhook docs do not define a signature or secret header. The adapter validates `page_id` against `config.channels.pancake.pageId`, acknowledges unsupported events, and replies through the page-scoped message API with `pageAccessToken`.
-
-Pancake can optionally check `reply_mode` from a customer's Supabase `conversation_states` table through a component configured under `config.channels.pancake.options`. This keeps Supabase out of the Pancake adapter and does not require SST-level Supabase secrets; the credentials live in the encrypted agent config only when this component is used.
-
-```json
-{
-  "channels": {
-    "pancake": {
-      "pageId": "page-id",
-      "pageAccessToken": "...",
-      "senderId": "optional-staff-user-id",
-      "options": {
-        "components": [
-          {
-            "type": "pancake-supabase-reply-mode",
-            "url": "https://project.supabase.co",
-            "serviceRoleKey": "customer-service-role-key"
-          }
-        ]
-      }
-    }
-  }
-}
-```
+---
 
 ## Add a Channel
 
-1. Add config types to [`functions/_shared/accounts.ts`](../functions/_shared/accounts.ts).
+1. Add config types to [`functions/_shared/accounts.ts`](../../functions/_shared/accounts.ts).
 2. Validate the new `config.channels.<channel>` fields in `normalizeChannelsConfig()`.
 3. Create `functions/_shared/<channel>-channel.ts`.
 4. Implement `ChannelAdapter`.
 5. Keep provider-specific reply formatting and send logic inside the channel module.
-6. Import the channel factory in [`functions/harness-processing/integrations.ts`](../functions/harness-processing/integrations.ts).
+6. Import the channel factory in [`functions/harness-processing/integrations.ts`](../../functions/harness-processing/integrations.ts).
 7. Add `create<Channel>ChannelFromConfig()` and include it in `createChannelRegistry()`.
 8. Document the webhook URL as `/webhooks/{accountId}/{agentId}/{channel}`.
-9. Update the [API Reference](/api-reference) `AgentConfig.channels` schema, [`examples/account.config.example.json`](../examples/account.config.example.json), setup scripts, and focused tests/examples when the public config changes.
+9. Update the [API Reference](/api-reference) `AgentConfig.channels` schema, [`examples/account.config.example.json`](../../examples/account.config.example.json), setup scripts, and focused tests/examples when the public config changes.
 
 Do not hardcode channel-specific behavior in commands, shared handlers, or the core agent loop. Commands receive only the channel-agnostic `ChannelActions` interface.
+
+---
 
 ## Adapter Skeleton
 
@@ -193,6 +170,8 @@ export function createExampleChannel(
   };
 }
 ```
+
+---
 
 ## Channel Rules
 

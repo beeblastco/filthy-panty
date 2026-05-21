@@ -55,13 +55,10 @@ const PANCAKE_SUPABASE_AGENT = {
         pageId: "page-1",
         pageAccessToken: "page-token",
         options: {
-          components: [
-            {
-              type: "pancake-supabase-reply-mode",
-              url: "https://supabase.example",
-              serviceRoleKey: "service-key",
-            },
-          ],
+          supabase: {
+            url: "https://supabase.example",
+            serviceRoleKey: "service-key",
+          },
         },
       },
     },
@@ -175,7 +172,7 @@ describe("account webhook ingress", () => {
       .toBe(true);
   });
 
-  it("lets a Pancake Supabase component ignore human-mode conversations", async () => {
+  it("lets Pancake Supabase options ignore human-mode conversations", async () => {
     const handledEvents: ChannelInboundEvent[] = [];
     const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
     globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {

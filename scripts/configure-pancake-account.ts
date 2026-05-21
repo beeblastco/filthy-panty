@@ -56,13 +56,10 @@ async function upsertPancakeAccount() {
         ...(pancakeSupabaseUrl && pancakeSupabaseServiceRoleKey
           ? {
             options: {
-              components: [
-                {
-                  type: "pancake-supabase-reply-mode",
-                  url: pancakeSupabaseUrl,
-                  serviceRoleKey: pancakeSupabaseServiceRoleKey,
-                },
-              ],
+              supabase: {
+                url: pancakeSupabaseUrl,
+                serviceRoleKey: pancakeSupabaseServiceRoleKey,
+              },
             },
           }
           : {}),
