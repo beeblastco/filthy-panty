@@ -32,7 +32,6 @@ import type {
   ChannelAdapter,
   ChannelRequest,
   ChannelResponse,
-  ChannelRuntimeAdapter,
 } from "../_shared/channels.ts";
 import { extractText, formatChannelErrorText } from "../_shared/channels.ts";
 import { parseCommand } from "../_shared/commands.ts";
@@ -119,7 +118,7 @@ interface IntegrationHandlers {
 }
 
 export interface ChannelRegistry {
-  webhookChannels: ChannelRuntimeAdapter[];
+  webhookChannels: ChannelAdapter[];
 }
 
 export interface IntegrationRoutingOptions {
@@ -293,7 +292,7 @@ async function handleLambdaUrlEvent(
  * This is to handle the response to the external integration webhook
  */
 async function handleChannelWebhook(
-  adapter: ChannelRuntimeAdapter,
+  adapter: ChannelAdapter,
   request: ChannelRequest,
   handlers: IntegrationHandlers,
   account: AccountRecord,
@@ -304,6 +303,8 @@ async function handleChannelWebhook(
       return unauthorizedResponse();
     }
 
+    // Parse event and check if it should be ignored
+    // This is based on the channel integration
     const parsed = await adapter.parse(request);
 
     // Global event check for webhook event.
@@ -434,7 +435,7 @@ function createChannelRegistry(
       slackChannel,
       discordChannel,
       pancakeChannel,
-    ].filter((channel): channel is ChannelRuntimeAdapter => channel !== null),
+    ].filter((channel): channel is ChannelAdapter => channel !== null),
   };
 }
 
@@ -714,7 +715,7 @@ function createDiscordChannelFromConfig(config: AgentConfig): ChannelAdapter | n
 function createPancakeChannelFromConfig(
   config: AgentConfig,
   scope: { accountId: string; agentId: string },
-): ChannelRuntimeAdapter | null {
+): ChannelAdapter | null {
   const channel = config.channels?.pancake;
   if (!channel?.pageId || !channel.pageAccessToken) {
     return null;

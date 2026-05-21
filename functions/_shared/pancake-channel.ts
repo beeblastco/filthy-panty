@@ -6,9 +6,9 @@
 import { createHash } from "node:crypto";
 import type {
   ChannelActions,
+  ChannelAdapter,
   ChannelParseResult,
   ChannelRequest,
-  ChannelRuntimeAdapter,
   ParsedChannelMessage,
 } from "./channels.ts";
 import { logInfo, logWarn } from "./log.ts";
@@ -90,7 +90,7 @@ export function createPancakeChannel(
   pageAccessToken: string,
   senderId?: string,
   options: PancakeChannelOptions = {},
-): ChannelRuntimeAdapter {
+): ChannelAdapter {
   const supabase = resolvePancakeSupabaseOptions(options.configOptions);
 
   return {
