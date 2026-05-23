@@ -10,7 +10,6 @@
  * the harness can persist normally.
  */
 
-import { internal as internalApi } from "../../../../convex/_generated/api";
 import { encryptAgentConfig, decodeStoredAgentConfig } from "../agent-config.ts";
 import {
   normalizeCreateAgentInput,
@@ -22,10 +21,24 @@ import {
   normalizeUpdateCronJobInput,
 } from "../cron-jobs.ts";
 
+// The convex/ submodule is only present in SaaS deployments. We load the
+// generated API namespace lazily via require() so the open-source typecheck
+// + CI build (which doesn't fetch the private submodule) still succeeds.
 // ConvexHttpClient's typed `query`/`mutation` only accept public function
-// refs. The submodule exposes internalQuery / internalMutation, so we
-// cast at the boundary. Deploy-key auth permits calling these at runtime.
-const internal = internalApi as any;
+// refs; the submodule exposes internalQuery / internalMutation, so we cast
+// at the boundary. Deploy-key auth permits calling these at runtime.
+function loadInternalApi(): any {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require("../../../../convex/_generated/api").internal;
+}
+let _internal: any;
+function internalApiRef(): any {
+  if (!_internal) _internal = loadInternalApi();
+  return _internal;
+}
+const internal: any = new Proxy({}, {
+  get(_t, prop) { return internalApiRef()[prop as string]; },
+});
 import type {
   AccountRecord,
   AgentRecord,
