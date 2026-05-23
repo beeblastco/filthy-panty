@@ -1,8 +1,9 @@
-# Deploy pipeline. Triggered on merge to main / dev. Assumes PR CI
-# already validated the code — does not re-run typecheck/test/build.
-# `main` = SaaS production: inits the private convex-adapter submodule
-#   so the Convex provider is bundled. Requires SUBMODULE_PAT secret.
-# `dev` = OSS / community staging: DynamoDB only, no submodule.
+# Deploy pipeline.
+# `main` = SaaS production: PR CI already validated, skip re-validation and
+#   deploy directly. Inits the private convex-adapter submodule (requires
+#   SUBMODULE_PAT secret).
+# `dev` = OSS / community staging: re-validates (typecheck + test + build)
+#   before deploying. DynamoDB only, no submodule.
 
 name: Deploy
 
@@ -30,8 +31,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    # main trusts PR CI; everything else (dev, manual dispatch) re-validates.
+    if: ${{ github.ref != 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      CI: "true"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          submodules: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run check
+
+      - name: Run unit tests
+        run: bun run test
+
+      - name: Build Lambda binaries
+        run: bun run build
+
   deploy:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')) }}
+    needs: validate
+    # Run if validate succeeded OR validate was skipped (main branch).
+    if: ${{ always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped') && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'))) }}
     runs-on: ubuntu-24.04
     concurrency:
       group: ${{ github.workflow }}-deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || github.ref_name }}
