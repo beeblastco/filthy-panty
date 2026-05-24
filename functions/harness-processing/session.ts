@@ -347,7 +347,7 @@ export class Session {
     allowedSkillPaths: string[],
     skillPath: string,
     resourcePaths?: string[],
-  ): Promise<{ skillPath: string; loadedPaths: string[]; bytes: number }> {
+  ): Promise<{ path: string; loadedPaths: string[]; bytes: number }> {
     const loaded = await loadConfiguredSkillPrompt(allowedSkillPaths, skillPath, resourcePaths);
     this.loadedSkillPrompts.push(loaded.prompt);
     return loaded;
@@ -535,7 +535,7 @@ function formatMemorySystemPrompt(memoryContent: string | null): string {
 
 function formatSkillsSystemPrompt(skills: SkillMetadata[]): string {
   const skillList = skills
-    .map((skill) => `- ${skill.skillPath} (${skill.name}): ${skill.description}`)
+    .map((skill) => `- ${skill.path} (${skill.name}): ${skill.description}`)
     .join("\n");
 
   return `<skill_system>

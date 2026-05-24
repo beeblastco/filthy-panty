@@ -49,7 +49,7 @@ try {
   let approvalRequest: ToolApprovalRequestChunk | null = null;
 
   for await (const chunk of streamSSE({
-    agentId: agent.agent.agentId,
+    agentId: agent.agentId,
     eventId: `approval-request-${Date.now()}`,
     conversationKey: conversationKey,
     events: [{
@@ -74,7 +74,7 @@ try {
   console.log("\n\nApproving tool call:", JSON.stringify(approvalRequest, null, 2));
 
   for await (const chunk of streamSSE({
-    agentId: agent.agent.agentId,
+    agentId: agent.agentId,
     eventId: `approval-${Date.now()}`,
     conversationKey: conversationKey,
     events: [{

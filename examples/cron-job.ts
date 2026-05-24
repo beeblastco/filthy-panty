@@ -33,7 +33,7 @@ const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/cron-jobs`, {
   },
   body: JSON.stringify({
     name: "One minute cron test",
-    agentId: agent.agent.agentId,
+    agentId: agent.agentId,
     conversationKey: "cron:one-minute-test",
     prompt: "Confirm this scheduled cron test ran successfully in one sentence.",
     scheduleExpression,
@@ -48,7 +48,7 @@ if (!response.ok) {
 console.log(JSON.stringify({
   accountId: account.account.accountId,
   accountSecret: account.accountSecret,
-  agentId: agent.agent.agentId,
+  agentId: agent.agentId,
   scheduleExpression,
   timezone,
   cronJob: await response.json(),

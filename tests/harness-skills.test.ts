@@ -86,7 +86,7 @@ describe("listConfiguredSkillMetadata", () => {
     expect(result[0]).toEqual({
       name: "my-skill",
       description: "A test skill",
-      skillPath: "acct_test/my-skill",
+      path: "acct_test/my-skill",
     });
   });
 
@@ -168,7 +168,7 @@ describe("loadConfiguredSkillPrompt", () => {
 
     const result = await loadConfiguredSkillPrompt(["acct_test/test-skill"], "acct_test/test-skill");
 
-    expect(result.skillPath).toBe("acct_test/test-skill");
+    expect(result.path).toBe("acct_test/test-skill");
     expect(result.loadedPaths).toEqual(["SKILL.md"]);
     expect(result.bytes).toBeGreaterThan(0);
     expect(result.prompt.role).toBe("system");
@@ -285,7 +285,7 @@ describe("listSkillMetadataForConfig", () => {
     expect(result[0]).toEqual({
       name: "existing-skill",
       description: "An existing skill",
-      skillPath: "acct_test/existing-skill",
+      path: "acct_test/existing-skill",
     });
   });
 
@@ -367,11 +367,11 @@ describe("loadSkillContent", () => {
 
     const result = await loadSkillContent("acct_test/load-skill");
 
-    expect(result.skillPath).toBe("acct_test/load-skill");
+    expect(result.path).toBe("acct_test/load-skill");
     expect(result.skill).toEqual({
       name: "load-skill",
       description: "Loadable skill",
-      skillPath: "acct_test/load-skill",
+      path: "acct_test/load-skill",
     });
     expect(result.parts).toHaveLength(1);
     expect(result.parts[0]?.path).toBe("SKILL.md");

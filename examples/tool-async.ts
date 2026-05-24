@@ -33,7 +33,7 @@ console.log("Created test agent:", JSON.stringify(agent));
 
 try {
   for await (const chunk of streamSSE({
-    agentId: agent.agent.agentId,
+    agentId: agent.agentId,
     eventId: `tool-async-${Date.now()}`,
     conversationKey: `tool-async-${Date.now()}`,
     events: [{

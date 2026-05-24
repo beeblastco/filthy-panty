@@ -53,7 +53,7 @@ const parent = await createAgent(account.accountSecret, "Parent assistant",
         },
         subagent: {
             enabled: true,
-            allowed: [subagent.agent.agentId], // Add the subagent ID here
+            allowed: [subagent.agentId], // Add the subagent ID here
             context: "new",
         },
     },
@@ -67,7 +67,7 @@ console.log("Created parent agent:", JSON.stringify(parent));
 try {
     const timestamp = Date.now();
     const body = {
-        agentId: parent.agent.agentId,
+        agentId: parent.agentId,
         eventId: `subagent-${timestamp}`,
         conversationKey: `subagent-${timestamp}`,
         events: [

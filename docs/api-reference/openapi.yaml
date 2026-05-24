@@ -700,18 +700,14 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  agent:
-                    $ref: '#/components/schemas/Agent'
+                $ref: '#/components/schemas/Agent'
               examples:
                 created:
                   value:
-                    agent:
-                      accountId: acct_abc123
-                      agentId: agent_xyz789
-                      name: support-agent
-                      description: Customer support agent
+                    accountId: acct_abc123
+                    agentId: agent_xyz789
+                    name: support-agent
+                    description: Customer support agent
 
     get:
       tags:
@@ -842,17 +838,13 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  skill:
-                    $ref: '#/components/schemas/Skill'
+                $ref: '#/components/schemas/Skill'
               examples:
                 created:
                   value:
-                    skill:
-                      skillPath: acct_abc123/support-flow
-                      name: support-flow
-                      description: Handles support triage
+                    path: acct_abc123/support-flow
+                    name: support-flow
+                    description: Handles support triage
 
     get:
       tags:
@@ -967,10 +959,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  cronJob:
-                    $ref: '#/components/schemas/CronJob'
+                $ref: '#/components/schemas/CronJob'
         '503':
           description: Cron jobs unavailable
 
@@ -1012,10 +1001,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  cronJob:
-                    $ref: '#/components/schemas/CronJob'
+                $ref: '#/components/schemas/CronJob'
 
     patch:
       tags:
@@ -1041,10 +1027,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  cronJob:
-                    $ref: '#/components/schemas/CronJob'
+                $ref: '#/components/schemas/CronJob'
 
     delete:
       tags:
@@ -1426,7 +1409,7 @@ components:
     Skill:
       type: object
       properties:
-        skillPath:
+        path:
           type: string
         name:
           type: string

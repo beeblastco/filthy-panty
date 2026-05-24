@@ -71,28 +71,28 @@ const agentConfig: AgentConfig = {
   },
   subagent: {
     enabled: true,
-    allowed: [researchAgent.agent.agentId],
+    allowed: [researchAgent.agentId],
     context: "new",
   },
 };
 const agent = await createAgent(account.accountSecret, "NATS stream test assistant", agentConfig);
 
-const subject = streamResponseSubject(account.account.accountId, agent.agent.agentId, connectionId);
+const subject = streamResponseSubject(account.account.accountId, agent.agentId, connectionId);
 const subscription = natsClient.subscribe(subject);
 
 console.log("Created test account:", JSON.stringify(account.account));
-console.log("Created research subagent:", JSON.stringify(researchAgent.agent));
-console.log("Created test agent:", JSON.stringify(agent.agent));
+console.log("Created research subagent:", JSON.stringify(researchAgent));
+console.log("Created test agent:", JSON.stringify(agent));
 console.log("Subscribed to:", subject);
 
 try {
   const inboundEvent: DirectInboundEvent = {
     accountId: account.account.accountId,
-    agentId: agent.agent.agentId,
+    agentId: agent.agentId,
     agentConfig: toRuntimeAgentConfig(agentConfig),
-    eventId: scopedDirectEventId(account.account.accountId, agent.agent.agentId, publicEventId),
+    eventId: scopedDirectEventId(account.account.accountId, agent.agentId, publicEventId),
     publicEventId: publicEventId,
-    conversationKey: scopedDirectConversationKey(account.account.accountId, agent.agent.agentId, publicConversationKey),
+    conversationKey: scopedDirectConversationKey(account.account.accountId, agent.agentId, publicConversationKey),
     publicConversationKey: publicConversationKey,
     connectionId: connectionId,
     events: [

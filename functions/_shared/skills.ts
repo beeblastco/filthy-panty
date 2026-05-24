@@ -13,7 +13,7 @@ const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
 export interface SkillMetadata {
   name: string;
   description: string;
-  skillPath: string;
+  path: string;
 }
 
 export async function readSkillMarkdown(accountId: string, skillName: string): Promise<string | null> {
@@ -38,7 +38,7 @@ export async function readSkillText(skillPath: string, resourcePath: string): Pr
   return readS3Text(skillsBucketName(), `${skillPath}/${normalizeBundlePath(resourcePath)}`);
 }
 
-export function parseSkillMarkdown(markdown: string): Omit<SkillMetadata, "skillPath"> {
+export function parseSkillMarkdown(markdown: string): Omit<SkillMetadata, "path"> {
   const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match?.[1]) {
     throw new Error("SKILL.md must start with YAML frontmatter");

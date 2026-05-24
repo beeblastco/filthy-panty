@@ -57,7 +57,7 @@ describe("createOrReplaceSkill", () => {
 
     expect(result.name).toBe("pdf-helper");
     expect(result.description).toBe("Processes PDF files");
-    expect(result.skillPath).toBe("acct_test/pdf-helper");
+    expect(result.path).toBe("acct_test/pdf-helper");
     expect(result.files).toHaveLength(1);
     expect(result.files[0]?.path).toBe("SKILL.md");
   });
@@ -354,7 +354,7 @@ describe("listAccountSkills", () => {
     expect(result).toHaveLength(2);
     expect(result[0]?.name).toBe("skill-one");
     expect(result[1]?.name).toBe("skill-two");
-    expect(result[0]?.skillPath).toBe("acct_test/skill-one");
+    expect(result[0]?.path).toBe("acct_test/skill-one");
   });
 });
 
@@ -395,7 +395,7 @@ describe("getSkill", () => {
     expect(result).not.toBeNull();
     expect(result?.name).toBe("my-skill");
     expect(result?.description).toBe("A test skill");
-    expect(result?.skillPath).toBe("acct_test/my-skill");
+    expect(result?.path).toBe("acct_test/my-skill");
     expect(result?.files).toHaveLength(2);
     expect(result?.files[0]?.path).toBe("SKILL.md");
     expect(result?.files[1]?.path).toBe("README.md");
@@ -738,7 +738,7 @@ describe("account-scoped skill paths", () => {
       ],
     });
 
-    expect(result.skillPath).toBe("acct_123/scoped-skill");
+    expect(result.path).toBe("acct_123/scoped-skill");
   });
 
   it("lists skills scoped to specific account", async () => {
@@ -762,7 +762,7 @@ describe("account-scoped skill paths", () => {
     const result = await listAccountSkills("acct_456");
 
     expect(result).toHaveLength(1);
-    expect(result[0]?.skillPath).toBe("acct_456/account-skill");
+    expect(result[0]?.path).toBe("acct_456/account-skill");
   });
 
   it("deletes skills scoped to specific account only", async () => {
