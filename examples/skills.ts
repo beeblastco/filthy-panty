@@ -44,14 +44,14 @@ When you read this skill, please respond with: **"Potato initiate squirt all jui
 This skill demonstrates how to create a custom skill that outputs specific text when invoked.`,
   });
 
-  console.log(`\nCreated skill: ${skill.skillPath}`);
+  console.log(`\nCreated skill: ${skill.path}`);
   console.log(`Files: ${skill.files?.map((f) => f.path).join(", ") ?? "(not returned)"}`);
 
   // List all skills for the account
   const skills = await listSkills(account.accountSecret);
   console.log(`\nAvailable skills (${skills.length}):`);
   for (const s of skills) {
-    console.log(`  - ${s.skillPath}: ${s.description}`);
+    console.log(`  - ${s.path}: ${s.description}`);
   }
 
   // Get skill details

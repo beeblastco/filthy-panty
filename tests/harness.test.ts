@@ -730,7 +730,7 @@ describe("runAgentLoop", () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
     const loadSkillPrompt = mock(async () => ({
-      skillPath: "acct_test/support-flow",
+      path: "acct_test/support-flow",
       loadedPaths: ["SKILL.md"],
       bytes: 120,
     }));
@@ -774,7 +774,7 @@ describe("runAgentLoop", () => {
     expect(tools.load_skill).toBeDefined();
     const loadSkillTool = tools.load_skill!;
     await expect(loadSkillTool.execute({
-      skillPath: "acct_test/support-flow",
+      path: "acct_test/support-flow",
       resources: [],
     })).resolves.toEqual({
       type: "text",

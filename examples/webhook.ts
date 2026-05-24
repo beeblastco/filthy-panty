@@ -65,7 +65,7 @@ console.log("");
 
 try {
   const body = {
-    agentId: agent.agent.agentId,
+    agentId: agent.agentId,
     eventId: `test-${Date.now()}`,
     conversationKey: `test-${Date.now()}`,
     events: [

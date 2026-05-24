@@ -50,13 +50,13 @@ When you read this skill, please respond with: **"Potato initiate squirt all jui
     },
     skills: {
       enabled: true,
-      allowed: [skill.skillPath],
+      allowed: [skill.path],
     },
   });
   console.log("\nCreated skill-enabled agent:", JSON.stringify(agent));
 
   const body = {
-    agentId: agent.agent.agentId,
+    agentId: agent.agentId,
     eventId: `skill-stream-${Date.now()}`,
     conversationKey: `skill-stream-${Date.now()}`,
     events: [

@@ -64,7 +64,7 @@ export async function createOrReplaceSkill(accountId: string, input: unknown): P
 
   return {
     ...metadata,
-    skillPath,
+    path: skillPath,
     files: files.map((file) => ({ path: file.path, size: file.bytes.byteLength })),
   };
 }
@@ -76,7 +76,7 @@ export async function listAccountSkills(accountId: string): Promise<SkillMetadat
 
   return skills
     .filter((skill): skill is StoredSkill => skill !== null)
-    .map(({ name, description, skillPath }) => ({ name, description, skillPath }));
+    .map(({ name, description, path }) => ({ name, description, path }));
 }
 
 export async function getSkill(accountId: string, skillName: string): Promise<StoredSkill | null> {
@@ -90,7 +90,7 @@ export async function getSkill(accountId: string, skillName: string): Promise<St
   const metadata = parseSkillMarkdown(skillFile);
   return {
     ...metadata,
-    skillPath,
+    path: skillPath,
     files: await listSkillManifestFiles(skillPath),
   };
 }
@@ -239,7 +239,7 @@ async function readLocalBundleFiles(root: string): Promise<SkillBundleFile[]> {
   return files;
 }
 
-function validateSkillBundle(files: SkillBundleFile[]): Omit<SkillMetadata, "skillPath"> {
+function validateSkillBundle(files: SkillBundleFile[]): Omit<SkillMetadata, "path"> {
   const normalized = new Set<string>();
   let totalBytes = 0;
   for (const file of files) {

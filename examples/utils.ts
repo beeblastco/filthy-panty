@@ -18,11 +18,9 @@ export interface Account {
 }
 
 export interface Agent {
-  agent: {
-    accountId: string;
-    agentId: string;
-    name: string;
-  };
+  accountId: string;
+  agentId: string;
+  name: string;
 }
 
 export interface AsyncStatus {
@@ -33,7 +31,7 @@ export interface AsyncStatus {
 }
 
 export interface Skill {
-  skillPath: string;
+  path: string;
   name: string;
   description: string;
   files?: Array<{
@@ -84,8 +82,7 @@ export async function createSkill(accountSecret: string, input: Record<string, u
   });
 
   if (!response.ok) throw new Error(`Create skill failed: ${response.status} ${await response.text()}`);
-  const payload = await response.json() as { skill: Skill };
-  return payload.skill;
+  return await response.json() as Skill;
 }
 
 export async function listSkills(accountSecret: string): Promise<Skill[]> {
@@ -107,8 +104,7 @@ export async function getSkill(accountSecret: string, skillName: string): Promis
 
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Get skill failed: ${response.status} ${await response.text()}`);
-  const payload = await response.json() as { skill: Skill };
-  return payload.skill;
+  return await response.json() as Skill;
 }
 
 export async function deleteSkill(accountSecret: string, skillName: string): Promise<boolean> {

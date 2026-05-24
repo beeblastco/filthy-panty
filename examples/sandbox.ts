@@ -55,7 +55,7 @@ console.log("Created test agent:", JSON.stringify(agent));
 
 try {
   const body = {
-    agentId: agent.agent.agentId,
+    agentId: agent.agentId,
     eventId: `sandbox-${Date.now()}`,
     conversationKey: `sandbox-${Date.now()}`,
     events: [

@@ -50,21 +50,21 @@ const agentConfig: AgentConfig = {
 
 const agent = await createAgent(account.accountSecret, "External async tool test assistant", agentConfig);
 
-const subject = streamResponseSubject(account.account.accountId, agent.agent.agentId, connectionId);
+const subject = streamResponseSubject(account.account.accountId, agent.agentId, connectionId);
 const subscription = natsClient.subscribe(subject);
 
 console.log("Created test account:", JSON.stringify(account.account));
-console.log("Created test agent:", JSON.stringify(agent.agent));
+console.log("Created test agent:", JSON.stringify(agent));
 console.log("Subscribed to:", subject);
 
 try {
   const inboundEvent: DirectInboundEvent = {
     accountId: account.account.accountId,
-    agentId: agent.agent.agentId,
+    agentId: agent.agentId,
     agentConfig: toRuntimeAgentConfig(agentConfig),
-    eventId: scopedDirectEventId(account.account.accountId, agent.agent.agentId, publicEventId),
+    eventId: scopedDirectEventId(account.account.accountId, agent.agentId, publicEventId),
     publicEventId,
-    conversationKey: scopedDirectConversationKey(account.account.accountId, agent.agent.agentId, publicConversationKey),
+    conversationKey: scopedDirectConversationKey(account.account.accountId, agent.agentId, publicConversationKey),
     publicConversationKey,
     connectionId,
     events: [{

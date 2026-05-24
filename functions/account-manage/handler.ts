@@ -201,14 +201,14 @@ async function handleCronJobRoute(
                 await cronJobs.remove(accountId, cronJob.cronJobId).catch(() => { });
                 throw err;
             }
-            return jsonResponse(201, { cronJob: toCronJobResponse(cronJob) });
+            return jsonResponse(201, toCronJobResponse(cronJob));
         }
         return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
     }
 
     if (method === "GET") {
         const cronJob = await cronJobs.getById(accountId, cronJobId);
-        return cronJob ? jsonResponse(200, { cronJob: toCronJobResponse(cronJob) }) : errorResponse(404, "Cron job not found");
+        return cronJob ? jsonResponse(200, toCronJobResponse(cronJob)) : errorResponse(404, "Cron job not found");
     }
     if (method === "PATCH") {
         const existing = await cronJobs.getById(accountId, cronJobId);
@@ -220,7 +220,7 @@ async function handleCronJobRoute(
         const patched = applyCronJobPatch(existing, patch as never);
         await updateCronSchedule(patched);
         const cronJob = await cronJobs.update(accountId, cronJobId, patch as never);
-        return cronJob ? jsonResponse(200, { cronJob: toCronJobResponse(cronJob) }) : errorResponse(404, "Cron job not found");
+        return cronJob ? jsonResponse(200, toCronJobResponse(cronJob)) : errorResponse(404, "Cron job not found");
     }
     if (method === "DELETE") {
         const existing = await cronJobs.getById(accountId, cronJobId);
@@ -251,18 +251,18 @@ async function handleAgentRoute(
         }
         if (method === "POST") {
             const agent = await agents.create(accountId, parseJsonBody(event) as never);
-            return jsonResponse(201, { agent: toCreateAgentResponse(agent) });
+            return jsonResponse(201, toCreateAgentResponse(agent));
         }
         return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
     }
 
     if (method === "GET") {
         const agent = await agents.getById(accountId, agentId);
-        return agent ? jsonResponse(200, { agent: toPublicAgent(agent) }) : errorResponse(404, "Agent not found");
+        return agent ? jsonResponse(200, toPublicAgent(agent)) : errorResponse(404, "Agent not found");
     }
     if (method === "PATCH") {
         const agent = await agents.update(accountId, agentId, parseJsonBody(event) as never);
-        return agent ? jsonResponse(200, { agent: toPublicAgent(agent) }) : errorResponse(404, "Agent not found");
+        return agent ? jsonResponse(200, toPublicAgent(agent)) : errorResponse(404, "Agent not found");
     }
     if (method === "DELETE") {
         const deleted = await agents.remove(accountId, agentId);
@@ -287,14 +287,14 @@ async function handleSkillRoute(
         }
         if (method === "POST") {
             const skill = await createOrReplaceSkill(accountId, parseJsonBody(event));
-            return jsonResponse(201, { skill: toSkillResponse(skill) });
+            return jsonResponse(201, toSkillResponse(skill));
         }
         return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
     }
 
     if (method === "GET") {
         const skill = await getSkill(accountId, skillName);
-        return skill ? jsonResponse(200, { skill: toSkillResponse(skill) }) : errorResponse(404, "Skill not found");
+        return skill ? jsonResponse(200, toSkillResponse(skill)) : errorResponse(404, "Skill not found");
     }
     if (method === "PUT") {
         const skill = await createOrReplaceSkill(accountId, parseJsonBody(event));
@@ -302,7 +302,7 @@ async function handleSkillRoute(
             await deleteSkill(accountId, skill.name).catch(() => { });
             throw new Error("Skill name in SKILL.md must match the URL skillName");
         }
-        return jsonResponse(200, { skill: toSkillResponse(skill) });
+        return jsonResponse(200, toSkillResponse(skill));
     }
     if (method === "DELETE") {
         const deleted = await deleteSkill(accountId, skillName);
@@ -367,7 +367,7 @@ function toCreateAgentResponse(agent: AgentRecord): Record<string, unknown> {
 
 function toSkillResponse(skill: SkillMetadata | StoredSkill): Record<string, unknown> {
     return {
-        skillPath: skill.skillPath,
+        path: skill.path,
         name: skill.name,
         description: skill.description,
         ...("files" in skill ? { files: skill.files } : {}),

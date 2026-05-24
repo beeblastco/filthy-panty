@@ -35,7 +35,7 @@ export async function loadConfiguredSkillPrompt(
   skillPath: string,
   resourcePaths: string[] = [],
 ): Promise<{
-  skillPath: string;
+  path: string;
   loadedPaths: string[];
   bytes: number;
   prompt: SystemModelMessage;
@@ -46,7 +46,7 @@ export async function loadConfiguredSkillPrompt(
 
   const loaded = await loadSkillContent(skillPath, resourcePaths);
   return {
-    skillPath,
+    path: skillPath,
     loadedPaths: loaded.parts.map((part) => part.path),
     bytes: loaded.bytes,
     prompt: {
@@ -65,7 +65,7 @@ export async function listSkillMetadataForConfig(accountId: string, skillPaths: 
     if (skillText) {
       enabled.push({
         ...parseSkillMarkdown(skillText),
-        skillPath,
+        path: skillPath,
       });
     }
   }
@@ -73,7 +73,7 @@ export async function listSkillMetadataForConfig(accountId: string, skillPaths: 
 }
 
 export async function loadSkillContent(skillPath: string, resourcePaths: string[] = []): Promise<{
-  skillPath: string;
+  path: string;
   skill: SkillMetadata;
   parts: Array<{ path: string; text: string }>;
   bytes: number;
@@ -96,10 +96,10 @@ export async function loadSkillContent(skillPath: string, resourcePaths: string[
   ];
 
   return {
-    skillPath,
+    path: skillPath,
     skill: {
       ...skill,
-      skillPath,
+      path: skillPath,
     },
     parts,
     bytes: parts.reduce((total, part) => total + Buffer.byteLength(part.text, "utf-8"), 0),
@@ -110,7 +110,7 @@ function formatLoadedSkillPrompt(loaded: Awaited<ReturnType<typeof loadSkillCont
   const parts = loaded.parts.map((part) => `## ${part.path}\n\n${part.text.trim()}`).join("\n\n");
   // See https://github.com/microsoft/agent-framework/discussions/4239: loaded skills stay in
   // refreshed system instructions instead of polluting chat history.
-  return `<loaded-skill path="${loaded.skillPath}" name="${loaded.skill.name}">
+  return `<loaded-skill path="${loaded.path}" name="${loaded.skill.name}">
 ${parts}
 </loaded-skill>`;
 }

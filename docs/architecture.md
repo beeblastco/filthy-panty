@@ -115,7 +115,7 @@ sequenceDiagram
 
   U->>M: POST /accounts/me/skills (Bearer accountSecret)
   M->>S: validate + store skill bundle
-  M-->>U: skillPath
+  M-->>U: path
 
   U->>M: PATCH /accounts/me/agents/{agentId}
   M->>A: resolve secretHash
