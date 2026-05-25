@@ -15,14 +15,22 @@ const agentDoc = v.object({
     _creationTime: v.number(),
 });
 
+/**
+ * Look up an agent by the public string `agentId` used in the filthy-panty
+ * HTTP contract. The validator accepts `v.string()` (not `v.id("agents")`)
+ * so unknown / non-Convex-id values resolve to `null` (= "agent not found")
+ * instead of throwing an ArgumentValidationError at the adapter boundary.
+ */
 export const getById = internalQuery({
     args: {
         accountId: v.id("accounts"),
-        agentId: v.id("agents"),
+        agentId: v.string(),
     },
     returns: v.union(agentDoc, v.null()),
     handler: async (ctx, args) => {
-        const agent = await ctx.db.get(args.agentId);
+        const normalized = ctx.db.normalizeId("agents", args.agentId);
+        if (!normalized) return null;
+        const agent = await ctx.db.get(normalized);
         if (!agent || agent.accountId !== args.accountId) {
             return null;
         }
@@ -110,7 +118,7 @@ export const create = internalMutation({
 export const update = internalMutation({
     args: {
         accountId: v.id("accounts"),
-        agentId: v.id("agents"),
+        agentId: v.string(),
         name: v.optional(v.string()),
         description: v.optional(v.string()),
         encryptedConfig: v.optional(v.string()),
@@ -120,12 +128,16 @@ export const update = internalMutation({
     returns: v.null(),
     handler: async (ctx, args) => {
         const { accountId, agentId, ...patch } = args;
-        const agent = await ctx.db.get(agentId);
+        const normalized = ctx.db.normalizeId("agents", agentId);
+        if (!normalized) {
+            throw new Error("Agent does not belong to the supplied accountId");
+        }
+        const agent = await ctx.db.get(normalized);
         if (!agent || agent.accountId !== accountId) {
             throw new Error("Agent does not belong to the supplied accountId");
         }
 
-        await ctx.db.patch(agentId, {
+        await ctx.db.patch(normalized, {
             ...(patch.name !== undefined && { name: patch.name }),
             ...(patch.description !== undefined && { description: patch.description }),
             ...(patch.encryptedConfig !== undefined && { encryptedConfig: patch.encryptedConfig }),
@@ -141,15 +153,19 @@ export const update = internalMutation({
 export const remove = internalMutation({
     args: {
         accountId: v.id("accounts"),
-        agentId: v.id("agents"),
+        agentId: v.string(),
     },
     returns: v.null(),
     handler: async (ctx, args) => {
-        const agent = await ctx.db.get(args.agentId);
+        const normalized = ctx.db.normalizeId("agents", args.agentId);
+        if (!normalized) {
+            throw new Error("Agent does not belong to the supplied accountId");
+        }
+        const agent = await ctx.db.get(normalized);
         if (!agent || agent.accountId !== args.accountId) {
             throw new Error("Agent does not belong to the supplied accountId");
         }
-        await ctx.db.delete(args.agentId);
+        await ctx.db.delete(normalized);
 
         return null;
     },
