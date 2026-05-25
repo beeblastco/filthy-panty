@@ -4,7 +4,7 @@
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { agentStatusConfig } from "@/app/components/node/BaseNode";
 import { ConfigTab } from "@/app/components/side-panel/ConfigTab";
-import { DetailsTab } from "@/app/components/side-panel/DetailsTab";
+import { DetailsTab, type AgentProvider } from "@/app/components/side-panel/DetailsTab";
 import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
 import { ToolConfigTab } from "@/app/components/side-panel/ToolConfigTab";
 import { ToolDetailsTab } from "@/app/components/side-panel/ToolDetailsTab";
@@ -86,7 +86,6 @@ const ToolTestTab = dynamic(
 );
 
 type NodeType = "agent" | "database" | "tool" | "workspace";
-type AgentProvider = "openai" | "google" | "bedrock" | "anthropic";
 type RuntimeVariable = { key: string; value: string };
 type HeaderStatusBadge = {
     text: string;

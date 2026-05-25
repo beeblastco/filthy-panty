@@ -18,7 +18,7 @@ type OutputFormatConfig = {
     description?: string;
 };
 
-type AgentProvider = "openai" | "google" | "bedrock" | "anthropic" | "minimax" | "gateway";
+export type AgentProvider = "openai" | "google" | "bedrock" | "anthropic" | "minimax" | "gateway";
 type RuntimeVariable = { key: string; value: string };
 
 const providerOptions: Array<{ value: AgentProvider; label: string }> = [
