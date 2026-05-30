@@ -186,11 +186,19 @@ export class KubernetesWorkspaceSandboxExecutor implements WorkspaceSandboxExecu
       name: CONTAINER_NAME,
       image: configString(opts.image) ?? optionalEnv("KUBERNETES_SANDBOX_IMAGE") ?? DEFAULT_IMAGE,
       command: ["sleep", "infinity"],
-      env: envList({ ...(this.#config.envVars ?? {}), ...sandboxRegionEnv(opts) }),
+      env: envList({
+        ...(this.#config.envVars ?? {}),
+        ...sandboxRegionEnv(opts),
+        // mount-s3 reads AWS creds from the environment. Pass the harness runtime's
+        // credentials in (mirrors the Daytona provider); in Lambda these are the
+        // execution role's temporary creds — no static keys. See README/docs.
+        ...(mounting ? awsCredentialEnv(this.#config) : {}),
+      }),
     };
     if (mounting) {
-      // mount-s3 needs FUSE; the simplest reliable grant on k3s is a privileged container.
-      container.securityContext = { privileged: true };
+      // mount-s3 needs FUSE + root: privileged grants the FUSE device, runAsUser 0 lets
+      // mount-s3 perform the mount (the image otherwise runs as uid 1000).
+      container.securityContext = { privileged: true, runAsUser: 0 };
     }
 
     const podSpec: Record<string, unknown> = { containers: [container] };
@@ -414,6 +422,25 @@ function kubeNamespace(opts: Record<string, unknown>): string {
 function sandboxRegionEnv(opts: Record<string, unknown>): Record<string, string> {
   const region = configString(opts.awsRegion) ?? optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION");
   return region ? { AWS_REGION: region, AWS_DEFAULT_REGION: region } : {};
+}
+
+// AWS credentials for mount-s3 inside the pod, taken from config.envVars or the harness
+// runtime env (in Lambda: the execution role's temporary creds). Mirrors the Daytona
+// provider's awsCredentialEnvVars.
+function awsCredentialEnv(config: WorkspaceSandboxConfig): Record<string, string> {
+  const envVars = config.envVars ?? {};
+  const get = (key: string): string | undefined => configString(envVars[key]) ?? optionalEnv(key);
+  const accessKeyId = get("AWS_ACCESS_KEY_ID");
+  const secretAccessKey = get("AWS_SECRET_ACCESS_KEY");
+  if (!accessKeyId || !secretAccessKey) {
+    throw new Error(
+      "kubernetes S3 workspace mount requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the harness runtime or config.workspace.sandbox.envVars.",
+    );
+  }
+  const out: Record<string, string> = { AWS_ACCESS_KEY_ID: accessKeyId, AWS_SECRET_ACCESS_KEY: secretAccessKey };
+  const sessionToken = get("AWS_SESSION_TOKEN");
+  if (sessionToken) out.AWS_SESSION_TOKEN = sessionToken;
+  return out;
 }
 
 function envList(vars: Record<string, string>): Array<{ name: string; value: string }> {
