@@ -51,13 +51,11 @@ const agent = await createAgent(account.secret, "Kubernetes sandbox assistant", 
         SANDBOX_SMOKE_VAR: "sandbox-env-ok",
       },
       options: {
-        // Optional overrides; defaults live in the executor + harness env:
-        // namespace: "agent-sandboxes",
-        // image: "ghcr.io/beeblastco/agent-sandbox-runtime:latest",
-        // serviceAccountName: "agent-sandbox-workspace",
-        // imagePullSecrets: ["ghcr-pull-secret"],
-        // mountAwsS3Buckets: true,
-        // workspaceBucketName: "<filthy-panty memory bucket>",
+        // namespace/image/serviceAccountName/imagePullSecrets default from harness env.
+        // mountAwsS3Buckets mounts the shared workspace S3 bucket so files persist across
+        // the ephemeral per-run pods (parity with lambda/daytona). Creds + bucket come from
+        // the harness env (FILESYSTEM_BUCKET_NAME, AWS_*).
+        mountAwsS3Buckets: true,
         workspaceRoot: "/mnt/workspaces",
       },
     },
@@ -78,12 +76,18 @@ try {
         content: [{
           type: "text",
           text: [
-            "Run this kubernetes sandbox smoke test:",
-            "1. Run the shell command: echo \"shell:$SANDBOX_SMOKE_VAR\" (expect sandbox-env-ok).",
-            "2. Write /main.py that prints 'python ok' plus the Python version, then run python3 /main.py.",
-            "3. Write /main.js that prints 'node ok' plus process.version, then run node /main.js.",
-            "4. Run: curl -s -o /dev/null -w '%{http_code}' https://example.com  (outbound internet check).",
-            "5. Return the stdout and status objects from every run.",
+            "Run this kubernetes sandbox test. Use a SEPARATE bash tool call for each numbered step",
+            "so we verify files persist across runs (each run is a fresh pod sharing the S3 workspace).",
+            "1. echo \"shell:$SANDBOX_SMOKE_VAR\" (expect sandbox-env-ok), then create notes.txt with the",
+            "   single line 'line1' and run: ls -1.",
+            "2. Append 'line2' to notes.txt, then cat notes.txt (expect line1 and line2 — proves the file",
+            "   written in step 1 persisted into this new run).",
+            "3. Write count.py that opens notes.txt and prints 'lines:' followed by the line count, then",
+            "   run python3 count.py (expect lines:2).",
+            "4. Edit count.py to also print the file's contents in uppercase, then run it again.",
+            "5. Run: curl -s -o /dev/null -w '%{http_code}' https://example.com (outbound internet check).",
+            "6. Run: ls -1 (expect notes.txt and count.py to still be present).",
+            "7. Summarize stdout and status for every step, and confirm whether the files persisted.",
           ].join("\n"),
         }],
       },
