@@ -659,9 +659,34 @@ export default $config({
     // Cost (R2): no managed NAT Gateway. Mounted functions need the VPC for the S3
     // Files mount; on non-prod the VPC uses fck-nat (~10x cheaper than NAT Gateway).
     // The no-mount + internet-on function runs WITHOUT a VPC for free managed egress
-    // and the fastest cold start. Tightening internet-off to a NAT-less isolated
-    // subnet (+ a free S3 Gateway VPC Endpoint) is a deploy-time hardening follow-up.
+    // and the fastest cold start. Internet-off functions use a restricted security group
+    // that drops all egress except NFS (port 2049) to the S3 Files mount targets —
+    // blocking outbound internet even though the subnets route through NAT.
     const sandboxMountPermissions = sandboxRuntimePermissions(filesystemBucketArn, sandboxS3Files.arn, sandboxS3FilesAccessPoint.arn);
+
+    // Security group for internet-off sandbox functions. Removes the default allow-all
+    // egress so Lambda cannot reach the public internet. NFS egress to the VPC security
+    // group is allowed so the workspace-mount variant can still reach S3 Files.
+    const sandboxNoNetSecurityGroup = new aws.ec2.SecurityGroup("SandboxNoNetSecurityGroup", {
+      vpcId: sandboxNetwork.nodes.vpc.id,
+      description: "No-internet sandbox: blocks outbound internet, allows NFS to S3 Files only",
+      egress: [{
+        protocol: "tcp",
+        fromPort: 2049,
+        toPort: 2049,
+        securityGroups: sandboxNetwork.securityGroups.apply((ids) => ids.slice(0, 1)),
+        description: "Allow NFS egress to S3 Files mount targets",
+      }],
+      tags: { Name: resourceName("sandbox-nonet-sg", stage, region) },
+    });
+    // Allow NFS ingress to the S3 Files mount targets from the no-internet security group.
+    new aws.vpc.SecurityGroupIngressRule("SandboxS3FilesNfsIngressNoNet", {
+      securityGroupId: sandboxNetwork.securityGroups.apply((ids) => ids[0]!),
+      referencedSecurityGroupId: sandboxNoNetSecurityGroup.id,
+      ipProtocol: "tcp",
+      fromPort: 2049,
+      toPort: 2049,
+    });
 
     // sst.aws.Function can't consume a pre-built ECR image (no `image` arg; it always
     // builds a zip), so the sandbox functions drop to the raw Lambda resource with
@@ -669,7 +694,7 @@ export default $config({
     // wiring SST would otherwise manage. Axes: workspace mount (VPC + S3 Files) and VPC.
     const sandboxImageFunction = (
       logical: string,
-      cfg: { name: string; description: string; mount: boolean; vpc: boolean },
+      cfg: { name: string; description: string; mount: boolean; vpc: boolean; securityGroupIds?: $util.Input<string[]> },
     ) => {
       const role = new aws.iam.Role(`${logical}Role`, { assumeRolePolicy: LAMBDA_ASSUME_ROLE });
 
@@ -711,7 +736,7 @@ export default $config({
           ? {
               vpcConfig: {
                 subnetIds: sandboxNetwork.privateSubnets,
-                securityGroupIds: sandboxNetwork.securityGroups,
+                securityGroupIds: cfg.securityGroupIds ?? sandboxNetwork.securityGroups,
               },
             }
           : {}),
@@ -745,6 +770,7 @@ export default $config({
         description: "Uniform sandbox — workspace mount, no internet.",
         mount: true,
         vpc: true,
+        securityGroupIds: sandboxNoNetSecurityGroup.id.apply((id) => [id]),
       });
 
       sandboxImageFunction("SandboxNoMountNet", {
@@ -759,6 +785,7 @@ export default $config({
         description: "Uniform sandbox — stateless, no internet.",
         mount: false,
         vpc: true,
+        securityGroupIds: sandboxNoNetSecurityGroup.id.apply((id) => [id]),
       });
     }
 

@@ -22,7 +22,7 @@ import {
   requireEnv,
 } from "./utils.ts";
 
-const googleApiKey = requireEnv("ACCOUNT_GOOGLE_API_KEY");
+const minimaxApiKey = requireEnv("ACCOUNT_MINIMAX_API_KEY");
 const username = `ws-override-${Date.now()}`;
 
 const account = await createAccount(username);
@@ -57,12 +57,11 @@ const reference = await createWorkspace(account.secret, "reference", {
 
 const agent = await createAgent(account.secret, "Override assistant", {
   provider: {
-    google: { apiKey: googleApiKey },
+    minimax: { apiKey: minimaxApiKey },
   },
   model: {
-    provider: "google",
-    modelId: "gemma-4-31b-it",
-    temperature: 0,
+    provider: "minimax",
+    modelId: "MiniMax-M2.7",
   },
   agent: {
     system: [
@@ -104,8 +103,8 @@ try {
           type: "text",
           text: [
             "Exercise the three workspace bindings:",
-            "1. In the `scratch` workspace, write a.txt containing 'scratch-ok', then read it back.",
-            "2. In the `secure` workspace, write b.txt containing 'secure-ok', then read it back.",
+            "1. In the `scratch` workspace, write python script connect to internet and output the file 'output.txt', execute it and then read it back.",
+            "2. In the `secure` workspace, write python script connect to internet and output the file 'output.txt', try execute it and then read it back.",
             "3. In the `reference` workspace, try to write c.txt — report the read-only error verbatim — then glob **/* there.",
             "4. Summarize which workspaces accepted writes and which rejected them.",
           ].join("\n"),
