@@ -18,8 +18,10 @@
  * for core subscribers; dedup a core→stream switch by either.
  *
  * The stream is a TRANSIENT replay buffer, not the source of truth — the final
- * result is persisted in the conversation history. So retention can be short and
- * storage is tunable (see the stream-config constants below).
+ * result is persisted in the conversation history DB. So it holds as little as
+ * possible: a conversation's messages are purged as soon as a client finishes
+ * replaying them ({@link purgeConversationStream}), and a short `max_age` is just
+ * the backstop for the common live-only path where nothing ever replays.
  *
  * Transport is selected by the `NATS_URL` scheme via {@link connectNats}:
  *   - `wss://` / `ws://` -> WebSocket (`nats.ws`), for out-of-cluster callers
@@ -67,16 +69,20 @@ export interface NatsStreamEvent {
 }
 
 // One stream covers every conversation; per-subject retention bounds growth.
-// These are the storage knobs — the stream is a short-lived replay buffer, so
-// they can be tuned down (or storage switched to Memory) without losing the
-// final result, which lives in the conversation history.
+// These are the storage knobs. The stream is ONLY a transient streaming buffer —
+// the conversation history DB is the source of truth — so retention is kept
+// short and a conversation's messages are purged as soon as a client has
+// replayed them (see purgeConversationStream). max_age is just the backstop for
+// messages that are never replayed (the common live-only path); they expire
+// quickly instead of piling up, since the final result is already in the DB.
 const RESPONSE_STREAM_NAME = "WS_RESPONSES";
 const RESPONSE_SUBJECT_WILDCARD = "v1.*.*.ws.response.*";
 const RESPONSE_STREAM_STORAGE = StorageType.File; // Memory = faster/cheaper, lost on restart
 const NANOS_PER_MS = 1_000_000;
-// How long a finished stream stays replayable for a reconnecting client.
-const RESPONSE_STREAM_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const RESPONSE_STREAM_MAX_MSGS_PER_SUBJECT = 5_000;
+// Backstop reconnect window: long enough to replay an in-flight turn after a
+// drop, short enough that the buffer never holds much (the DB has the result).
+const RESPONSE_STREAM_MAX_AGE_MS = 10 * 60 * 1000;
+const RESPONSE_STREAM_MAX_MSGS_PER_SUBJECT = 2_000;
 // Dedup window for Nats-Msg-Id-tagged publishes (retries within it collapse).
 const RESPONSE_STREAM_DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
 
@@ -178,23 +184,30 @@ export async function ensureResponseStream(connection: NatsConnection): Promise<
   if (!ensureStreamPromise) {
     ensureStreamPromise = (async () => {
       const jsm = await connection.jetstreamManager();
+      // retention/storage/name are immutable after creation; the retention knobs
+      // (max_age, max_msgs_per_subject, duplicate_window) are mutable, so apply
+      // them on update too — that's how a shortened buffer reaches an existing
+      // stream without a destructive recreate.
+      const config = {
+        name: RESPONSE_STREAM_NAME,
+        subjects: [RESPONSE_SUBJECT_WILDCARD],
+        retention: RetentionPolicy.Limits,
+        storage: RESPONSE_STREAM_STORAGE,
+        discard: DiscardPolicy.Old,
+        max_age: RESPONSE_STREAM_MAX_AGE_MS * NANOS_PER_MS,
+        max_msgs_per_subject: RESPONSE_STREAM_MAX_MSGS_PER_SUBJECT,
+        duplicate_window: RESPONSE_STREAM_DUPLICATE_WINDOW_MS * NANOS_PER_MS,
+      };
       try {
         await jsm.streams.info(RESPONSE_STREAM_NAME);
+        // Exists: best-effort sync of the mutable retention knobs.
+        await jsm.streams.update(RESPONSE_STREAM_NAME, config).catch(() => {});
         return;
       } catch {
         // Not found: create it below.
       }
       try {
-        await jsm.streams.add({
-          name: RESPONSE_STREAM_NAME,
-          subjects: [RESPONSE_SUBJECT_WILDCARD],
-          retention: RetentionPolicy.Limits,
-          storage: RESPONSE_STREAM_STORAGE,
-          discard: DiscardPolicy.Old,
-          max_age: RESPONSE_STREAM_MAX_AGE_MS * NANOS_PER_MS,
-          max_msgs_per_subject: RESPONSE_STREAM_MAX_MSGS_PER_SUBJECT,
-          duplicate_window: RESPONSE_STREAM_DUPLICATE_WINDOW_MS * NANOS_PER_MS,
-        });
+        await jsm.streams.add(config);
       } catch (err) {
         // A concurrent creator won the race; treat an existing stream as success.
         if (!/already in use|already exists/i.test(err instanceof Error ? err.message : String(err))) {
@@ -249,6 +262,27 @@ export async function readConversationStream(options: {
     ...consumerStartPolicy(options.startSequence, options.startTime),
   });
   return consumer.consume();
+}
+
+/**
+ * Delete a conversation's buffered messages from the stream. Call this once a
+ * client has finished replaying (it received the terminal `done` event) — the
+ * stream is only a transient buffer and the full result is in the conversation
+ * history DB, so there's no reason to keep the replayed copy. Best-effort.
+ */
+export async function purgeConversationStream(options: {
+  connection: NatsConnection;
+  accountId: string;
+  agentId: string;
+  conversationKey: string;
+}): Promise<void> {
+  try {
+    const jsm = await options.connection.jetstreamManager();
+    const subject = streamResponseSubject(options.accountId, options.agentId, options.conversationKey);
+    await jsm.streams.purge(RESPONSE_STREAM_NAME, { filter: subject });
+  } catch {
+    // Best-effort: max_age expires the buffer anyway if the purge can't run.
+  }
 }
 
 // Map a resume cursor to a JetStream consumer start policy: by sequence (last

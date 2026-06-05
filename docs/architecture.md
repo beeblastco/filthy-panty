@@ -286,12 +286,18 @@ Notes:
 - **No duplicates:** a single read path never sees a message twice; each publish
   also carries a `Nats-Msg-Id` (`eventId:sequence`) so the stream's
   `duplicate_window` (~2 min) collapses any publish retry.
-- **Storage:** the stream is a **transient replay buffer**, not the source of
-  truth (the final result lives in the conversation history). It's created on
-  demand (idempotent) and bounded by retention knobs in `nats.ts` —
-  `RESPONSE_STREAM_STORAGE` (`File` default; `Memory` is faster/cheaper but lost
-  on restart), `max_age` (~24h), and `max_msgs_per_subject`. Tune these down to
-  treat it as a short reconnect window; HA `replicas: 3` multiplies storage by 3.
+- **Storage (kept minimal):** the stream is a **transient replay buffer**, not
+  the source of truth — the conversation history DB is. So it holds as little as
+  possible:
+  - **Purge on replay:** once a client finishes replaying a conversation (it got
+    the terminal `done`), `purgeConversationStream` deletes that conversation's
+    messages from the stream — no reason to keep a copy that's already in the DB.
+  - **Short backstop `max_age` (~10 min):** for the common live-only path where
+    nothing ever replays, messages just expire quickly instead of piling up.
+  - Other knobs in `nats.ts`: `RESPONSE_STREAM_STORAGE` (`File` default; `Memory`
+    is faster/cheaper but lost on restart) and `max_msgs_per_subject`. The
+    retention knobs are mutable, so `ensureResponseStream` syncs them onto the
+    existing stream on update. HA `replicas: 3` multiplies storage by 3.
 - `connectionId` is now only a routing/label field on event headers — it no
   longer scopes the subject, so overlapping turns on one conversation share a
   stream (group per turn with `headers.eventId`).

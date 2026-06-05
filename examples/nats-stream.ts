@@ -10,7 +10,7 @@
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { toRuntimeAgentConfig, type AgentConfig } from "../functions/_shared/storage/index.ts";
-import { connectNats, readConversationStream, subscribeConversationLive, type NatsStreamEvent } from "../functions/_shared/nats.ts";
+import { connectNats, purgeConversationStream, readConversationStream, subscribeConversationLive, type NatsStreamEvent } from "../functions/_shared/nats.ts";
 import { scopedDirectConversationKey, scopedDirectEventId } from "../functions/_shared/runtime-keys.ts";
 import type { DirectInboundEvent } from "../functions/harness-processing/integrations.ts";
 import { createAccount, createAgent, deleteAccount } from "./utils.ts";
@@ -167,6 +167,16 @@ try {
     }
   }
   await replay.close();
+
+  // Done replaying: free the buffer. The stream is transient and the full result
+  // lives in the conversation history DB, so there's no reason to keep this copy.
+  await purgeConversationStream({
+    connection: reconnectClient,
+    accountId: account.account.accountId,
+    agentId: agent.agentId,
+    conversationKey: publicConversationKey,
+  });
+  console.log("[Purged] replayed buffer removed from the stream");
   await reconnectClient.drain();
 } finally {
   await natsClient.drain().catch(() => {});
