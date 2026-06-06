@@ -117,17 +117,11 @@
         "webSearch": {}
       }
     },
-    "test_async": {
+    "tool_replace_with_uploaded_tool_id": {
       "enabled": true,
       "async": true,
-      "execution": "same-invocation"
-    },
-    "test_external_async": {
-      "enabled": false,
-      "async": true,
-      "execution": "external-dispatch",
-      "completionBaseUrl": "${AGENT_SERVICE_URL}",
-      "completionBearerToken": "${ACCOUNT_SECRET}"
+      "execution": "same-invocation",
+      "config": {}
     }
   },
   "channels": {

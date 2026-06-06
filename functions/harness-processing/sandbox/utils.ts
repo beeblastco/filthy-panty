@@ -45,6 +45,10 @@ export function requiredWorkspacePath(
   return workspacePath(request, fallbackRoot)!;
 }
 
+export function sandboxReservationKey(request: { reservationKey?: string; namespace?: string }): string | undefined {
+  return request.reservationKey ?? request.namespace;
+}
+
 export function truncateText(value: string, limit: number): { value: string; truncated: boolean } {
   const bytes = textEncoder.encode(value);
   if (bytes.byteLength <= limit) {

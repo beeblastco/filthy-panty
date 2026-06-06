@@ -18,7 +18,7 @@ import type {
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
-import { configString, isRecordObject, isSandboxGoneError, shellQuote, stringRecord, truncateText, workspacePath } from "./utils.ts";
+import { configString, isRecordObject, isSandboxGoneError, sandboxReservationKey, shellQuote, stringRecord, truncateText, workspacePath } from "./utils.ts";
 import { generateJobId, launchScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
 
@@ -33,7 +33,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     const startedAt = Date.now();
     const persistent = this.#persistent(request);
     const sandbox = await this.#acquire(request);
-    const cwd = persistent ? this.#workDir(request.namespace!) : workspacePath(request);
+    const cwd = persistent ? this.#workDir(sandboxReservationKey(request)!) : workspacePath(request);
 
     try {
       if (persistent && cwd) {
@@ -98,8 +98,10 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     return parseJobStatus(request.jobId, await this.#shell(sandbox, statusScript(jobsDir, request.jobId)));
   }
 
-  async release(request: { namespace: string }): Promise<void> {
-    const externalId = await getSandboxExternalId("e2b", request.namespace);
+  async release(request: { namespace?: string; reservationKey?: string }): Promise<void> {
+    const key = sandboxReservationKey(request);
+    if (!key) return;
+    const externalId = await getSandboxExternalId("e2b", key);
     if (!externalId) return;
     try {
       await Sandbox.kill(externalId, e2bApiOptions(this.#config));
@@ -108,18 +110,18 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       // caller iterating multiple configs can try the next one.
       if (!isSandboxGoneError(err)) throw err;
     }
-    await deleteSandboxInstance("e2b", request.namespace).catch(() => {});
+    await deleteSandboxInstance("e2b", key).catch(() => {});
   }
 
-  #persistent(request: { namespace?: string }): boolean {
-    return this.#config.persistent === true && !!request.namespace;
+  #persistent(request: { namespace?: string; reservationKey?: string }): boolean {
+    return this.#config.persistent === true && !!sandboxReservationKey(request);
   }
 
-  #requirePersistent(request: { namespace?: string }): string {
+  #requirePersistent(request: { namespace?: string; reservationKey?: string }): string {
     if (!this.#persistent(request)) {
-      throw new Error("background jobs require a persistent e2b sandbox with a workspace");
+      throw new Error("background jobs require a persistent e2b sandbox reservation key");
     }
-    return request.namespace!;
+    return sandboxReservationKey(request)!;
   }
 
   #workDir(namespace: string): string {
@@ -136,7 +138,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     if (!this.#persistent(request)) {
       return Sandbox.create(e2bCreateOptions(this.#config, false));
     }
-    const ns = request.namespace!;
+    const ns = sandboxReservationKey(request)!;
     const externalId = await getSandboxExternalId("e2b", ns);
     if (externalId) {
       try {
@@ -160,11 +162,12 @@ export class E2BSandboxExecutor implements SandboxExecutor {
   }
 
   async #jobContext(request: SandboxJobRequest): Promise<{ sandbox: Sandbox; jobsDir: string }> {
-    if (!request.namespace) throw new Error("job operations require a persistent workspace namespace");
-    const externalId = await getSandboxExternalId("e2b", request.namespace);
+    const key = sandboxReservationKey(request);
+    if (!key) throw new Error("job operations require a persistent sandbox reservation key");
+    const externalId = await getSandboxExternalId("e2b", key);
     if (!externalId) throw new Error("no reserved e2b sandbox for this workspace");
     const sandbox = await Sandbox.connect(externalId, e2bApiOptions(this.#config));
-    return { sandbox, jobsDir: this.#jobsDir(request.namespace) };
+    return { sandbox, jobsDir: this.#jobsDir(key) };
   }
 
   async #shell(sandbox: Sandbox, code: string): Promise<string> {

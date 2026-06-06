@@ -50,6 +50,14 @@ export interface Skill {
   }>;
 }
 
+export interface CustomTool {
+  accountId: string;
+  toolId: string;
+  name: string;
+  description: string;
+  sha256: string;
+}
+
 // Create a new account
 export async function createAccount(username: string): Promise<Account> {
   const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts`, {
@@ -130,6 +138,20 @@ export async function createSkill(
 
   if (!response.ok) throw new Error(`Create skill failed: ${response.status} ${await response.text()}`);
   return await response.json() as Skill;
+}
+
+export async function createTool(
+  secret: string,
+  input: Record<string, unknown>,
+): Promise<CustomTool> {
+  const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/tools`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) throw new Error(`Create tool failed: ${response.status} ${await response.text()}`);
+  return await response.json() as CustomTool;
 }
 
 export async function listSkills(secret: string): Promise<Skill[]> {

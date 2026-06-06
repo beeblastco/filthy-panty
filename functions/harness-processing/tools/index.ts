@@ -13,6 +13,7 @@ import {
   type AccountModelProviderName,
   type AgentToolConfig,
   type SandboxPermissionMode,
+  getStorage,
 } from "../../_shared/storage/index.ts";
 import { logWarn } from "../../_shared/log.ts";
 import type { Session } from "../session.ts";
@@ -33,12 +34,12 @@ import runSubagentTool, {
 } from "./run-subagent.tool.ts";
 import { tavilyExtractTool, tavilySearchTool } from "./tavily.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
-import testAsyncTool from "./test.async.tool.ts";
-import testExternalAsyncTool from "./test.external-async.tool.ts";
+import accountTool from "./account-tool.tool.ts";
 
 // Runtime dependencies shared by tool factories. Model-facing input schemas
 // stay inside each individual tool file.
 export interface ToolContext {
+  accountId?: string;
   conversationKey: string;
   // Each workspace carries its own effective sandbox + permissionMode (or no
   // sandbox => read-only). See resolveAgentRuntime.
@@ -63,11 +64,9 @@ const toolFactories = {
   tavilySearch: tavilySearchTool,
   tavilyExtract: tavilyExtractTool,
   googleSearch: googleSearchTool,
-  test_async: testAsyncTool,
-  test_external_async: testExternalAsyncTool,
 } satisfies Record<string, ToolFactory>;
 
-export function createTools(context: Omit<ToolContext, "config">, agentConfig: AgentConfig): ToolSet {
+export async function createTools(context: Omit<ToolContext, "config">, agentConfig: AgentConfig): Promise<ToolSet> {
   const tools: ToolSet = {};
   assertSupportedConfiguredTools(agentConfig.tools);
 
@@ -141,6 +140,7 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
     );
   }
   Object.assign(tools, sandboxTools);
+  const asyncModes: AsyncToolModeMap = new Map();
 
   // Subagent execution is orchestrated by the handler/coordinator. The registry
   // exposes only the model-facing tool when config and runtime dispatcher agree.
@@ -171,6 +171,7 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
     }), {
       [toolName]: toolConfig.needsApproval === true,
     }));
+    addAsyncModeIfConfigured(asyncModes, toolName, toolConfig);
   }
 
   const handoffsConfig = agentConfig.tools?.handoffs;
@@ -182,11 +183,36 @@ export function createTools(context: Omit<ToolContext, "config">, agentConfig: A
     }), {
       handoffs: handoffsConfig.needsApproval === true,
     }));
+    addAsyncModeIfConfigured(asyncModes, "handoffs", handoffsConfig);
+  }
+
+  for (const [toolId, toolConfig] of Object.entries(agentConfig.tools ?? {}).filter(([key]) => isAccountToolId(key))) {
+    if (!isToolEnabled(toolConfig)) {
+      continue;
+    }
+    if (!context.accountId) {
+      throw new Error(`config.tools.${toolId} requires an account-scoped session`);
+    }
+    const accountId = context.accountId;
+    const record = await getStorage().accountTools.getById(accountId, toolId);
+    if (!record || record.status !== "active") {
+      throw new Error(`config.tools.${toolId} references an unknown account tool`);
+    }
+    if (tools[record.name]) {
+      throw new Error(`config.tools.${toolId} model-facing name '${record.name}' conflicts with another tool`);
+    }
+    Object.assign(tools, withToolApproval(accountTool(record, {
+      ...context,
+      accountId,
+      config: externalToolRuntimeConfig(toolConfig),
+    }), {
+      [record.name]: toolConfig.needsApproval === true,
+    }));
+    addAsyncModeIfConfigured(asyncModes, record.name, toolConfig);
   }
 
   // Auto-add the background-job status tool when the agent has any async tool or
   // a reserved sandbox that can launch background jobs.
-  const asyncModes = asyncConfiguredToolModes(agentConfig.tools);
   if (asyncModes.size > 0 || hasPersistentWorkspace) {
     Object.assign(tools, asyncStatusTool({
       conversationKey: context.conversationKey,
@@ -210,7 +236,7 @@ function withToolApproval(tools: ToolSet, approvals: Record<string, boolean>): T
 
 function assertSupportedConfiguredTools(tools: AgentConfig["tools"]): void {
   for (const toolName of Object.keys(tools ?? {})) {
-    if (!(toolName in toolFactories) && toolName !== "handoffs") {
+    if (!(toolName in toolFactories) && toolName !== "handoffs" && !isAccountToolId(toolName)) {
       throw new Error(`config.tools.${toolName} is not a supported tool`);
     }
   }
@@ -220,12 +246,14 @@ function isToolEnabled(config: AgentToolConfig | undefined): config is AgentTool
   return config !== undefined && config.enabled !== false;
 }
 
-function asyncConfiguredToolModes(tools: AgentConfig["tools"]): AsyncToolModeMap {
-  return new Map(
-    Object.entries(tools ?? {})
-      .filter(([, config]) => isToolEnabled(config) && config.async === true)
-      .map(([toolName, config]) => [toolName, config.execution ?? "same-invocation"]),
-  );
+function addAsyncModeIfConfigured(
+  modes: AsyncToolModeMap,
+  modelToolName: string,
+  config: AgentToolConfig,
+): void {
+  if (config.async === true) {
+    modes.set(modelToolName, config.execution ?? "same-invocation");
+  }
 }
 
 function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {
@@ -238,4 +266,8 @@ function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {
   } = config;
 
   return runtimeConfig;
+}
+
+function isAccountToolId(toolName: string): boolean {
+  return /^tool_[A-Za-z0-9_-]+$/.test(toolName);
 }

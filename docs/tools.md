@@ -1,17 +1,21 @@
 # External Tools
 
-This guide covers agent-configured external tools: tools that let the agent call outside services such as Tavily or provider-native Google Search. It does not cover the sandbox tools (`bash`, `read`, `write`, `edit`, `glob`, `grep` — see [Workspace & Sandbox](workspace/index.md)), `load_skill`, or `run_subagent`.
+This guide covers agent-configured external tools: built-in tools such as Tavily/Google Search and account-uploaded custom tools. It does not cover the sandbox tools (`bash`, `read`, `write`, `edit`, `glob`, `grep` — see [Workspace & Sandbox](workspace/index.md)), `load_skill`, or `run_subagent`.
 
-External tools are enabled per agent through `config.tools`. The harness creates them for each model run and passes them to the Vercel AI SDK `streamText()` call. By default they execute inline inside `harness-processing`; local `execute` tools can opt into async wrapping with `async: true`.
+External tools are enabled per agent through `config.tools`. Built-in keys use their static name. Uploaded custom tools use their account-scoped `toolId` key, and the uploaded manifest supplies the model-facing name, description, and input schema. Uploaded tool code executes in a Kubernetes sandbox runner, not inside `harness-processing`.
 
 ```mermaid
 flowchart LR
-  Config["config.tools.<name><br/>async + execution"] --> Registry["tools/index.ts"]
+  Upload["POST /accounts/me/tools<br/>bundle + manifest"] --> Store["AccountTool metadata + S3 bundle"]
+  Config["config.tools.<name or toolId><br/>async + execution"] --> Registry["tools/index.ts"]
+  Store --> Registry
   Registry --> Wrap["AsyncToolCoordinator"]
   Wrap --> Model["streamText tools"]
   Model --> Call["model calls tool"]
-  Call --> Same["same-invocation<br/>runs in this Lambda"]
+  Call --> Same["same-invocation<br/>waits for runner result"]
   Call --> External["external-dispatch<br/>enqueue outside work"]
+  Same --> Runner["Kubernetes tool runner"]
+  External --> Runner
 ```
 
 ## Current Tools
@@ -21,7 +25,7 @@ flowchart LR
 | `tavilySearch` | [`functions/harness-processing/tools/tavily.tool.ts`](../functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK search | `config.tools.tavilySearch` |
 | `tavilyExtract` | [`functions/harness-processing/tools/tavily.tool.ts`](../functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK extract | `config.tools.tavilyExtract` |
 | `googleSearch` | [`functions/harness-processing/tools/google-search.tool.ts`](../functions/harness-processing/tools/google-search.tool.ts) | Google provider-defined tool | `config.tools.googleSearch` |
-| `test_async` | [`functions/harness-processing/tools/test.async.tool.ts`](../functions/harness-processing/tools/test.async.tool.ts) | Local async example tool | `config.tools.test_async` |
+| Uploaded custom tool | S3 bundle + account tool metadata | Kubernetes tool runner | `config.tools.<toolId>` |
 
 Sandbox tools come from a referenced `sandbox` (+ `workspaces`) — see [Workspace & Sandbox](workspace/index.md). Skills use `config.skills`; see [Skills](skills.md). Subagents use `config.subagent`.
 
@@ -35,15 +39,59 @@ Tool registry path:
 2. The sandbox tools come from a referenced `sandbox`: `bash` (stateless) when there is no workspace; per workspace, the full `read`/`write`/`edit`/`glob`/`grep`/`bash` set when it has an effective sandbox, or read-only `read`/`glob` when it has none (via a read-only mount by default, or direct S3 with the `sandbox: null` opt-out). Approvals follow that workspace's `permissionMode`.
 3. `run_subagent` comes only from `config.subagent`.
 4. `load_skill` comes from `config.skills`.
-5. External tools come only from the static `toolFactories` map.
-6. `needsApproval` is applied before tools are passed to `streamText()`.
-7. Local `execute` tools with `async: true` are wrapped by `AsyncToolCoordinator`.
+5. Built-in tools come from the static `toolFactories` map.
+6. `tool_*` config keys load account-owned uploaded tool metadata and expose the uploaded model-facing tool name.
+7. `needsApproval` is applied before tools are passed to `streamText()`.
+8. Local `execute` tools with `async: true` are wrapped by `AsyncToolCoordinator`.
 
-Synchronous tool execution is not queued and does not run in a separate Lambda. If the model calls an enabled external tool, the AI SDK invokes that tool during the current `harness-processing` request. Tool start, finish, duration, and failures are logged from `harness.ts`.
+Built-in local tools execute during the current `harness-processing` request. Uploaded custom tools run in a persistent Kubernetes runner pod keyed by account/tool. `harness-processing` creates a local Kubernetes executor client, but that does not mean a new pod is created for each call: `persistent: true` selects the reserved-sandbox path, and the stable account/tool `reservationKey` becomes the deterministic Kubernetes Sandbox name. Change the reservation key and the executor will address a different pod; keep it stable and it reconnects to the existing pod, creates it on first use, or resumes it after idle scale-to-zero.
+
+For the MVP, each tool call uses a short `exec` command inside that warm pod. The Lambda sends the tool input, merged config, a short-lived bundle URL, bundle hash, and async metadata to the runner script, then waits for JSON output. The runner verifies the cached bundle under `/cache/tools/<sha256>` first, downloads only on cache miss, verifies the downloaded hash, imports the default export, calls `execute(ctx, input)`, and returns the result. `$HOME/.cache/tools` and `/tmp/cache/tools` are fallback cache roots for images that do not expose `/cache/tools`.
+
+```mermaid
+sequenceDiagram
+  participant H as harness-processing
+  participant K as Kubernetes executor
+  participant P as "persistent account/tool pod"
+  participant S as "S3 bundle object"
+
+  H->>K: run(reservationKey=custom-tool-account-tool)
+  K->>P: reconnect/create/resume pod
+  P->>P: check /cache/tools/sha256/tool.mjs
+  opt cache miss
+    P->>S: GET signed bundle URL
+    P->>P: verify sha256 + cache bundle
+  end
+  P->>P: import bundle + execute(ctx,input)
+  P-->>H: JSON result marker
+```
+
+### Future Runner Process
+
+The next performance step is a long-lived Node worker process inside the same persistent pod. Instead of `exec`-ing a short Node heredoc for every call, the pod would start a small HTTP or gRPC server once:
+
+```text
+harness-processing -> invoke runner endpoint -> warm Node process -> cached module -> execute(ctx,input)
+```
+
+Benefits:
+
+- Lower per-call overhead: no per-call shell process, Node startup, heredoc transfer, or module reload.
+- Better cache behavior: loaded modules and parsed JavaScript can stay in process memory, not just on disk.
+- Cleaner invoke protocol: payloads can be sent as JSON over HTTP/gRPC instead of embedded in generated code.
+- Closer to Convex-style function running: a warm runtime owns module loading and dispatch, while the control plane only sends invocations.
+
+Tradeoffs:
+
+- More infrastructure: pod readiness must include the runner server, health checks, port forwarding/service routing, and graceful restarts.
+- More lifecycle code: deploy/update has to tell the worker when a tool hash changes and evict the loaded module.
+- More security surface: the runner API needs local-only or authenticated access so uploaded code cannot invoke other tools directly.
+
+Recommendation: keep the current warm-pod `exec` runner for MVP because it preserves isolation and is simple to debug. Move to the long-lived Node worker once custom tools are frequently invoked enough that Node/process startup and module import show up in latency metrics.
 
 When `config.tools.<name>.async` is `true`, `execution` controls the lifecycle:
 
-- `same-invocation` is the default. The tool runs inside the active Lambda; the parent waits after the model pass, injects the result, and can run again. SSE, NATS WebSocket, `/async`, and channel requests all support this mode.
+- `same-invocation` is the default. The parent waits after the model pass, injects the result, and can run again. Built-ins run inside the active Lambda; uploaded tools run in the Kubernetes runner. SSE, NATS WebSocket, `/async`, and channel requests all support this mode.
 - `external-dispatch` means the tool `execute` only enqueues external work and returns quickly. NATS WebSocket, `/async`, and channel requests also support this mode. The wrapper stores an `AsyncToolResult` row with delivery metadata for non-SSE paths and passes `options.asyncTool.resultId` so the external worker can correlate the later result.
 
 > Warning: SSE rejects `external-dispatch` because the original open SSE connection cannot be held after the Lambda exits. Use `same-invocation` for SSE async tools.
@@ -59,7 +107,7 @@ sequenceDiagram
   alt same-invocation
     P->>C: tool call
     C->>D: processing row
-    C->>C: run tool promise in Lambda
+    C->>C: run built-in locally or uploaded tool in runner
     C->>D: completed/failed
     C->>P: inject result and continue
   else external-dispatch
@@ -96,7 +144,7 @@ or:
 }
 ```
 
-The worker needs the absolute `AGENT_SERVICE_URL` plus the relative `options.asyncTool.completePath`; calling the mock worker's own Function URL with that path will only recurse into the mock and leave the DynamoDB row processing. The fixture in [`examples/external-async.ts`](../examples/external-async.ts) passes `completionBaseUrl` and `completionBearerToken` into `config.tools.test_external_async` so the mock can call the real harness completion endpoint.
+The worker needs the absolute `AGENT_SERVICE_URL` plus the relative `ctx.asyncTool.completePath`; calling a mock worker's own Function URL with that path will only recurse into the mock and leave the DynamoDB row processing. The fixture in [`examples/external-async.ts`](../examples/external-async.ts) uploads `test_external_async`, puts endpoint settings in the tool `defaultConfig`, and enables the returned `toolId` with `execution: "external-dispatch"`.
 
 External-dispatch completion path:
 
@@ -124,7 +172,7 @@ For sync direct API callers, approval requests are streamed as SSE and persisted
 
 ## Agent Config
 
-Use `config.tools` for external tools:
+Use `config.tools` for built-in and uploaded tools:
 
 ```json
 {
@@ -143,6 +191,13 @@ Use `config.tools` for external tools:
     },
     "googleSearch": {
       "enabled": true
+    },
+    "tool_abc123": {
+      "enabled": true,
+      "async": true,
+      "execution": "same-invocation",
+      "needsApproval": false,
+      "config": {}
     }
   }
 }
@@ -150,13 +205,57 @@ Use `config.tools` for external tools:
 
 Omitting a tool disables it. Setting `enabled: false` also disables it. Set `needsApproval: true` when the tool should require the AI SDK approval flow before execution.
 Set `async: true` when a local `execute` tool may take long enough that the parent agent should keep working while the result is produced.
-Set `execution: "external-dispatch"` only for tools whose `execute` enqueues outside work and returns without doing the long-running work in the current Lambda.
+For uploaded tools, `config` is merged over the upload-time `defaultConfig` and passed to `ctx.config`. Set `execution: "external-dispatch"` only for tools whose `execute` dispatches outside work and returns quickly.
 
-See [`examples/tool-async.ts`](../examples/tool-async.ts) for a runnable direct SSE example that enables `config.tools.test_async.async` and asks the agent to call the `test_async` tool.
+See [`examples/tool-async.ts`](../examples/tool-async.ts) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool.
 
 The full config field reference lives in the [API Reference](/api-reference) under `AgentConfig.tools`.
 
-## Add an External Tool
+## Upload a Custom Tool
+
+Create an already-bundled JavaScript module whose default export is a tool definition object or factory:
+
+```ts
+export default {
+  name: "test_async",
+  description: "Test async tool.",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  async execute(ctx, input) {
+    return { type: "text", value: "done" };
+  },
+};
+```
+
+Upload it through account-manage:
+
+```http
+POST /accounts/me/tools
+Authorization: Bearer <account-secret>
+Content-Type: application/json
+```
+
+```json
+{
+  "name": "test_async",
+  "description": "Test async tool.",
+  "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+  "bundle": "export default { name: \"test_async\", async execute() { return { type: \"text\", value: \"done\" }; } };",
+  "defaultConfig": {}
+}
+```
+
+Use the returned `toolId` as the `config.tools` key. The model still sees the uploaded `name`.
+
+Tool management endpoints:
+
+- `GET /accounts/me/tools`
+- `GET /accounts/me/tools/{toolId}`
+- `PATCH /accounts/me/tools/{toolId}`
+- `DELETE /accounts/me/tools/{toolId}`
+
+MVP limits: uploaded code must already be bundled JavaScript, server-side `npm install` is not supported, and shared multi-pod dependency caches are future work. This is intentionally close to Convex's deployed-function developer loop, but the MVP does not build/install dependencies server-side yet; it runs the uploaded bundle in a warm sandbox and reuses the bundle cache between calls for the same account/tool.
+
+## Add a Built-In Tool
 
 1. Create `functions/harness-processing/tools/<name>.tool.ts`.
 2. Add the standard file header docstring.

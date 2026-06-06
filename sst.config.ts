@@ -217,6 +217,7 @@ export default $config({
       agentConfigs: resourceName("agent-configs", stage, region),
       sandboxConfigs: resourceName("sandbox-configs", stage, region),
       workspaceConfigs: resourceName("workspace-configs", stage, region),
+      accountTools: resourceName("account-tools", stage, region),
       accountSignupRateLimits: resourceName("account-signup-rate-limits", stage, region),
       cronJobs: resourceName("cron-jobs", stage, region),
       cronSchedules: resourceName("cron-schedules", stage, region),
@@ -224,6 +225,7 @@ export default $config({
       accountManage: resourceName("account-manage", stage, region),
       memory: resourceName("memory", stage, region),
       skills: resourceName("skills", stage, region),
+      toolBundles: resourceName("tool-bundles", stage, region),
     };
 
     const adminAccountSecret = new sst.Secret("AdminAccountSecret");
@@ -328,6 +330,22 @@ export default $config({
         },
       });
 
+    const accountToolsTable = isProduction
+      ? null
+      : new sst.aws.Dynamo("AccountTool", {
+        fields: {
+          accountId: "string",
+          toolId: "string",
+        },
+        primaryIndex: { hashKey: "accountId", rangeKey: "toolId" },
+        deletionProtection: false,
+        transform: {
+          table: {
+            name: names.accountTools,
+          },
+        },
+      });
+
     const cronJobsTable = isProduction
       ? null
       : new sst.aws.Dynamo("CronJob", {
@@ -419,6 +437,7 @@ export default $config({
     });
     const filesystemBucketArn = `arn:aws:s3:::${names.memory}`;
     const skillsBucketArn = `arn:aws:s3:::${names.skills}`;
+    const toolBundlesBucketArn = `arn:aws:s3:::${names.toolBundles}`;
     const filesystemBucket = new sst.aws.Bucket("Memory", {
       versioning: true,
       policy: [denyUnlessProjectPrincipal(stage, region)],
@@ -441,6 +460,22 @@ export default $config({
       transform: {
         bucket: {
           bucket: names.skills,
+        },
+        publicAccessBlock: {
+          blockPublicAcls: true,
+          ignorePublicAcls: true,
+          blockPublicPolicy: true,
+          restrictPublicBuckets: true,
+        },
+      },
+    });
+
+    const toolBundlesBucket = new sst.aws.Bucket("ToolBundles", {
+      versioning: true,
+      policy: [denyUnlessProjectPrincipal(stage, region)],
+      transform: {
+        bucket: {
+          bucket: names.toolBundles,
         },
         publicAccessBlock: {
           blockPublicAcls: true,
@@ -845,10 +880,14 @@ export default $config({
         ...(workspaceConfigsTable
           ? { WORKSPACE_CONFIGS_TABLE_NAME: workspaceConfigsTable.name }
           : {}),
+        ...(accountToolsTable
+          ? { ACCOUNT_TOOLS_TABLE_NAME: accountToolsTable.name }
+          : {}),
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
         FILESYSTEM_BUCKET_NAME: names.memory,
         SKILLS_BUCKET_NAME: names.skills,
+        TOOL_BUNDLES_BUCKET_NAME: names.toolBundles,
         ENABLE_DIRECT_API: ENABLE_DIRECT_API ? "true" : "false",
         ENABLE_WEBSOCKET: ENABLE_WEBSOCKET ? "true" : "false",
         MOCK_EXTERNAL_ASYNC_TOOL_URL: mockExternalAsyncTool.url,
@@ -922,6 +961,15 @@ export default $config({
               "dynamodb:Query",
             ],
             resources: [workspaceConfigsTable.arn],
+          }]
+          : []),
+        ...(accountToolsTable
+          ? [{
+            actions: [
+              "dynamodb:GetItem",
+              "dynamodb:Query",
+            ],
+            resources: [accountToolsTable.arn],
           }]
           : []),
         {
@@ -1008,6 +1056,17 @@ export default $config({
           actions: ["s3:ListBucket"],
           resources: [skillsBucketArn],
         },
+        {
+          actions: [
+            "s3:GetObject",
+            "s3:HeadObject",
+          ],
+          resources: [`${toolBundlesBucketArn}/*`],
+        },
+        {
+          actions: ["s3:ListBucket"],
+          resources: [toolBundlesBucketArn],
+        },
       ],
     });
 
@@ -1068,6 +1127,9 @@ export default $config({
         ...(workspaceConfigsTable
           ? { WORKSPACE_CONFIGS_TABLE_NAME: workspaceConfigsTable.name }
           : {}),
+        ...(accountToolsTable
+          ? { ACCOUNT_TOOLS_TABLE_NAME: accountToolsTable.name }
+          : {}),
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
@@ -1076,6 +1138,7 @@ export default $config({
         PERSISTENT_SANDBOX_INSTANCE_TABLE_NAME: persistentSandboxInstanceTable.name,
         FILESYSTEM_BUCKET_NAME: names.memory,
         SKILLS_BUCKET_NAME: names.skills,
+        TOOL_BUNDLES_BUCKET_NAME: names.toolBundles,
         ACCOUNT_SIGNUP_RATE_LIMIT_TABLE_NAME: accountSignupRateLimitTable.name,
         ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR: "5",
         ADMIN_ACCOUNT_SECRET: adminAccountSecret.value,
@@ -1135,6 +1198,18 @@ export default $config({
               "dynamodb:UpdateItem",
             ],
             resources: [workspaceConfigsTable.arn],
+          }]
+          : []),
+        ...(accountToolsTable
+          ? [{
+            actions: [
+              "dynamodb:DeleteItem",
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:Query",
+              "dynamodb:UpdateItem",
+            ],
+            resources: [accountToolsTable.arn],
           }]
           : []),
         ...(cronJobsTable
@@ -1202,6 +1277,18 @@ export default $config({
           actions: ["s3:ListBucket"],
           resources: [skillsBucketArn],
         },
+        {
+          actions: [
+            "s3:GetObject",
+            "s3:PutObject",
+            "s3:DeleteObject",
+          ],
+          resources: [`${toolBundlesBucketArn}/*`],
+        },
+        {
+          actions: ["s3:ListBucket"],
+          resources: [toolBundlesBucketArn],
+        },
       ],
     });
 
@@ -1218,6 +1305,7 @@ export default $config({
       agentConfigsTableName: agentConfigsTable?.name,
       sandboxConfigsTableName: sandboxConfigsTable?.name,
       workspaceConfigsTableName: workspaceConfigsTable?.name,
+      accountToolsTableName: accountToolsTable?.name,
       cronJobsTableName: cronJobsTable?.name,
       accountSignupRateLimitTableName: accountSignupRateLimitTable.name,
       conversationsTableName: conversationsTable.name,
@@ -1227,6 +1315,7 @@ export default $config({
       cronScheduleGroupName: cronScheduleGroup.name,
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
+      toolBundlesBucketName: toolBundlesBucket.name,
     };
   },
 });

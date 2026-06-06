@@ -15,6 +15,7 @@ import {
     normalizeUpdateAccountInput,
     toPublicAccount,
     toPublicAgent,
+    toPublicAccountTool,
     toPublicSandboxConfig,
     toPublicWorkspaceConfig,
     type AccountRecord,
@@ -49,6 +50,7 @@ import {
     schedulerGroupName,
     updateCronSchedule,
 } from "./cron.ts";
+import { createAccountTool, updateAccountTool } from "./account-tools.ts";
 import { logError, logInfo, logWarn } from "../_shared/log.ts";
 
 export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResponse> {
@@ -126,6 +128,13 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
             return await handleCronJobRoute(method, account.accountId, selfCronMatch?.[1], event);
         }
 
+        const selfToolCollection = rawPath === "/accounts/me/tools";
+        const selfToolMatch = rawPath.match(/^\/accounts\/me\/tools\/([^/]+)$/);
+        if (selfToolCollection || selfToolMatch?.[1]) {
+            const account = requireAccountAuth(auth);
+            return await handleToolRoute(method, account.accountId, selfToolMatch?.[1], event);
+        }
+
         const selfSandboxCollection = rawPath === "/accounts/me/sandboxes";
         const selfSandboxMatch = rawPath.match(/^\/accounts\/me\/sandboxes\/([^/]+)$/);
         if (selfSandboxCollection || selfSandboxMatch?.[1]) {
@@ -190,6 +199,11 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         const adminCronMatch = rawPath.match(/^\/accounts\/([^/]+)\/cron-jobs(?:\/([^/]+))?$/);
         if (adminCronMatch?.[1]) {
             return await handleCronJobRoute(method, decodeURIComponent(adminCronMatch[1]), adminCronMatch[2], event);
+        }
+
+        const adminToolMatch = rawPath.match(/^\/accounts\/([^/]+)\/tools(?:\/([^/]+))?$/);
+        if (adminToolMatch?.[1]) {
+            return await handleToolRoute(method, decodeURIComponent(adminToolMatch[1]), adminToolMatch[2], event);
         }
 
         const adminSandboxMatch = rawPath.match(/^\/accounts\/([^/]+)\/sandboxes(?:\/([^/]+))?$/);
@@ -423,6 +437,45 @@ async function handleSandboxRoute(
     return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
 }
 
+async function handleToolRoute(
+    method: string,
+    accountId: string,
+    rawToolId: string | undefined,
+    event: LambdaFunctionURLEvent,
+): Promise<LambdaResponse> {
+    const toolId = rawToolId ? decodeURIComponent(rawToolId) : undefined;
+    const accountTools = getStorage().accountTools;
+
+    if (!toolId) {
+        if (method === "GET") {
+            const records = await accountTools.list(accountId);
+            return jsonResponse(200, { tools: records.map((record) => toPublicAccountTool(record)) });
+        }
+        if (method === "POST") {
+            const toolRecord = await createAccountTool(accountId, parseJsonBody(event));
+            return jsonResponse(201, toolRecord);
+        }
+        return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "POST"] });
+    }
+
+    if (method === "GET") {
+        const record = await accountTools.getById(accountId, toolId);
+        return record && record.status === "active"
+            ? jsonResponse(200, toPublicAccountTool(record))
+            : errorResponse(404, "Tool not found");
+    }
+    if (method === "PATCH") {
+        const record = await updateAccountTool(accountId, toolId, parseJsonBody(event));
+        return record ? jsonResponse(200, record) : errorResponse(404, "Tool not found");
+    }
+    if (method === "DELETE") {
+        const deleted = await accountTools.remove(accountId, toolId);
+        return deleted ? jsonResponse(200, { deleted: true }) : errorResponse(404, "Tool not found");
+    }
+
+    return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET", "PATCH", "DELETE"] });
+}
+
 async function handleWorkspaceRoute(
     method: string,
     accountId: string,
@@ -523,13 +576,14 @@ async function rotateSecretResponse(accountId: string): Promise<LambdaResponse> 
 
 async function deleteAccountResponse(account: Extract<AuthContext, { kind: "account" }>["account"]): Promise<LambdaResponse> {
     const cleanup = await deleteAccountRuntimeData(account);
-    const [agentsDeleted, skillObjectsDeleted, cronJobsDeleted] = await Promise.all([
+    const [agentsDeleted, skillObjectsDeleted, cronJobsDeleted, accountToolsDeleted] = await Promise.all([
         getStorage().agents.removeAllForAccount(account.accountId),
         deleteAccountSkills(account.accountId),
         deleteAccountCronJobs(account.accountId),
+        getStorage().accountTools.removeAllForAccount(account.accountId),
     ]);
     await getStorage().accounts.remove(account.accountId);
-    return jsonResponse(200, { deleted: true, cleanup: { ...cleanup, agentsDeleted, skillObjectsDeleted, cronJobsDeleted } });
+    return jsonResponse(200, { deleted: true, cleanup: { ...cleanup, agentsDeleted, skillObjectsDeleted, cronJobsDeleted, accountToolsDeleted } });
 }
 
 function requireAccountAuth(auth: AuthContext): Extract<AuthContext, { kind: "account" }>["account"] {

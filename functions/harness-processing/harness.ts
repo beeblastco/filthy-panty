@@ -73,7 +73,8 @@ export async function runAgentLoop(
   const lifecycle = createAgentLifecycleEmitter(session, agentConfig);
 
   const tools = {
-    ...createTools({
+    ...await createTools({
+      accountId: session.accountId,
       conversationKey: session.conversationKey,
       workspaces: session.resolvedWorkspaces(),
       statelessSandbox: session.statelessSandbox(),

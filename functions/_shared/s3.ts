@@ -12,6 +12,7 @@ import {
   PutObjectCommand,
   S3Client as AwsS3Client,
 } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { logError, logInfo } from "./log.ts";
 
 export interface S3ObjectInfo {
@@ -33,6 +34,18 @@ function awsClient(): AwsS3Client {
 export async function readS3Text(bucket: string, key: string): Promise<string> {
   const body = await readS3Body(bucket, key);
   return body.transformToString();
+}
+
+export async function getS3ObjectUrl(
+  bucket: string,
+  key: string,
+  options: { expiresInSeconds?: number } = {},
+): Promise<string> {
+  return getSignedUrl(
+    awsClient(),
+    new GetObjectCommand({ Bucket: bucket, Key: key }),
+    { expiresIn: options.expiresInSeconds ?? 300 },
+  );
 }
 
 export async function readS3Bytes(bucket: string, key: string): Promise<Uint8Array> {

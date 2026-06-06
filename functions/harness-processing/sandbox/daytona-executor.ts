@@ -18,7 +18,7 @@ import type {
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
-import { configString, isRecordObject, isSandboxGoneError, isStringRecord, shellQuote, truncateText, workspacePath } from "./utils.ts";
+import { configString, isRecordObject, isSandboxGoneError, isStringRecord, sandboxReservationKey, shellQuote, truncateText, workspacePath } from "./utils.ts";
 import { generateJobId, launchScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
 import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
 
@@ -94,8 +94,10 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     return parseJobStatus(request.jobId, await this.#shell(sandbox, statusScript(jobsDir, request.jobId)));
   }
 
-  async release(request: { namespace: string }): Promise<void> {
-    const externalId = await getSandboxExternalId("daytona", request.namespace);
+  async release(request: { namespace?: string; reservationKey?: string }): Promise<void> {
+    const key = sandboxReservationKey(request);
+    if (!key) return;
+    const externalId = await getSandboxExternalId("daytona", key);
     if (!externalId) return;
     try {
       const sandbox = await new Daytona(daytonaClientOptions(this.#config)).get(externalId);
@@ -105,18 +107,18 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       // caller iterating multiple configs can try the next one.
       if (!isSandboxGoneError(err)) throw err;
     }
-    await deleteSandboxInstance("daytona", request.namespace).catch(() => {});
+    await deleteSandboxInstance("daytona", key).catch(() => {});
   }
 
-  #persistent(request: { namespace?: string }): boolean {
-    return this.#config.persistent === true && !!request.namespace;
+  #persistent(request: { namespace?: string; reservationKey?: string }): boolean {
+    return this.#config.persistent === true && !!sandboxReservationKey(request);
   }
 
-  #requirePersistent(request: { namespace?: string }): string {
+  #requirePersistent(request: { namespace?: string; reservationKey?: string }): string {
     if (!this.#persistent(request)) {
-      throw new Error("background jobs require a persistent daytona sandbox with a workspace");
+      throw new Error("background jobs require a persistent daytona sandbox reservation key");
     }
-    return request.namespace!;
+    return sandboxReservationKey(request)!;
   }
 
   #workspaceRoot(): string {
@@ -128,18 +130,18 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     return `${this.#workspaceRoot()}/${namespace}`;
   }
 
-  // Markers live beside the namespace dir (not under the S3 mount) so the tiny
+  // Markers live beside the workspace mount (not under the S3 mount) so the tiny
   // files stay on the sandbox's native, stop-persistent disk.
-  #jobsDir(namespace: string): string {
-    return `${this.#workspaceRoot()}/.fp-jobs/${namespace}`;
+  #jobsDir(reservationKey: string): string {
+    return `${this.#workspaceRoot()}/.fp-jobs/${reservationKey}`;
   }
 
-  async #acquire(request: { namespace?: string; envVars?: Record<string, string> }): Promise<Sandbox> {
+  async #acquire(request: { namespace?: string; reservationKey?: string; envVars?: Record<string, string> }): Promise<Sandbox> {
     const client = new Daytona(daytonaClientOptions(this.#config));
     if (!this.#persistent(request)) {
       return client.create(daytonaCreateOptions(this.#config, request.envVars, false));
     }
-    const ns = request.namespace!;
+    const ns = sandboxReservationKey(request)!;
     const externalId = await getSandboxExternalId("daytona", ns);
     if (externalId) {
       try {
@@ -163,11 +165,12 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   }
 
   async #jobContext(request: SandboxJobRequest): Promise<{ sandbox: Sandbox; jobsDir: string }> {
-    if (!request.namespace) throw new Error("job operations require a persistent workspace namespace");
-    const externalId = await getSandboxExternalId("daytona", request.namespace);
+    const key = sandboxReservationKey(request);
+    if (!key) throw new Error("job operations require a persistent sandbox reservation key");
+    const externalId = await getSandboxExternalId("daytona", key);
     if (!externalId) throw new Error("no reserved daytona sandbox for this workspace");
     const sandbox = await this.#reconnect(new Daytona(daytonaClientOptions(this.#config)), externalId);
-    return { sandbox, jobsDir: this.#jobsDir(request.namespace) };
+    return { sandbox, jobsDir: this.#jobsDir(key) };
   }
 
   async #reconnect(client: Daytona, externalId: string): Promise<Sandbox> {

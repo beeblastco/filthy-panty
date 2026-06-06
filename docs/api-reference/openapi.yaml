@@ -954,6 +954,84 @@ paths:
       responses:
         '200': { description: Deleted }
 
+  /accounts/me/tools:
+    post:
+      tags: [Tools]
+      summary: Create uploaded custom tool
+      description: Upload an already-bundled JavaScript tool bundle and model-facing manifest.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountToolCreate'
+      responses:
+        '201':
+          description: Tool created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountTool'
+    get:
+      tags: [Tools]
+      summary: List uploaded custom tools
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Tool list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tools:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AccountTool'
+
+  /accounts/me/tools/{toolId}:
+    get:
+      tags: [Tools]
+      summary: Get uploaded custom tool
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: toolId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Tool
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountTool'
+        '404': { description: Not found }
+    patch:
+      tags: [Tools]
+      summary: Update uploaded custom tool
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: toolId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountToolUpdate'
+      responses:
+        '200':
+          description: Updated tool
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountTool'
+    delete:
+      tags: [Tools]
+      summary: Delete uploaded custom tool
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: toolId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Deleted }
+
   /accounts/me/skills:
     post:
       tags:
@@ -1992,7 +2070,7 @@ components:
 
     ToolsConfig:
       type: object
-      description: "Enables external tools. Keys must match available tool names. Omitting or `enabled: false` disables the tool."
+      description: "Enables built-in tools by static name and uploaded account tools by `toolId` key. Omitting or `enabled: false` disables the tool."
       properties:
         tavilySearch:
           $ref: '#/components/schemas/TavilySearchConfig'
@@ -2000,10 +2078,84 @@ components:
           $ref: '#/components/schemas/TavilyExtractConfig'
         googleSearch:
           $ref: '#/components/schemas/GoogleSearchConfig'
-        test_async:
-          $ref: '#/components/schemas/TestAsyncConfig'
-        test_external_async:
-          $ref: '#/components/schemas/TestExternalAsyncConfig'
+      additionalProperties:
+        $ref: '#/components/schemas/UploadedToolConfig'
+
+    AccountToolCreate:
+      type: object
+      required: [name, description, inputSchema, bundle]
+      properties:
+        name:
+          type: string
+          description: Model-facing tool name.
+        description:
+          type: string
+        inputSchema:
+          type: object
+          description: JSON Schema for the AI SDK tool input.
+        bundle:
+          type: string
+          description: Already-bundled JavaScript module source.
+        defaultConfig:
+          type: object
+          description: Non-secret default runtime config.
+
+    AccountToolUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        inputSchema:
+          type: object
+        bundle:
+          type: string
+        defaultConfig:
+          type: object
+
+    AccountTool:
+      type: object
+      properties:
+        accountId:
+          type: string
+        toolId:
+          type: string
+          example: tool_abc123
+        name:
+          type: string
+        description:
+          type: string
+        inputSchema:
+          type: object
+        sha256:
+          type: string
+        defaultConfig:
+          type: object
+        status:
+          type: string
+          enum: [active, deleted]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    UploadedToolConfig:
+      type: object
+      description: "Config for an account-uploaded custom tool. The object key is the returned `toolId`."
+      properties:
+        enabled:
+          type: boolean
+        async:
+          type: boolean
+        execution:
+          type: string
+          enum: [same-invocation, external-dispatch]
+        needsApproval:
+          type: boolean
+        config:
+          type: object
+          description: "Runtime config merged over the tool's upload-time `defaultConfig`."
 
     TavilySearchConfig:
       type: object
@@ -2072,38 +2224,6 @@ components:
             endTime:
               type: string
               description: ISO date string
-
-    TestAsyncConfig:
-      type: object
-      description: Local async example tool for testing
-      properties:
-        enabled:
-          type: boolean
-        async:
-          type: boolean
-        execution:
-          type: string
-          enum: [same-invocation, external-dispatch]
-        needsApproval:
-          type: boolean
-
-    TestExternalAsyncConfig:
-      type: object
-      description: External-dispatch mock tool fixture for testing
-      properties:
-        enabled:
-          type: boolean
-        async:
-          type: boolean
-        execution:
-          type: string
-          enum: [external-dispatch]
-        completionBaseUrl:
-          type: string
-          description: Harness `AGENT_SERVICE_URL` for callback URL
-        completionBearerToken:
-          type: string
-          description: Account bearer token for mock worker callback
 
     ChannelsConfig:
       type: object

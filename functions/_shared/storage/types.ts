@@ -36,6 +36,11 @@ import type {
   CreateWorkspaceConfigInput,
   UpdateWorkspaceConfigInput,
 } from "./workspace-config.ts";
+import type {
+  AccountToolRecord,
+  CreateAccountToolInput,
+  UpdateAccountToolInput,
+} from "./account-tools.ts";
 
 export type {
   AccountRecord,
@@ -56,6 +61,9 @@ export type {
   WorkspaceConfigRecord,
   CreateWorkspaceConfigInput,
   UpdateWorkspaceConfigInput,
+  AccountToolRecord,
+  CreateAccountToolInput,
+  UpdateAccountToolInput,
 };
 
 /** Account CRUD + secret-hash lookup. */
@@ -134,6 +142,16 @@ export interface WorkspaceConfigStore {
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
+/** Account-scoped uploaded custom tool metadata. */
+export interface AccountToolStore {
+  getById(accountId: string, toolId: string): Promise<AccountToolRecord | null>;
+  list(accountId: string): Promise<AccountToolRecord[]>;
+  create(accountId: string, input: CreateAccountToolInput): Promise<AccountToolRecord>;
+  update(accountId: string, toolId: string, patch: UpdateAccountToolInput): Promise<AccountToolRecord | null>;
+  remove(accountId: string, toolId: string): Promise<boolean>;
+  removeAllForAccount(accountId: string): Promise<number>;
+}
+
 export interface StorageProvider {
   readonly kind: "dynamodb" | "convex";
   accounts: AccountStore;
@@ -141,4 +159,5 @@ export interface StorageProvider {
   cronJobs: CronJobStore;
   sandboxConfigs: SandboxConfigStore;
   workspaceConfigs: WorkspaceConfigStore;
+  accountTools: AccountToolStore;
 }

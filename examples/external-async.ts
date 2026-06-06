@@ -10,7 +10,7 @@ import { toRuntimeAgentConfig, type AgentConfig } from "../functions/_shared/sto
 import { connectNats, streamResponseSubject, type NatsStreamEvent } from "../functions/_shared/nats.ts";
 import { scopedDirectConversationKey, scopedDirectEventId } from "../functions/_shared/runtime-keys.ts";
 import type { DirectInboundEvent } from "../functions/harness-processing/integrations.ts";
-import { AGENT_SERVICE_URL, createAccount, createAgent, deleteAccount } from "./utils.ts";
+import { AGENT_SERVICE_URL, createAccount, createAgent, createTool, deleteAccount } from "./utils.ts";
 
 const minimaxApiKey = process.env.ACCOUNT_MINIMAX_API_KEY!;
 const lambdaFunctionName = process.env.HARNESS_FUNCTION_ARN!;
@@ -24,6 +24,50 @@ const codec = StringCodec();
 const natsClient = await connectNats({ servers: natsUrl, token: natsToken });
 const lambda = new LambdaClient({ region: "eu-central-1", profile: "default" });
 const account = await createAccount(`external-async-${Date.now()}`);
+const customTool = await createTool(account.secret, {
+  name: "test_external_async",
+  description: "Dispatches a test external async completion.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      message: { type: "string" },
+    },
+    required: ["message"],
+    additionalProperties: false,
+  },
+  defaultConfig: {
+    completionBaseUrl: AGENT_SERVICE_URL,
+    completionBearerToken: account.secret,
+  },
+  bundle: `
+export default {
+  name: "test_external_async",
+  async execute(ctx, input) {
+    const completePath = ctx.asyncTool?.completePath;
+    if (!completePath) throw new Error("async completion metadata is required");
+    const baseUrl = ctx.config.completionBaseUrl;
+    const token = ctx.config.completionBearerToken;
+    if (!baseUrl) throw new Error("completionBaseUrl is required");
+    if (!token) throw new Error("completionBearerToken is required");
+    const response = await fetch(new URL(completePath, baseUrl), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": \`Bearer \${token}\`,
+      },
+      body: JSON.stringify({
+        status: "completed",
+        response: { type: "text", value: \`external async completed: \${input.message}\` },
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(\`completion failed: \${response.status} \${await response.text()}\`);
+    }
+    return { type: "text", value: "external async dispatched" };
+  },
+};
+`,
+});
 
 const agentConfig: AgentConfig = {
   provider: {
@@ -39,12 +83,10 @@ const agentConfig: AgentConfig = {
     system: "You are a helpful assistant. When asked, call the test_external_async tool with the user's message and report the result after it completes.",
   },
   tools: {
-    test_external_async: {
+    [customTool.toolId]: {
       enabled: true,
       async: true,
       execution: "external-dispatch", // Using 'external-dispatch' mode
-      completionBaseUrl: AGENT_SERVICE_URL,
-      completionBearerToken: account.secret,
     },
   },
 }
@@ -57,6 +99,7 @@ const subject = streamResponseSubject(account.account.accountId, agent.agentId, 
 const subscription = natsClient.subscribe(subject);
 
 console.log("Created test account:", JSON.stringify(account.account));
+console.log("Uploaded test tool:", JSON.stringify(customTool));
 console.log("Created test agent:", JSON.stringify(agent));
 console.log("Subscribed to:", subject);
 

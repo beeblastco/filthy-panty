@@ -5,6 +5,7 @@
  */
 
 import type { StorageProvider } from "../types.ts";
+import { dynamoAccountToolStore } from "./account-tools.ts";
 import { dynamoAccountStore } from "./accounts.ts";
 import { dynamoAgentStore } from "./agents.ts";
 import { dynamoCronJobStore } from "./cron-jobs.ts";
@@ -18,9 +19,11 @@ export const dynamoStorageProvider: StorageProvider = {
   cronJobs: dynamoCronJobStore,
   sandboxConfigs: dynamoSandboxConfigStore,
   workspaceConfigs: dynamoWorkspaceConfigStore,
+  accountTools: dynamoAccountToolStore,
 };
 
 export {
+  dynamoAccountToolStore,
   dynamoAccountStore,
   dynamoAgentStore,
   dynamoCronJobStore,

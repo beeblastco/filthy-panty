@@ -3,7 +3,13 @@
  * Cover agent-configured allowlisting without invoking tool providers.
  */
 
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+  resetStorageForTests,
+  setStorageForTests,
+  type AccountToolRecord,
+  type StorageProvider,
+} from "../functions/_shared/storage/index.ts";
 
 const tavilySearchMock = mock((options: unknown) => ({ provider: "tavilySearch", options }));
 const tavilyExtractMock = mock((options: unknown) => ({ provider: "tavilyExtract", options }));
@@ -16,15 +22,21 @@ mock.module("@tavily/ai-sdk", () => ({
 beforeEach(() => {
   process.env.TAVILY_API_KEY = "tavily-key";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
+  process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
   tavilySearchMock.mockClear();
   tavilyExtractMock.mockClear();
+  resetStorageForTests();
+});
+
+afterEach(() => {
+  resetStorageForTests();
 });
 
 describe("createTools", () => {
   it("returns no tools when agent config does not list tools", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    expect(createTools(createToolContext(), {})).toEqual({});
+    expect(await createTools(createToolContext(), {})).toEqual({});
     expect(tavilySearchMock).not.toHaveBeenCalled();
     expect(tavilyExtractMock).not.toHaveBeenCalled();
   });
@@ -32,7 +44,7 @@ describe("createTools", () => {
   it("includes the sandbox bash tool plus enabled configured tools", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    const tools = createTools(sandboxContext(), {
+    const tools = await createTools(sandboxContext(), {
       tools: {
         tavilyExtract: { needsApproval: true },
       },
@@ -48,7 +60,7 @@ describe("createTools", () => {
   it("exposes only bash when a sandbox has no workspace (stateless)", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    const tools = createTools(sandboxContext(), {});
+    const tools = await createTools(sandboxContext(), {});
 
     expect(Object.keys(tools).sort()).toEqual(["bash"]);
     expect(await needsApproval(tools.bash)).toBe(true);
@@ -57,7 +69,7 @@ describe("createTools", () => {
   it("exposes the full file tool set when a workspace is attached", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    const tools = createTools(sandboxContext([
+    const tools = await createTools(sandboxContext([
       { name: "notes", workspaceId: "ws_a", namespace: "fs-a" },
     ], "bypass"), {});
 
@@ -71,7 +83,7 @@ describe("createTools", () => {
   it("asks before write/edit/bash in `ask` mode but never for read/glob/grep", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    const tools = createTools(sandboxContext([
+    const tools = await createTools(sandboxContext([
       { name: "notes", workspaceId: "ws_a", namespace: "fs-a" },
     ], "ask"), {});
 
@@ -86,7 +98,7 @@ describe("createTools", () => {
   it("exposes only read/glob for a read-only workspace (no sandbox)", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    const tools = createTools({
+    const tools = await createTools({
       conversationKey: "conversation",
       workspaces: [
         { name: "ro", workspaceId: "ws_ro", namespace: "fs-ro", config: { storage: { provider: "s3" } } },
@@ -103,7 +115,7 @@ describe("createTools", () => {
   it("mixes a read-only and a sandbox-backed workspace", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    const tools = createTools({
+    const tools = await createTools({
       conversationKey: "conversation",
       workspaces: [
         { name: "ro", workspaceId: "ws_ro", namespace: "fs-ro", config: { storage: { provider: "s3" } } },
@@ -131,7 +143,7 @@ describe("createTools", () => {
   it("exposes no sandbox tools when no sandbox is referenced", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    expect(createTools(createToolContext(), {})).toEqual({});
+    expect(await createTools(createToolContext(), {})).toEqual({});
   });
 
   it("exposes run_subagent only when subagents are enabled with a dispatcher", async () => {
@@ -146,13 +158,13 @@ describe("createTools", () => {
       }],
     }));
 
-    expect(createTools(createToolContext(), {
+    expect(await createTools(createToolContext(), {
       subagent: {
         enabled: true,
       },
     })).toEqual({});
 
-    const tools = createTools(createToolContext(undefined, "google", dispatch), {
+    const tools = await createTools(createToolContext(undefined, "google", dispatch), {
       subagent: {
         enabled: true,
       },
@@ -237,7 +249,7 @@ describe("createTools", () => {
   it("exposes subagent conversation keys in persistent mode", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
     const dispatch = mock(async () => ({ tasks: [] }));
-    const tools = createTools(createToolContext(undefined, "google", dispatch), {
+    const tools = await createTools(createToolContext(undefined, "google", dispatch), {
       subagent: {
         enabled: true,
         mode: "persistent",
@@ -278,7 +290,7 @@ describe("createTools", () => {
     const googleSearchMock = mock((options: unknown) => ({ provider: "googleSearch", options }));
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    const tools = createTools(createToolContext(googleSearchMock), {
+    const tools = await createTools(createToolContext(googleSearchMock), {
       tools: {
         tavilySearch: {
           maxResults: 3,
@@ -310,7 +322,7 @@ describe("createTools", () => {
   it("registers the handoff tool from config.tools", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    const tools = createTools(createToolContext(), {
+    const tools = await createTools(createToolContext(), {
       tools: {
         handoffs: {
           enabled: true,
@@ -350,7 +362,7 @@ describe("createTools", () => {
       execute: mock(async () => ({ ok: true })),
     }));
 
-    const tools = createTools(createToolContext(undefined, "google", undefined, dispatch), {
+    const tools = await createTools(createToolContext(undefined, "google", undefined, dispatch), {
       tools: {
         tavilySearch: {
           async: true,
@@ -372,24 +384,69 @@ describe("createTools", () => {
     });
   });
 
+  it("registers uploaded account tools by toolId and wraps async by uploaded name", async () => {
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    setStorageForTests(storageWithAccountTool({
+      accountId: "acct_test",
+      toolId: "tool_abc123",
+      name: "test_async",
+      description: "Uploaded async test tool.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      bundleStorageKey: "account-tools/acct_test/bundles/hash.mjs",
+      sha256: "a".repeat(64),
+      defaultConfig: { fromDefault: true },
+      status: "active",
+      createdAt: "2026-06-06T00:00:00.000Z",
+      updatedAt: "2026-06-06T00:00:00.000Z",
+    }));
+    const dispatch = mock((tools: Record<string, unknown>, asyncToolModes: Map<string, string>) => {
+      expect(asyncToolModes).toEqual(new Map([["test_async", "same-invocation"]]));
+      return {
+        ...tools,
+        test_async: {
+          ...(tools.test_async as object),
+          wrapped: true,
+        },
+      };
+    });
+
+    const tools = await createTools(createToolContext(undefined, "google", undefined, dispatch), {
+      tools: {
+        tool_abc123: {
+          enabled: true,
+          async: true,
+          needsApproval: true,
+          config: { fromAgent: true },
+        },
+        tavilyExtract: { enabled: true },
+      },
+    });
+
+    expect(Object.keys(tools).sort()).toEqual(["async_status", "tavilyExtract", "test_async"]);
+    expect(tools.test_async?.description).toBe("Uploaded async test tool.");
+    expect(tools.test_async?.needsApproval).toBe(true);
+    expect((tools.test_async as { wrapped?: boolean }).wrapped).toBe(true);
+    expect(tavilyExtractMock).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects googleSearch for non-Google model providers", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    expect(() => createTools(createToolContext(undefined, "openai"), {
+    await expect(createTools(createToolContext(undefined, "openai"), {
       tools: {
         googleSearch: { enabled: true },
       },
-    })).toThrow("config.tools.googleSearch requires config.model.provider to be google");
+    })).rejects.toThrow("config.tools.googleSearch requires config.model.provider to be google");
   });
 
   it("rejects configured tools without a registered factory", async () => {
     const { createTools } = await import("../functions/harness-processing/tools/index.ts");
 
-    expect(() => createTools(createToolContext(), {
+    await expect(createTools(createToolContext(), {
       tools: {
         bash: { enabled: true },
       },
-    })).toThrow("config.tools.bash is not a supported tool");
+    })).rejects.toThrow("config.tools.bash is not a supported tool");
   });
 });
 
@@ -400,6 +457,7 @@ function createToolContext(
   dispatchAsyncTools?: unknown,
 ) {
   return {
+    accountId: "acct_test",
     conversationKey: "conversation",
     permissionMode: "ask",
     modelProviderName,
@@ -413,11 +471,36 @@ function createToolContext(
   } as never;
 }
 
+function storageWithAccountTool(accountTool: AccountToolRecord): StorageProvider {
+  return {
+    kind: "dynamodb",
+    accounts: {} as never,
+    agents: {} as never,
+    cronJobs: {} as never,
+    sandboxConfigs: {} as never,
+    workspaceConfigs: {} as never,
+    accountTools: {
+      async getById(accountId: string, toolId: string) {
+        const record = accountTool as { accountId: string; toolId: string };
+        return record.accountId === accountId && record.toolId === toolId ? accountTool : null;
+      },
+      async list() {
+        return [accountTool];
+      },
+      create: mock() as never,
+      update: mock() as never,
+      remove: mock() as never,
+      removeAllForAccount: mock() as never,
+    },
+  } as StorageProvider;
+}
+
 function sandboxContext(
   workspaces: Array<{ name: string; workspaceId: string; namespace: string }> = [],
   permissionMode = "ask",
 ) {
   return {
+    accountId: "acct_test",
     conversationKey: "conversation",
     statelessSandbox: { provider: "lambda" },
     statelessPermissionMode: permissionMode,

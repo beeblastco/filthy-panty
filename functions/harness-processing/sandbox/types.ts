@@ -3,7 +3,7 @@
  *
  * The sandbox is a single uniform Linux compute backend (real bash + python3 +
  * node on PATH). All providers expose ONE `run` method that executes a piece of
- * code in a (optionally namespaced/persistent) workspace. The harness tools
+ * code in an optionally named sandbox. The harness tools
  * (bash/read/write/edit/glob/grep) all compile down to a bash `code` string —
  * per-runtime routing no longer exists.
  */
@@ -20,8 +20,9 @@ export interface SandboxExecutorConfig {
   timeout?: number;
   memoryLimit?: number;
   outputLimitBytes?: number;
-  // Reserve a long-lived sandbox keyed by the workspace namespace instead of
-  // create-and-destroy per call. Only meaningful for kubernetes/daytona/e2b.
+  // Reserve a long-lived sandbox instead of create-and-destroy per call.
+  // Persistent runs must pass a stable request.reservationKey, or request.namespace
+  // for workspace-backed callers. Only meaningful for kubernetes/daytona/e2b.
   persistent?: boolean;
   // Idle/expiry policy for a persistent sandbox (Fargate-style scale-to-0).
   lifecycle?: SandboxLifecycle;
@@ -46,8 +47,12 @@ export interface SandboxRunRequest {
   // the lambda API's typed-runtime fidelity.
   runtime?: SandboxRuntime;
   code: string;
-  // Persistent workspace namespace. Omit for an ephemeral (no-mount) run.
+  // Workspace filesystem namespace. For workspace-backed runs this selects the
+  // working directory and S3 mount prefix.
   namespace?: string;
+  // Stable identity for a reserved sandbox. Use this when persistence identity is
+  // not a workspace filesystem namespace, e.g. account-uploaded custom tools.
+  reservationKey?: string;
   workspaceRoot?: string;
   timeoutSeconds: number;
   outputLimitBytes: number;
@@ -103,10 +108,11 @@ export interface SandboxJobLogs {
   truncated?: boolean;
 }
 
-// Job operations address a job by id within a persistent workspace namespace.
+// Job operations address a job by id within a persistent reservation.
 export interface SandboxJobRequest {
   jobId: string;
   namespace?: string;
+  reservationKey?: string;
   workspaceRoot?: string;
   outputLimitBytes?: number;
 }
@@ -119,9 +125,9 @@ export interface SandboxExecutor {
   jobStatus?(request: SandboxJobRequest): Promise<SandboxJobStatus>;
   jobLogs?(request: SandboxJobRequest): Promise<SandboxJobLogs>;
   stopJob?(request: SandboxJobRequest): Promise<SandboxJobStatus>;
-  // Tear down the reserved sandbox for a workspace namespace and its durable
-  // storage (k8s Sandbox + PVC, daytona/e2b sandbox) plus its instance record.
+  // Tear down the reserved sandbox for a reservation and its durable storage
+  // (k8s Sandbox + PVC, daytona/e2b sandbox) plus its instance record.
   // Best-effort + idempotent: a missing sandbox is a no-op. Called on
   // account/workspace deletion to prevent leaked compute/disk.
-  release?(request: { namespace: string }): Promise<void>;
+  release?(request: { namespace?: string; reservationKey?: string }): Promise<void>;
 }

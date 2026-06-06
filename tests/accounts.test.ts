@@ -378,16 +378,14 @@ describe("agent config", () => {
             notifyUserIds: ["sale-1"],
           },
         },
-        test_async: {
-          enabled: true,
-          async: true,
-        },
-        test_external_async: {
+        tool_abc123: {
           enabled: true,
           async: true,
           execution: "external-dispatch",
-          completionBaseUrl: "https://agent.example",
-          completionBearerToken: "secret",
+          config: {
+            completionBaseUrl: "https://agent.example",
+            completionBearerToken: "secret",
+          },
         },
       },
     })).toEqual({
@@ -429,16 +427,14 @@ describe("agent config", () => {
             notifyUserIds: ["sale-1"],
           },
         },
-        test_async: {
-          enabled: true,
-          async: true,
-        },
-        test_external_async: {
+        tool_abc123: {
           enabled: true,
           async: true,
           execution: "external-dispatch",
-          completionBaseUrl: "https://agent.example",
-          completionBearerToken: "secret",
+          config: {
+            completionBaseUrl: "https://agent.example",
+            completionBearerToken: "secret",
+          },
         },
       },
     });
@@ -493,9 +489,9 @@ describe("agent config", () => {
 
     expect(() => normalizeAgentConfig({
       tools: {
-        test_external_async: { completionBearerToken: "" },
+        tool_abc123: { config: "bad" },
       },
-    })).toThrow("config.tools.test_external_async.completionBearerToken must be a non-empty string");
+    })).toThrow("config.tools.tool_abc123.config must be an object");
   });
 
   it("validates agent skills config", () => {

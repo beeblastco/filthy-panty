@@ -1,8 +1,8 @@
 /**
- * Maps a workspace namespace to the reserved provider sandbox id so a later
+ * Maps a sandbox reservation key to the reserved provider sandbox id so a later
  * request reconnects instead of creating a new one. Only daytona/e2b need it
- * (kubernetes derives its Sandbox name from the namespace). DynamoDB-backed with
- * a TTL, refreshed on each reconnect.
+ * (kubernetes derives its Sandbox name directly from the key). DynamoDB-backed
+ * with a TTL, refreshed on each reconnect.
  */
 
 import { DeleteItemCommand, GetItemCommand, PutItemCommand } from "@aws-sdk/client-dynamodb";
@@ -12,21 +12,21 @@ import type { SandboxProvider } from "./types.ts";
 
 const TTL_SECONDS = 30 * 24 * 60 * 60;
 
-const instanceKey = (provider: SandboxProvider, namespace: string) => `${provider}:${namespace}`;
+const instanceKey = (provider: SandboxProvider, reservationKey: string) => `${provider}:${reservationKey}`;
 const tableName = () => requireEnv("PERSISTENT_SANDBOX_INSTANCE_TABLE_NAME");
 
-function instanceItem(provider: SandboxProvider, namespace: string, externalId: string) {
+function instanceItem(provider: SandboxProvider, reservationKey: string, externalId: string) {
   return {
-    instanceKey: { S: instanceKey(provider, namespace) },
+    instanceKey: { S: instanceKey(provider, reservationKey) },
     externalId: { S: externalId },
     expiresAt: { N: String(Math.floor(Date.now() / 1000) + TTL_SECONDS) },
   };
 }
 
-export async function getSandboxExternalId(provider: SandboxProvider, namespace: string): Promise<string | null> {
+export async function getSandboxExternalId(provider: SandboxProvider, reservationKey: string): Promise<string | null> {
   const result = await dynamo.send(new GetItemCommand({
     TableName: tableName(),
-    Key: { instanceKey: { S: instanceKey(provider, namespace) } },
+    Key: { instanceKey: { S: instanceKey(provider, reservationKey) } },
     ConsistentRead: true,
   }));
   return result.Item?.externalId?.S ?? null;
@@ -34,14 +34,14 @@ export async function getSandboxExternalId(provider: SandboxProvider, namespace:
 
 /**
  * Record a freshly created sandbox, but only if no instance is mapped yet.
- * Returns false when another concurrent call already claimed this namespace, so
+ * Returns false when another concurrent call already claimed this reservation, so
  * the loser can discard its duplicate sandbox and reconnect to the winner.
  */
-export async function claimSandboxInstance(provider: SandboxProvider, namespace: string, externalId: string): Promise<boolean> {
+export async function claimSandboxInstance(provider: SandboxProvider, reservationKey: string, externalId: string): Promise<boolean> {
   try {
     await dynamo.send(new PutItemCommand({
       TableName: tableName(),
-      Item: instanceItem(provider, namespace, externalId),
+      Item: instanceItem(provider, reservationKey, externalId),
       ConditionExpression: "attribute_not_exists(instanceKey)",
     }));
     return true;
@@ -54,16 +54,16 @@ export async function claimSandboxInstance(provider: SandboxProvider, namespace:
 }
 
 // Refresh the mapping + TTL for an existing instance (reconnect path).
-export async function saveSandboxInstance(provider: SandboxProvider, namespace: string, externalId: string): Promise<void> {
+export async function saveSandboxInstance(provider: SandboxProvider, reservationKey: string, externalId: string): Promise<void> {
   await dynamo.send(new PutItemCommand({
     TableName: tableName(),
-    Item: instanceItem(provider, namespace, externalId),
+    Item: instanceItem(provider, reservationKey, externalId),
   }));
 }
 
-export async function deleteSandboxInstance(provider: SandboxProvider, namespace: string): Promise<void> {
+export async function deleteSandboxInstance(provider: SandboxProvider, reservationKey: string): Promise<void> {
   await dynamo.send(new DeleteItemCommand({
     TableName: tableName(),
-    Key: { instanceKey: { S: instanceKey(provider, namespace) } },
+    Key: { instanceKey: { S: instanceKey(provider, reservationKey) } },
   }));
 }

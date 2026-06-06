@@ -49,6 +49,7 @@ import {
   configString,
   isRecordObject,
   requiredWorkspacePath,
+  sandboxReservationKey,
   shellQuote,
   truncateText,
 } from "./utils.ts";
@@ -132,7 +133,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     if (!this.#isPersistent(request)) {
       throw new Error("background jobs require a persistent kubernetes sandbox with a workspace");
     }
-    const pod = await this.#resumeForJob({ namespace: request.namespace });
+    const pod = await this.#resumeForJob(request);
     await this.#prepareWorkspace(pod, request);
     const jobId = request.jobId ?? generateJobId();
     const workDir = requiredWorkspacePath(request, "/mnt/workspaces");
@@ -172,77 +173,82 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     return `${persistentHome(options(this.#config))}/.jobs`;
   }
 
-  async #resumeForJob(request: { namespace?: string }): Promise<V1Pod> {
-    if (!request.namespace) {
-      throw new Error("job operations require a persistent workspace namespace");
+  async #resumeForJob(request: { namespace?: string; reservationKey?: string }): Promise<V1Pod> {
+    const key = sandboxReservationKey(request);
+    if (!key) {
+      throw new Error("job operations require a persistent sandbox reservation key");
     }
     await this.#ensureClients();
-    const namespace = kubeNamespace(options(this.#config));
-    const name = persistentSandboxName(request.namespace);
-    const pod = await this.#ensurePersistentSandbox(namespace, name);
+    const k8sNamespace = kubeNamespace(options(this.#config));
+    const name = persistentSandboxName(key);
+    const pod = await this.#ensurePersistentSandbox(k8sNamespace, name);
     // Refresh activity up front so the reaper does not scale this sandbox to 0
     // mid-launch / mid-poll (the launch marker alone races the reaper window).
-    await this.#touchActivity(namespace, name);
+    await this.#touchActivity(k8sNamespace, name);
     return pod;
   }
 
-  #isPersistent(request: { namespace?: string }): boolean {
-    return this.#config.persistent === true && typeof request.namespace === "string" && request.namespace.length > 0;
+  #isPersistent(request: { namespace?: string; reservationKey?: string }): boolean {
+    const key = sandboxReservationKey(request);
+    return this.#config.persistent === true && typeof key === "string" && key.length > 0;
   }
 
   async #withSandbox<T>(
-    request: { namespace?: string; workspaceRoot?: string },
+    request: { namespace?: string; reservationKey?: string; workspaceRoot?: string },
     run: (pod: V1Pod) => Promise<T>,
   ): Promise<T> {
     await this.#ensureClients();
-    const namespace = kubeNamespace(options(this.#config));
+    const k8sNamespace = kubeNamespace(options(this.#config));
 
     // Reserved sandbox: reconnect to (or create) the long-lived Sandbox for this
-    // workspace, resuming it if the reaper scaled it to 0. Never deleted here —
-    // the infra reaper scales it down on idle; release tears it down.
+    // reservation key, resuming it if the reaper scaled it to 0. Workspace tools
+    // usually use namespace as the key; uploaded custom tools use reservationKey
+    // so they do not pretend to have a workspace namespace.
+    // Never deleted here — the infra reaper scales it down on idle; release tears
+    // it down.
     if (this.#isPersistent(request)) {
-      const name = persistentSandboxName(request.namespace!);
-      const pod = await this.#ensurePersistentSandbox(namespace, name);
+      const name = persistentSandboxName(sandboxReservationKey(request)!);
+      const pod = await this.#ensurePersistentSandbox(k8sNamespace, name);
       await this.#prepareWorkspace(pod, request);
-      await this.#touchActivity(namespace, name);
+      await this.#touchActivity(k8sNamespace, name);
       return await run(pod);
     }
 
     // Ephemeral: one Sandbox per call, torn down afterward.
     const name = sandboxName(request.namespace);
-    await this.#createSandbox(namespace, name, false);
+    await this.#createSandbox(k8sNamespace, name, false);
     try {
-      const pod = await this.#waitForPodReady(namespace, name);
+      const pod = await this.#waitForPodReady(k8sNamespace, name);
       await this.#prepareWorkspace(pod, request);
       return await run(pod);
     } finally {
-      await this.#deleteSandbox(namespace, name);
+      await this.#deleteSandbox(k8sNamespace, name);
     }
   }
 
-  async #ensurePersistentSandbox(namespace: string, name: string): Promise<V1Pod> {
-    const existing = await this.#getSandbox(namespace, name);
+  async #ensurePersistentSandbox(k8sNamespace: string, name: string): Promise<V1Pod> {
+    const existing = await this.#getSandbox(k8sNamespace, name);
     if (!existing) {
       try {
-        await this.#createSandbox(namespace, name, true);
+        await this.#createSandbox(k8sNamespace, name, true);
       } catch (cause) {
-        // A concurrent first-touch for the same workspace may have created it
+        // A concurrent first-touch for the same reservation may have created it
         // first (deterministic name). Treat that as success and wait for its pod.
         if (!isAlreadyExists(cause)) throw cause;
       }
     } else if (sandboxReplicas(existing) === 0) {
       // Resume on demand: the reaper idled this sandbox; scale it back up.
-      await this.#scaleSandbox(namespace, name, 1);
+      await this.#scaleSandbox(k8sNamespace, name, 1);
     }
-    return this.#waitForPodReady(namespace, name);
+    return this.#waitForPodReady(k8sNamespace, name);
   }
 
-  async #getSandbox(namespace: string, name: string): Promise<Record<string, unknown> | undefined> {
+  async #getSandbox(k8sNamespace: string, name: string): Promise<Record<string, unknown> | undefined> {
     try {
       return (await this.#custom.getNamespacedCustomObject({
         group: SANDBOX_GROUP,
         version: SANDBOX_VERSION,
-        namespace,
+        namespace: k8sNamespace,
         plural: SANDBOX_PLURAL,
         name,
       })) as Record<string, unknown>;
@@ -252,19 +258,19 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  async #scaleSandbox(namespace: string, name: string, replicas: number): Promise<void> {
+  async #scaleSandbox(k8sNamespace: string, name: string, replicas: number): Promise<void> {
     // JSON Patch (RFC 6902) — matches the client's default json-patch+json type.
     await this.#custom.patchNamespacedCustomObject({
       group: SANDBOX_GROUP,
       version: SANDBOX_VERSION,
-      namespace,
+      namespace: k8sNamespace,
       plural: SANDBOX_PLURAL,
       name,
       body: [{ op: "replace", path: "/spec/replicas", value: replicas }],
     });
   }
 
-  async #touchActivity(namespace: string, name: string): Promise<void> {
+  async #touchActivity(k8sNamespace: string, name: string): Promise<void> {
     // Best-effort: the reaper tolerates a stale/missing annotation, and a missing
     // patch RBAC grant must not fail the user's command. Refresh both the
     // last-activity annotation (idle reaper) and the hard-expiry shutdownTime
@@ -273,7 +279,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
       await this.#custom.patchNamespacedCustomObject({
         group: SANDBOX_GROUP,
         version: SANDBOX_VERSION,
-        namespace,
+        namespace: k8sNamespace,
         plural: SANDBOX_PLURAL,
         name,
         body: [
@@ -302,7 +308,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
   }
 
   async #createSandbox(
-    namespace: string,
+    k8sNamespace: string,
     name: string,
     persistent: boolean,
   ): Promise<void> {
@@ -359,7 +365,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     await this.#custom.createNamespacedCustomObject({
       group: SANDBOX_GROUP,
       version: SANDBOX_VERSION,
-      namespace,
+      namespace: k8sNamespace,
       plural: SANDBOX_PLURAL,
       body: {
         apiVersion: `${SANDBOX_GROUP}/${SANDBOX_VERSION}`,
@@ -370,12 +376,12 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     });
   }
 
-  async #deleteSandbox(namespace: string, name: string): Promise<void> {
+  async #deleteSandbox(k8sNamespace: string, name: string): Promise<void> {
     try {
       await this.#custom.deleteNamespacedCustomObject({
         group: SANDBOX_GROUP,
         version: SANDBOX_VERSION,
-        namespace,
+        namespace: k8sNamespace,
         plural: SANDBOX_PLURAL,
         name,
       });
@@ -384,12 +390,12 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  async #waitForPodReady(namespace: string, name: string): Promise<V1Pod> {
+  async #waitForPodReady(k8sNamespace: string, name: string): Promise<V1Pod> {
     const deadline = Date.now() + POD_READY_TIMEOUT_MS;
     let last: V1Pod | undefined;
     while (Date.now() < deadline) {
       try {
-        const pod = await this.#core.readNamespacedPod({ name, namespace });
+        const pod = await this.#core.readNamespacedPod({ name, namespace: k8sNamespace });
         last = pod;
         const ready = (pod.status?.conditions ?? []).some((c) => c.type === "Ready" && c.status === "True");
         if (ready) return pod;
@@ -462,7 +468,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
   }
 
   async #execInPod(pod: V1Pod, command: string[], timeoutSeconds: number): Promise<ExecResult> {
-    const namespace = pod.metadata?.namespace ?? kubeNamespace(options(this.#config));
+    const k8sNamespace = pod.metadata?.namespace ?? kubeNamespace(options(this.#config));
     const podName = pod.metadata?.name ?? "";
     const debugStream = optionalEnv("KUBERNETES_SANDBOX_DEBUG_STREAM") === "1";
 
@@ -506,7 +512,7 @@ export class KubernetesSandboxExecutor implements SandboxExecutor {
 
       this.#exec
         .exec(
-          namespace,
+          k8sNamespace,
           podName,
           CONTAINER_NAME,
           command,
@@ -594,11 +600,11 @@ function sandboxName(namespace: string | undefined): string {
   return `fp-${slugFor(namespace)}-${suffix}`;
 }
 
-// Deterministic name for a reserved sandbox: the same workspace namespace always
+// Deterministic name for a reserved sandbox: the same reservation key always
 // maps to the same Sandbox, so any later request reconnects to it. The hash keeps
 // names unique after the slug is truncated.
-function persistentSandboxName(namespace: string): string {
-  return `fp-p-${slugFor(namespace)}-${shortHash(namespace)}`;
+function persistentSandboxName(reservationKey: string): string {
+  return `fp-p-${slugFor(reservationKey)}-${shortHash(reservationKey)}`;
 }
 
 function slugFor(namespace: string | undefined): string {

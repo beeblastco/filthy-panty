@@ -162,6 +162,7 @@ export interface AgentToolConfig {
   needsApproval?: boolean;
   async?: boolean;
   execution?: "same-invocation" | "external-dispatch";
+  config?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -623,7 +624,7 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
     throw new Error(`config.tools.${toolName} must be an object`);
   }
 
-  if (!isSupportedConfigToolName(toolName)) {
+  if (!isSupportedConfigToolName(toolName) && !isAccountToolId(toolName)) {
     throw new Error(`config.tools.${toolName} is not a supported tool`);
   }
 
@@ -632,6 +633,13 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
   assertOptionalBoolean(config.needsApproval, `config.tools.${toolName}.needsApproval`);
   assertOptionalBoolean(config.async, `config.tools.${toolName}.async`);
   assertOptionalEnum(config.execution, `config.tools.${toolName}.execution`, ["same-invocation", "external-dispatch"]);
+  if (config.config !== undefined && !isPlainObject(config.config)) {
+    throw new Error(`config.tools.${toolName}.config must be an object`);
+  }
+
+  if (isAccountToolId(toolName)) {
+    return;
+  }
 
   switch (toolName) {
     case "tavilySearch":
@@ -645,11 +653,6 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
       return;
     case "handoffs":
       normalizeHandoffsToolConfig(config);
-      return;
-    case "test_async":
-      return;
-    case "test_external_async":
-      normalizeTestExternalAsyncToolConfig(config);
       return;
   }
 }
@@ -694,13 +697,15 @@ function normalizeHandoffsToolConfig(config: Record<string, unknown>): void {
 
 function isSupportedConfigToolName(
   toolName: string,
-): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" | "handoffs" | "test_async" | "test_external_async" {
+): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" | "handoffs" {
   return toolName === "tavilySearch" ||
     toolName === "tavilyExtract" ||
     toolName === "googleSearch" ||
-    toolName === "handoffs" ||
-    toolName === "test_async" ||
-    toolName === "test_external_async";
+    toolName === "handoffs";
+}
+
+function isAccountToolId(toolName: string): boolean {
+  return /^tool_[A-Za-z0-9_-]+$/.test(toolName);
 }
 
 function normalizeTavilySearchToolConfig(config: Record<string, unknown>): void {
@@ -737,11 +742,6 @@ function normalizeGoogleSearchToolConfig(config: Record<string, unknown>): void 
     assertOptionalString(timeRangeFilter.startTime, "config.tools.googleSearch.timeRangeFilter.startTime");
     assertOptionalString(timeRangeFilter.endTime, "config.tools.googleSearch.timeRangeFilter.endTime");
   }
-}
-
-function normalizeTestExternalAsyncToolConfig(config: Record<string, unknown>): void {
-  assertOptionalNonEmptyString(config.completionBaseUrl, "config.tools.test_external_async.completionBaseUrl");
-  assertOptionalNonEmptyString(config.completionBearerToken, "config.tools.test_external_async.completionBearerToken");
 }
 
 function validateConfigPatch(value: unknown, path: string): void {
