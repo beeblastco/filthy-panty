@@ -203,7 +203,22 @@ async function runInsightsQuery(opts: {
         queryId = start.queryId;
     } catch (err) {
         console.warn("CloudWatch Logs Insights StartQuery failed:", err);
-        return [];
+        if (opts.logGroupNames.length <= 1) {
+            return [];
+        }
+
+        const perGroupRows = await Promise.all(
+            opts.logGroupNames.map((logGroupName) =>
+                runInsightsQuery({
+                    logGroupNames: [logGroupName],
+                    startTimeSec: opts.startTimeSec,
+                    endTimeSec: opts.endTimeSec,
+                    queryString: opts.queryString,
+                }),
+            ),
+        );
+
+        return perGroupRows.flat();
     }
     if (!queryId) return [];
 

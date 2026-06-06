@@ -93,7 +93,7 @@ export const syncProfile = mutation({
         // Check authenticated user
         const authUser = await authKit.getAuthUser(ctx);
         if (!authUser) {
-            throw new Error("User not found or not authenticated");
+            return null;
         }
 
         const user = await ctx.db

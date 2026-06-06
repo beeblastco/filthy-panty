@@ -13,6 +13,7 @@ const canvasNodeValidator = v.object({
     type: v.union(
         v.literal("agent"),
         v.literal("database"),
+        v.literal("sandbox"),
         v.literal("workspace"),
         v.literal("tool"),
         v.literal("skill"),

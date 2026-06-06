@@ -25,6 +25,19 @@ const agentConfigDoc = v.object({
     _creationTime: v.number(),
 });
 
+const workspaceRefValidator = v.object({
+    name: v.string(),
+    workspaceId: v.string(),
+    sandbox: v.optional(v.union(v.string(), v.null())),
+});
+
+/** Coerces unknown JSON-ish values into a mutable record for patching. */
+function asRecord(value: unknown): Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
+}
+
 export const getById = query({
     args: { configId: v.id("agentConfigs") },
     returns: v.union(v.null(), agentConfigDoc),
@@ -155,17 +168,24 @@ export const update = mutation({
         extraConfig: v.optional(v.any()),
     },
     returns: v.id("agentConfigs"),
-    handler: async (ctx, { configId, ...updates }) => {
-        const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) throw new Error("User not found or not authenticated");
+    handler: async (ctx, args) => {
+        const { configId, ...updates } = args;
+
+        // Check authenticated user
+        const user = await authKit.getAuthUser(ctx);
+        if (!user) {
+            throw new Error("User not found or not authenticated");
+        }
 
         const existing = await ctx.db.get(configId);
-        if (!existing || existing.authId !== authUser.id) {
+        if (!existing || existing.authId !== user.id) {
             throw new Error("Agent config not found.");
         }
 
         const patch = Object.fromEntries(
-            Object.entries(updates).filter(([, v]) => v !== undefined),
+            Object.entries(updates)
+                .filter(([, v]) => v !== undefined)
+                .map(([key, value]) => [key, key === "outputFormat" && value === null ? undefined : value]),
         );
 
         await ctx.db.patch(configId, { ...patch, updatedAt: Date.now() });
@@ -173,11 +193,62 @@ export const update = mutation({
         // Keep the filthy-panty `agents` row aligned. ensureAgentsRowForConfig
         // also covers the legacy case where the row was never provisioned
         // (e.g. agentConfigs created before this sync was wired).
-        await ensureAgentsRowForConfig(ctx, configId, authUser.id);
+        await ensureAgentsRowForConfig(ctx, configId, user.id);
         await syncAgentRowFields(ctx, configId, {
             name: updates.name,
             description: updates.description,
         });
+        await pushEncryptedConfigToAgentRow(ctx, configId);
+
+        return configId;
+    },
+});
+
+/**
+ * Updates the filthy-panty runtime resource references derived from the canvas graph.
+ * This preserves unrelated extraConfig branches while replacing sandbox/workspaces.
+ */
+export const updateRuntimeRefs = mutation({
+    args: {
+        configId: v.id("agentConfigs"),
+        sandbox: v.union(v.string(), v.null()),
+        workspaces: v.union(v.array(workspaceRefValidator), v.null()),
+    },
+    returns: v.id("agentConfigs"),
+    handler: async (ctx, args) => {
+        const { configId, sandbox, workspaces } = args;
+
+        // Check authenticated user
+        const user = await authKit.getAuthUser(ctx);
+        if (!user) {
+            throw new Error("User not found or not authenticated");
+        }
+
+        const existing = await ctx.db.get(configId);
+        if (!existing || existing.authId !== user.id) {
+            throw new Error("Agent config not found.");
+        }
+
+        const extraConfig = { ...asRecord(existing.extraConfig) };
+        if (sandbox) {
+            extraConfig.sandbox = sandbox;
+        } else {
+            delete extraConfig.sandbox;
+        }
+        if (workspaces && workspaces.length > 0) {
+            extraConfig.workspaces = workspaces;
+        } else {
+            delete extraConfig.workspaces;
+        }
+        // Old nested AgentWorkspaceConfig is no longer part of filthy-panty's runtime contract.
+        delete extraConfig.workspace;
+
+        await ctx.db.patch(configId, {
+            extraConfig: extraConfig,
+            updatedAt: Date.now(),
+        });
+
+        await ensureAgentsRowForConfig(ctx, configId, user.id);
         await pushEncryptedConfigToAgentRow(ctx, configId);
 
         return configId;

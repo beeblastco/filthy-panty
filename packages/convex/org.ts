@@ -55,7 +55,7 @@ export const getActiveAccount = query({
     handler: async (ctx) => {
         const authUser = await authKit.getAuthUser(ctx);
         if (!authUser) {
-            throw new Error("User not found or not authenticated");
+            return null;
         }
 
         const user = await ctx.db
@@ -88,7 +88,7 @@ export const getActive = query({
         // Check authenticated user
         const authUser = await authKit.getAuthUser(ctx);
         if (!authUser) {
-            throw new Error("User not found or not authenticated");
+            return null;
         }
 
         const user = await ctx.db
@@ -115,7 +115,7 @@ export const getById = query({
         // Check authenticated user
         const authUser = await authKit.getAuthUser(ctx);
         if (!authUser) {
-            throw new Error("User not found or not authenticated");
+            return null;
         }
 
         const user = await ctx.db
@@ -145,7 +145,7 @@ export const list = query({
         // Check authenticated user
         const authUser = await authKit.getAuthUser(ctx);
         if (!authUser) {
-            throw new Error("User not found or not authenticated");
+            return [];
         }
 
         const user = await ctx.db
