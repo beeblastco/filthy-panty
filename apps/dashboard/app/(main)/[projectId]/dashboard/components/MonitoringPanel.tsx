@@ -14,6 +14,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 interface Props {
     projectId: Id<"projects">;
+    /** Active environment to scope logs to, or null for the whole project. */
+    environmentId: Id<"environments"> | null;
 }
 
 type LogEntry = FunctionReturnType<typeof api.logs.fetchForProject>[number];
@@ -119,7 +121,7 @@ function LogRow({ entry, isExpanded, onToggle }: {
     );
 }
 
-export function MonitoringPanel({ projectId }: Props) {
+export function MonitoringPanel({ projectId, environmentId }: Props) {
     const [isFetching, setIsFetching] = useState(false);
     const [fetchError, setFetchError] = useState<string | null>(null);
     const [logEntries, setLogEntries] = useState<LogEntry[] | null>(null);
@@ -132,14 +134,18 @@ export function MonitoringPanel({ projectId }: Props) {
         setIsFetching(true);
         setFetchError(null);
         try {
-            const logs = await fetchForProject({ projectId: projectId, errorOnly: true });
+            const logs = await fetchForProject({
+                projectId: projectId,
+                environmentId: environmentId ?? undefined,
+                errorOnly: true,
+            });
             setLogEntries(logs);
         } catch (err) {
             setFetchError(toErrorMessage(err));
         } finally {
             setIsFetching(false);
         }
-    }, [fetchForProject, projectId]);
+    }, [fetchForProject, projectId, environmentId]);
 
     useEffect(() => {
         handleRefresh();

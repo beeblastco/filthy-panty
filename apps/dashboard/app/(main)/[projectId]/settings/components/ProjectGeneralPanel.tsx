@@ -72,7 +72,6 @@ export function ProjectGeneralPanel({ projectId }: Props) {
                         value={name}
                         onChange={(e) => {
                             setName(e.target.value);
-                            setSaveNotice(null);
                             setSaveError(null);
                         }}
                     />
@@ -88,7 +87,6 @@ export function ProjectGeneralPanel({ projectId }: Props) {
                         value={description}
                         onChange={(e) => {
                             setDescription(e.target.value);
-                            setSaveNotice(null);
                             setSaveError(null);
                         }}
                         placeholder="Optional project description"

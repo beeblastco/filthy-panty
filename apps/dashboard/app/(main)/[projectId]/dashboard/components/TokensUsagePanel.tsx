@@ -27,6 +27,8 @@ const RANGE_SECONDS: Record<Range, number> = {
 
 interface Props {
     projectId: Id<"projects">;
+    /** Active environment to scope usage to, or null for the whole project. */
+    environmentId: Id<"environments"> | null;
 }
 
 const RANGE_OPTIONS: Array<{ id: Range; label: string }> = [
@@ -516,7 +518,7 @@ function InvocationsChart({ bins, binSeconds }: InvocationsChartProps) {
     );
 }
 
-export function TokensUsagePanel({ projectId }: Props) {
+export function TokensUsagePanel({ projectId, environmentId }: Props) {
     const [range, setRange] = useState<Range>("1h");
     const [stats, setStats] = useState<UsageStats | null>(null);
     const [isFetching, setIsFetching] = useState(false);
@@ -528,14 +530,18 @@ export function TokensUsagePanel({ projectId }: Props) {
         setIsFetching(true);
         setError(null);
         try {
-            const result = await fetchUsageStats({ projectId: projectId, range: range });
+            const result = await fetchUsageStats({
+                projectId: projectId,
+                environmentId: environmentId ?? undefined,
+                range: range,
+            });
             setStats(result);
         } catch (err) {
             setError(toErrorMessage(err));
         } finally {
             setIsFetching(false);
         }
-    }, [fetchUsageStats, projectId, range]);
+    }, [fetchUsageStats, projectId, environmentId, range]);
 
     useEffect(() => {
         refresh();

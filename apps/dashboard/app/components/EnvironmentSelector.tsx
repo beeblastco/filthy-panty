@@ -48,7 +48,7 @@ export function EnvironmentDot({ isDefault }: { isDefault: boolean }) {
     );
 }
 
-/** Dropdown to list, switch, create, and delete project environments. */
+/** Dropdown to list, switch, and create project environments. */
 export function EnvironmentSelector() {
     const params = useParams<{ projectId?: string }>();
     const projectId = params.projectId as Id<"projects"> | undefined;
@@ -129,6 +129,7 @@ export function EnvironmentSelector() {
                         <DropdownMenuItem
                             key={env._id}
                             className={cn(
+                                "gap-2",
                                 env._id === environmentId ? "bg-accent text-accent-foreground" : "",
                             )}
                             onClick={() => setEnvironmentId(env._id)}

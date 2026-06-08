@@ -1,22 +1,27 @@
 "use client";
 
 /** Settings page with sidebar navigation and panel-based content layout. */
+import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { Button } from "@/app/components/ui/button";
 import { cn } from "@/app/lib/utils";
-import type { Id } from "@/convex/_generated/dataModel";
+import { api } from "@/convex/_generated/api";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
+import { useQuery } from "convex/react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { DangerPanel } from "./components/DangerPanel";
+import { DeployKeysPanel } from "./components/DeployKeysPanel";
 import { EnvironmentsPanel } from "./components/EnvironmentsPanel";
 import { ProjectGeneralPanel } from "./components/ProjectGeneralPanel";
 import { WebhooksPanel } from "./components/WebhooksPanel";
 
-type SettingsTab = "general" | "environments" | "webhooks" | "danger";
+type SettingsTab = "general" | "environments" | "deploy" | "webhooks" | "danger";
 
-const TABS: Array<{ id: SettingsTab; label: string; danger?: boolean }> = [
+const TABS: Array<{ id: SettingsTab; label: string; danger?: boolean; envScoped?: boolean }> = [
     { id: "general", label: "General" },
     { id: "environments", label: "Environments" },
-    { id: "webhooks", label: "Webhooks" },
-    { id: "danger", label: "Danger Zone", danger: true },
+    { id: "deploy", label: "Deploy", envScoped: true },
+    { id: "webhooks", label: "Webhooks", envScoped: true },
+    { id: "danger", label: "Danger Zone", danger: true, envScoped: true },
 ];
 
 export default function SettingsPage() {
@@ -24,9 +29,22 @@ export default function SettingsPage() {
     const searchParams = useSearchParams();
     const projectId = params.projectId as Id<"projects">;
     const router = useRouter();
+    const { environmentId } = useEnvironment();
+
+    const environments = useQuery(api.environment.list, { projectId: projectId }) as
+        | Doc<"environments">[]
+        | undefined;
+    // Resolve the environment to configure: the URL selection, else the default, else the first.
+    const activeEnv =
+        environments?.find((env) => env._id === environmentId) ??
+        environments?.find((env) => env.isDefault) ??
+        environments?.[0] ??
+        null;
+    const activeEnvId = activeEnv?._id ?? null;
 
     const activeTab = (searchParams.get("tab") as SettingsTab) || "general";
-    const activeLabel = TABS.find((t) => t.id === activeTab)?.label ?? "Settings";
+    const tab = TABS.find((t) => t.id === activeTab);
+    const activeLabel = tab?.label ?? "Settings";
 
     const renderPanel = () => {
         switch (activeTab) {
@@ -34,10 +52,12 @@ export default function SettingsPage() {
                 return <ProjectGeneralPanel projectId={projectId} />;
             case "environments":
                 return <EnvironmentsPanel projectId={projectId} />;
+            case "deploy":
+                return <DeployKeysPanel projectId={projectId} environmentId={activeEnvId} />;
             case "webhooks":
-                return <WebhooksPanel projectId={projectId} />;
+                return <WebhooksPanel projectId={projectId} environmentId={activeEnvId} />;
             case "danger":
-                return <DangerPanel projectId={projectId} />;
+                return <DangerPanel projectId={projectId} environmentId={activeEnvId} />;
             default:
                 return <ProjectGeneralPanel projectId={projectId} />;
         }
@@ -51,28 +71,28 @@ export default function SettingsPage() {
                     <h2 className="text-xl font-semibold text-foreground">Settings</h2>
                 </div>
                 <nav className="flex flex-col gap-0.5 px-3">
-                    {TABS.map((tab) => (
+                    {TABS.map((t) => (
                         <Button
-                            key={tab.id}
+                            key={t.id}
                             variant="ghost"
                             size="sm"
                             className={cn(
                                 "w-full justify-start px-3 cursor-pointer",
-                                activeTab === tab.id
-                                    ? tab.danger
+                                activeTab === t.id
+                                    ? t.danger
                                         ? "bg-destructive/10 text-destructive hover:bg-destructive/20"
                                         : "bg-accent text-foreground"
-                                    : tab.danger
+                                    : t.danger
                                         ? "text-destructive/70 hover:text-destructive hover:bg-destructive/10"
                                         : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
                             )}
                             onClick={() => {
                                 const p = new URLSearchParams(searchParams.toString());
-                                p.set("tab", tab.id);
+                                p.set("tab", t.id);
                                 router.push(`/${projectId}/settings?${p.toString()}`);
                             }}
                         >
-                            {tab.label}
+                            {t.label}
                         </Button>
                     ))}
                 </nav>
@@ -83,6 +103,11 @@ export default function SettingsPage() {
                 {/* Page title — aligned with sidebar header height */}
                 <div className="px-8 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">
                     <h2 className="text-xl font-semibold text-foreground">{activeLabel}</h2>
+                    {tab?.envScoped && activeEnv && (
+                        <p className="mt-0.5 text-sm text-muted-foreground">
+                            Environment: <span className="text-foreground">{activeEnv.name}</span>
+                        </p>
+                    )}
                 </div>
                 <div className="mx-auto w-full max-w-2xl px-8 pb-12">
                     {renderPanel()}

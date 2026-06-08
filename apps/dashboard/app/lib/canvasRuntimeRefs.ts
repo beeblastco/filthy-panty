@@ -223,6 +223,50 @@ export function serializeRuntimeRefs(refs: AgentRuntimeRefs): string {
     });
 }
 
+/** A caller agent's subagent (agent→agent) call targets derived from the canvas graph. */
+export type AgentSubagentRefs = {
+    /** Caller agent's config id. */
+    configId: Id<"agentConfigs">;
+    /** Config ids of the agents this one may call (one per outgoing `subagent` edge). */
+    calleeConfigIds: Id<"agentConfigs">[];
+};
+
+/**
+ * Derive each agent's subagent call targets from directional `subagent` edges.
+ * An edge source→target means the source agent may call the target agent, so the
+ * target's config id is added to the source's callee list. Emits an entry for every
+ * agent (even with no callees) so clearing the last edge still produces a write.
+ */
+export function deriveSubagentRefs(nodes: Node[], edges: Edge[]): AgentSubagentRefs[] {
+    const runtimeNodes = nodes as RuntimeNode[];
+    const byId = new Map(runtimeNodes.map((node) => [node.id, node]));
+    const agents = runtimeNodes.filter((node) => node.type === "agent");
+
+    // Caller node id → set of callee config ids, walking directional subagent edges only.
+    const calleesByCaller = new Map<string, Set<Id<"agentConfigs">>>();
+    for (const edge of edges) {
+        if (edge.type !== "subagent") continue;
+        const callee = byId.get(edge.target);
+        const calleeConfigId = callee?.data.agentConfigId as Id<"agentConfigs"> | undefined;
+        if (callee?.type !== "agent" || !calleeConfigId) continue;
+        if (!calleesByCaller.has(edge.source)) calleesByCaller.set(edge.source, new Set());
+        calleesByCaller.get(edge.source)!.add(calleeConfigId);
+    }
+
+    return agents.flatMap((agent) => {
+        const configId = agent.data.agentConfigId as Id<"agentConfigs"> | undefined;
+        if (!configId) return [];
+        const callees = calleesByCaller.get(agent.id);
+
+        return [{ configId: configId, calleeConfigIds: callees ? [...callees] : [] }];
+    });
+}
+
+/** Stable serialization for change detection before writing subagent mutations. */
+export function serializeSubagentRefs(refs: AgentSubagentRefs): string {
+    return JSON.stringify({ callees: [...refs.calleeConfigIds].sort() });
+}
+
 function buildAdjacency(edges: Edge[]): Map<string, Set<string>> {
     const adjacency = new Map<string, Set<string>>();
     for (const edge of edges) {

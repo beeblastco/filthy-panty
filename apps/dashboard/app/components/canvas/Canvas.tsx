@@ -18,7 +18,9 @@ import {
     analyzeCanvasInfra,
     defaultRuntimeNodeData,
     deriveAgentRuntimeRefs,
+    deriveSubagentRefs,
     serializeRuntimeRefs,
+    serializeSubagentRefs,
 } from "@/app/lib/canvasRuntimeRefs";
 import type { Id } from "@/convex/_generated/dataModel";
 import {
@@ -314,9 +316,11 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         },
     );
     const updateRuntimeRefs = useMutation(api.agentConfig.updateRuntimeRefs);
+    const updateSubagentRefs = useMutation(api.agentConfig.updateSubagentRefs);
     const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const hasLocalChanges = useRef(false);
     const lastRuntimeRefs = useRef(new Map<string, string>());
+    const lastSubagentRefs = useRef(new Map<string, string>());
 
     /** Debounced save — writes current local state to the database after 500ms of inactivity. */
     const scheduleSave = useCallback(() => {
@@ -364,11 +368,25 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                         workspaces: ref.workspaces.length > 0 ? ref.workspaces : null,
                     });
                 }));
+
+                // Persist agent→agent subagent allow-lists from the canvas edges.
+                const subagentRefs = deriveSubagentRefs(currentNodes, currentEdges);
+                await Promise.all(subagentRefs.map(async (ref) => {
+                    const serialized = serializeSubagentRefs(ref);
+                    if (lastSubagentRefs.current.get(ref.configId) === serialized) {
+                        return;
+                    }
+                    lastSubagentRefs.current.set(ref.configId, serialized);
+                    await updateSubagentRefs({
+                        configId: ref.configId,
+                        calleeConfigIds: ref.calleeConfigIds,
+                    });
+                }));
             }).finally(() => {
                 hasLocalChanges.current = false;
             });
         }, 500);
-    }, [environmentId, projectId, saveLayoutMutation, updateRuntimeRefs]);
+    }, [environmentId, projectId, saveLayoutMutation, updateRuntimeRefs, updateSubagentRefs]);
 
     // Cleanup debounce timer on unmount
     useEffect(() => {
