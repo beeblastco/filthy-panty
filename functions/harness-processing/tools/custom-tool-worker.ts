@@ -138,7 +138,10 @@ const ENSURE_WORKER = [
 // payload JSON from this command's stdin (so bundle size is never bounded by argv
 // limits). User code never touches this stdout — only the worker's JSON response.
 export function buildWorkerInvokeCommand(): string[] {
-  const invoke = `curl -s --unix-socket "$SOCK" -X POST --data-binary @- -H 'content-type: application/json' http://localhost/invoke`;
+  // -N disables curl's output buffering: without it, curl block-buffers stdout
+  // (a pipe, not a TTY), so small NDJSON frames flush only when curl exits and
+  // streamed yields arrive in one burst instead of live.
+  const invoke = `curl -sN --unix-socket "$SOCK" -X POST --data-binary @- -H 'content-type: application/json' http://localhost/invoke`;
   return ["bash", "-lc", `${ENSURE_WORKER}\n${invoke}`];
 }
 

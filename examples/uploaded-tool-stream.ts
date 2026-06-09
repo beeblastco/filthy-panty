@@ -33,7 +33,7 @@ export default {
   async *execute(ctx, input) {
     const steps = Math.max(1, Math.min(10, input.steps ?? 5));
     for (let i = 1; i <= steps; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       yield { type: "text", value: \`progress \${i}/\${steps}\` };
     }
     // The last yield is also the final tool output the model reads.
@@ -84,30 +84,8 @@ try {
     ],
   };
 
-  let preliminaryCount = 0;
   for await (const chunk of streamSSE(body, account.secret)) {
-    let part: { type?: string; preliminary?: boolean; output?: unknown; toolName?: string; text?: string };
-    try {
-      part = JSON.parse(chunk);
-    } catch {
-      continue;
-    }
-
-    if (part.type === "tool-result" && part.preliminary) {
-      preliminaryCount += 1;
-      console.log(`  [stream #${preliminaryCount}] ${part.toolName}:`, JSON.stringify(part.output));
-    } else if (part.type === "tool-result") {
-      console.log(`  [final]       ${part.toolName}:`, JSON.stringify(part.output));
-    } else if (part.type === "text-delta" && part.text) {
-      process.stdout.write(part.text);
-    }
-  }
-
-  console.log(`\n\nStreamed ${preliminaryCount} preliminary tool-result chunk(s).`);
-  if (preliminaryCount > 1) {
-    console.log("✅ Uploaded-tool streaming works: each generator yield arrived as its own chunk.");
-  } else {
-    console.log("⚠️  Expected multiple preliminary chunks — the tool may not have streamed.");
+    process.stdout.write(chunk + "\n\n");
   }
 } finally {
   await deleteAccount(account.secret);
