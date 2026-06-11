@@ -2,9 +2,8 @@
 
 /** Right-side navigation links for the header bar. */
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { cn } from "@/app/lib/utils";
-import { Suspense, useCallback, useEffect } from "react";
+import { Suspense, useCallback, useEffect, useState, useTransition } from "react";
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 
 const NAV_ITEMS = [
@@ -28,6 +27,8 @@ function NavLinksInner() {
     const searchParams = useSearchParams();
     const projectId = params.projectId;
     const envParam = searchParams.get("env");
+    const [isPending, startTransition] = useTransition();
+    const [pendingSegment, setPendingSegment] = useState<ProjectNavSegment | null>(null);
     const withEnvironment = useCallback(
         (path: string) => (envParam ? `${path}?env=${envParam}` : path),
         [envParam],
@@ -41,6 +42,15 @@ function NavLinksInner() {
             void ROUTE_MODULE_PRELOADERS[segment]();
         },
         [projectId, router, withEnvironment],
+    );
+    const navigateToRoute = useCallback(
+        (segment: ProjectNavSegment, href: string) => {
+            setPendingSegment(segment);
+            startTransition(() => {
+                router.push(href);
+            });
+        },
+        [router],
     );
 
     useEffect(() => {
@@ -63,6 +73,13 @@ function NavLinksInner() {
         return () => window.clearTimeout(timeoutId);
     }, [projectId, warmProjectRoute]);
 
+    // Clear the pending highlight once the transition settles.
+    useEffect(() => {
+        if (!isPending) {
+            setPendingSegment(null);
+        }
+    }, [isPending]);
+
     if (!projectId) {
         return null;
     }
@@ -77,21 +94,22 @@ function NavLinksInner() {
                         : pathname.startsWith(`/${projectId}${segment}`);
 
                 return (
-                    <Link
+                    <button
                         key={segment}
-                        href={href}
-                        prefetch={true}
+                        type="button"
+                        onClick={() => navigateToRoute(segment, href)}
                         onMouseEnter={() => warmProjectRoute(segment)}
                         onFocus={() => warmProjectRoute(segment)}
                         className={cn(
-                            "rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
+                            "cursor-pointer select-none rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors active:bg-accent/70",
                             isActive
                                 ? "bg-accent text-foreground"
                                 : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                            isPending && pendingSegment === segment && "opacity-60",
                         )}
                     >
                         {label}
-                    </Link>
+                    </button>
                 );
             })}
         </nav>
