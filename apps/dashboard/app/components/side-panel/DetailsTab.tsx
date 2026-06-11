@@ -11,7 +11,7 @@ import { Switch } from "@/app/components/ui/switch";
 import { Textarea } from "@/app/components/ui/textarea";
 import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
 import { isRecord } from "@/app/lib/utils";
-import type { Doc } from "@/convex/_generated/dataModel";
+import type { Doc } from "@filthy-panty/convex/_generated/dataModel";
 import { Check, Copy, Eye, EyeOff, Globe, Slash, Wifi } from "lucide-react";
 import { useRef, useState } from "react";
 

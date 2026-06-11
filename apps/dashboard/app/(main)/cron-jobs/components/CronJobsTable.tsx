@@ -17,8 +17,8 @@ import {
     DialogTitle,
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
-import { api } from "@/convex/_generated/api";
-import type { Doc } from "@/convex/_generated/dataModel";
+import { api } from "@filthy-panty/convex/_generated/api";
+import type { Doc } from "@filthy-panty/convex/_generated/dataModel";
 import { useAction } from "convex/react";
 import { Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";

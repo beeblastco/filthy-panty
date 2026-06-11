@@ -4,8 +4,8 @@
 import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
 import { Button } from "@/app/components/ui/button";
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
-import { api } from "@/convex/_generated/api";
-import type { Doc } from "@/convex/_generated/dataModel";
+import { api } from "@filthy-panty/convex/_generated/api";
+import type { Doc } from "@filthy-panty/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
 import { Folder, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";

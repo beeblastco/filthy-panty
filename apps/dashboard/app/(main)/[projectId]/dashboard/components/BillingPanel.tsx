@@ -7,8 +7,8 @@
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { Section } from "@/app/components/Section";
-import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
+import { api } from "@filthy-panty/convex/_generated/api";
+import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
 import { AlertTriangle, ArrowUpRight, CreditCard, ExternalLink } from "lucide-react";
 import { useState } from "react";

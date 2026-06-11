@@ -25,8 +25,8 @@ import {
     SelectValue,
 } from "@/app/components/ui/select";
 import { Textarea } from "@/app/components/ui/textarea";
-import { api } from "@/convex/_generated/api";
-import type { Doc, Id } from "@/convex/_generated/dataModel";
+import { api } from "@filthy-panty/convex/_generated/api";
+import type { Doc, Id } from "@filthy-panty/convex/_generated/dataModel";
 import { useAction } from "convex/react";
 import { useState } from "react";
 

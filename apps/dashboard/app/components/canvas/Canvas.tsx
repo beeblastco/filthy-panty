@@ -22,7 +22,7 @@ import {
   serializeRuntimeRefs,
   serializeSubagentRefs,
 } from "@/app/lib/canvasRuntimeRefs";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -31,7 +31,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/app/components/ui/context-menu";
-import { api } from "@/convex/_generated/api";
+import { api } from "@filthy-panty/convex/_generated/api";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
 import {
   addEdge,

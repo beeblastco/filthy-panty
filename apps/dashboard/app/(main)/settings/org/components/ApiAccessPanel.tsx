@@ -18,8 +18,8 @@ import {
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
-import { api } from "@/convex/_generated/api";
-import type { Doc } from "@/convex/_generated/dataModel";
+import { api } from "@filthy-panty/convex/_generated/api";
+import type { Doc } from "@filthy-panty/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
 import { Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { useState } from "react";

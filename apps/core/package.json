@@ -40,6 +40,7 @@
     "@convex-dev/stripe": "^0.1.4",
     "@convex-dev/workos-authkit": "^0.2.6",
     "@daytona/sdk": "^0.175.0",
+    "@filthy-panty/convex": "workspace:*",
     "@kubernetes/client-node": "^1.4.0",
     "@pulumi/aws": "7.30.0",
     "@pulumi/pulumi": "3.228.0",

@@ -2,7 +2,7 @@
 
 /** Protected layout that redirects unauthenticated users to /login. */
 import { Header } from "@/app/components/Header";
-import { api } from "@/convex/_generated/api";
+import { api } from "@filthy-panty/convex/_generated/api";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";

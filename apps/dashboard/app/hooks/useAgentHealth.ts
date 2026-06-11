@@ -4,7 +4,7 @@
  * Derives agent health status from gateway/server reachability.
  * Uses a shared module-level cache so multiple agent nodes don't duplicate health requests.
  */
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import { useEffect, useState } from "react";
 
 /** Possible agent health statuses for display. */

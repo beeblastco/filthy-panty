@@ -1,6 +1,6 @@
 /** Optimistic-update helper shared by every side-panel write to `agentConfig.update`. */
-import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
+import { api } from "@filthy-panty/convex/_generated/api";
+import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import type { OptimisticLocalStore } from "convex/browser";
 
 /**

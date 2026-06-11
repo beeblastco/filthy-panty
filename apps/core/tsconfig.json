@@ -10,7 +10,6 @@
     "sst-env.d.ts"
   ],
   "exclude": [
-    "functions/_shared/storage/convex/**",
     "node_modules"
   ]
 }

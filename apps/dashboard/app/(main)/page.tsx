@@ -1,7 +1,7 @@
 "use client";
 
 /** Home route that ensures the caller has an org, then opens their default project (auto-created on first login). */
-import { api } from "@/convex/_generated/api";
+import { api } from "@filthy-panty/convex/_generated/api";
 import { useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";

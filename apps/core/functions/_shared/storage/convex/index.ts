@@ -41,24 +41,14 @@ import {
   type AccountToolRecord,
 } from "../account-tools.ts";
 
-// The convex/ submodule is only present in SaaS deployments. We load the
-// generated API namespace lazily via require() so the open-source typecheck
-// + CI build (which doesn't fetch the private submodule) still succeeds.
 // ConvexHttpClient's typed `query`/`mutation` only accept public function
-// refs; the submodule exposes internalQuery / internalMutation, so we cast
-// at the boundary. Deploy-key auth permits calling these at runtime.
-function loadInternalApi(): any {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require("../../../../convex/_generated/api").internal;
-}
-let _internal: any;
-function internalApiRef(): any {
-  if (!_internal) _internal = loadInternalApi();
-  return _internal;
-}
-const internal: any = new Proxy({}, {
-  get(_t, prop) { return internalApiRef()[prop as string]; },
-});
+// refs; the backend package exposes internalQuery / internalMutation, so we
+// cast at the boundary. Deploy-key auth permits calling these at runtime.
+// require() (not import) keeps the backend's generated types out of this
+// package's typecheck program — its sources are checked by their own
+// tsconfig — while Bun still resolves and bundles the module statically.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const internal: any = require("@filthy-panty/convex/_generated/api").internal;
 import type {
   AccountRecord,
   AgentRecord,

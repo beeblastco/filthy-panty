@@ -35,8 +35,8 @@ import {
     getRememberedDeploymentApiKey,
     rememberDeploymentCredential,
 } from "@/app/lib/deploymentCredentials";
-import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
+import { api } from "@filthy-panty/convex/_generated/api";
+import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import { useStore, type Node } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
 import { X } from "lucide-react";

@@ -19,8 +19,8 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/app/components/ui/select";
-import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
+import { api } from "@filthy-panty/convex/_generated/api";
+import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
 import { useState } from "react";
 

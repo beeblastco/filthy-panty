@@ -1,20 +1,22 @@
 {
-    "name": "@beeblast/convex-filthy-cherry",
+    "name": "@filthy-panty/convex",
     "version": "0.0.1",
     "private": true,
-    "description": "Shared Convex backend (schema + internal queries/mutations) used by cherry-coke (deploys it) and filthy-panty (reads it as a typed remote API).",
+    "description": "Shared Convex backend (schema + internal queries/mutations) deployed alongside the dashboard and read by the core harness as a typed remote API.",
     "type": "module",
     "main": "./index.ts",
     "types": "./index.ts",
-    "files": [
-        "*.ts",
-        "_generated/api.d.ts",
-        "README.md"
-    ],
-    "peerDependencies": {
-        "convex": "^1.39.0"
-    },
     "scripts": {
+        "dev": "convex dev",
+        "deploy": "convex deploy",
+        "codegen": "convex codegen",
+        "check": "tsc --noEmit",
         "format": "prettier --write \"**/*.{ts,md,json}\""
+    },
+    "dependencies": {
+        "@aws-sdk/client-cloudwatch-logs": "^3.1063.0",
+        "@convex-dev/stripe": "^0.1.4",
+        "@convex-dev/workos-authkit": "^0.2.6",
+        "convex": "^1.40.0"
     }
 }

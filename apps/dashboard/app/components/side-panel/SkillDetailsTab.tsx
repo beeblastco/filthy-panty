@@ -18,7 +18,7 @@ import {
     setSkillsBearerToken,
 } from "@/app/lib/skillsCredentials";
 import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
-import { api } from "@/convex/_generated/api";
+import { api } from "@filthy-panty/convex/_generated/api";
 import { useAction } from "convex/react";
 import { Eye, EyeOff, FolderOpen, GitBranch, Loader2, RotateCcw, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";

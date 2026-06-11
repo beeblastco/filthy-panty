@@ -9,7 +9,7 @@ import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
-import type { Doc } from "@/convex/_generated/dataModel";
+import type { Doc } from "@filthy-panty/convex/_generated/dataModel";
 import { Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 

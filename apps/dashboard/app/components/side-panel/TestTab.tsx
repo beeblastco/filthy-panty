@@ -13,7 +13,7 @@ import {
     InputGroupTextarea,
 } from "@/app/components/ui/input-group";
 import { useAgentChat } from "@/app/hooks/useAgentChat";
-import type { Doc } from "@/convex/_generated/dataModel";
+import type { Doc } from "@filthy-panty/convex/_generated/dataModel";
 import type { UIMessage } from "ai";
 import {
     ArrowUp,

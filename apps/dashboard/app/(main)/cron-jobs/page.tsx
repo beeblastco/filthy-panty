@@ -8,7 +8,7 @@
  */
 
 import { Button } from "@/app/components/ui/button";
-import { api } from "@/convex/_generated/api";
+import { api } from "@filthy-panty/convex/_generated/api";
 import { useQuery } from "convex/react";
 import { Plus } from "lucide-react";
 import { useState } from "react";

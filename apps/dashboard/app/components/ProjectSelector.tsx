@@ -4,8 +4,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
-import { api } from "@/convex/_generated/api";
-import type { Doc } from "@/convex/_generated/dataModel";
+import { api } from "@filthy-panty/convex/_generated/api";
+import type { Doc } from "@filthy-panty/convex/_generated/dataModel";
 import { ChevronDown, Plus, Folder } from "lucide-react";
 import {
   DropdownMenu,

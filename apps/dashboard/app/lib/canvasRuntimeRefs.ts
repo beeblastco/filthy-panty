@@ -3,7 +3,7 @@
  * runtime-resource nodes and edges.
  */
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import type { Edge, Node } from "@xyflow/react";
 
 /** Canvas node types that participate in filthy-panty runtime reference projection. */

@@ -15,8 +15,8 @@ import {
     getSkillsBearerToken,
     setSkillsBearerToken,
 } from "@/app/lib/skillsCredentials";
-import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
+import { api } from "@filthy-panty/convex/_generated/api";
+import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { AlertTriangle, BookOpen, Eye, EyeOff, Loader2, Send, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
