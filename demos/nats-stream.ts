@@ -13,7 +13,7 @@ import { toRuntimeAgentConfig, type AgentConfig } from "../apps/core/functions/_
 import { conversationBufferedCount, connectNats, readConversationStream, subscribeConversationLive, type NatsStreamEvent } from "../apps/core/functions/_shared/nats.ts";
 import { scopedDirectConversationKey, scopedDirectEventId } from "../apps/core/functions/_shared/runtime-keys.ts";
 import type { DirectInboundEvent } from "../apps/core/functions/harness-processing/integrations.ts";
-import { createAccount, createAgent, deleteAccount } from "./utils.ts";
+import { createAccount, createAgent, deleteAccount } from "filthy-panty";
 
 const minimaxApiKey = process.env.ACCOUNT_MINIMAX_API_KEY!;
 const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;

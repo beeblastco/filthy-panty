@@ -4,7 +4,7 @@
  * and streams a harness request that asks the agent to load and use the skill.
  */
 
-import { createAccount, createAgent, createSkill, deleteAccount, streamSSE } from "./utils.ts";
+import { createAccount, createAgent, createSkill, deleteAccount, streamSSE } from "filthy-panty";
 
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const username = `skill-stream-${Date.now()}`;

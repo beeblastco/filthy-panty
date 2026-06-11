@@ -15,7 +15,7 @@ import {
   deleteAccount,
   streamSSE,
   requireEnv,
-} from "./utils.ts";
+} from "filthy-panty";
 
 const minimaxApiKey = requireEnv("ACCOUNT_MINIMAX_API_KEY");
 const username = `sandbox-k8s-persistent-${Date.now()}`;

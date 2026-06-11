@@ -2,7 +2,7 @@
  * Example Async with structured output parsing
  */
 
-import { createAccount, createAgent, deleteAccount, postAsyncRequest, pollStatus } from "./utils.ts";
+import { createAccount, createAgent, deleteAccount, postAsyncRequest, pollStatus } from "filthy-panty";
 
 // Define all the API keys and url required
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;

@@ -2,7 +2,7 @@
  * Example subagent dispatch over the sync SSE API.
  */
 
-import { createAccount, createAgent, deleteAccount, streamSSE } from "./utils.ts";
+import { createAccount, createAgent, deleteAccount, streamSSE } from "filthy-panty";
 
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const tavilyApiKey = process.env.ACCOUNT_TAVILY_API_KEY!;

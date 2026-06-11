@@ -5,7 +5,7 @@
  * The detached/async path is covered by uploaded-async-nats.ts instead.
  */
 
-import { createAccount, createAgent, createTool, deleteAccount, streamSSE } from "./utils.ts";
+import { createAccount, createAgent, createTool, deleteAccount, streamSSE } from "filthy-panty";
 
 const minimaxApiKey = process.env.ACCOUNT_MINIMAX_API_KEY!;
 

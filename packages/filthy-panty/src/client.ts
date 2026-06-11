@@ -1,62 +1,24 @@
 /**
- * Shared utilities for example scripts.
+ * Typed fetch client for the account-manage and harness HTTP APIs.
+ * Standalone functions read the service URLs from the environment
+ * (ACCOUNT_SERVICE_URL / AGENT_SERVICE_URL), matching the deployed
+ * Function URL endpoints. A configurable client object can layer on
+ * top of these once the CLI grows login/config handling.
  */
 
-import type { ToolApprovalSummary } from "../apps/core/functions/harness-processing/harness.ts";
+import type {
+  Account,
+  Agent,
+  AsyncStatus,
+  CustomTool,
+  Sandbox,
+  Skill,
+  Workspace,
+} from "./types.ts";
 
 // Service URLs from environment
 export const ACCOUNT_SERVICE_URL = process.env.ACCOUNT_SERVICE_URL!;
 export const AGENT_SERVICE_URL = process.env.AGENT_SERVICE_URL!;
-
-// Types
-export interface Account {
-  account: {
-    accountId: string;
-    username: string;
-  }
-  secret: string;
-}
-
-export interface Agent {
-  accountId: string;
-  agentId: string;
-  name: string;
-}
-
-export interface Sandbox {
-  sandboxId: string;
-  name: string;
-}
-
-export interface Workspace {
-  workspaceId: string;
-  name: string;
-}
-
-export interface AsyncStatus {
-  status: "processing" | "awaiting_approval" | "completed" | "failed" | "not_found";
-  response?: string;
-  error?: string;
-  approvals?: ToolApprovalSummary[];
-}
-
-export interface Skill {
-  path: string;
-  name: string;
-  description: string;
-  files?: Array<{
-    path: string;
-    size?: number;
-  }>;
-}
-
-export interface CustomTool {
-  accountId: string;
-  toolId: string;
-  name: string;
-  description: string;
-  sha256: string;
-}
 
 // Create a new account
 export async function createAccount(username: string): Promise<Account> {
@@ -127,8 +89,8 @@ export async function createWorkspace(
 }
 
 export async function createSkill(
-  secret: string, 
-  input: Record<string, unknown>
+  secret: string,
+  input: Record<string, unknown>,
 ): Promise<Skill> {
   const response = await fetch(`${ACCOUNT_SERVICE_URL}/accounts/me/skills`, {
     method: "POST",
@@ -216,43 +178,6 @@ export async function deleteAccount(secret: string): Promise<void> {
   });
 
   if (!response.ok) throw new Error(`Delete failed: ${response.status} ${await response.text()}`);
-}
-
-// Stream SSE response from agent service
-export async function* streamSSE(body: unknown, secret: string): AsyncGenerator<string> {
-  const response = await fetch(AGENT_SERVICE_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Accept": "text/event-stream", "Authorization": `Bearer ${secret}` },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) throw new Error(`Request failed: ${response.status} ${await response.text()}`);
-  if (!response.body) throw new Error("No response body");
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let chunks = 0;
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        chunks += 1;
-        yield line.slice(6);
-      }
-    }
-    if (chunks === 0) {
-      throw new Error("SSE stream ended without any data events");
-    }
-  } finally {
-    reader.releaseLock();
-  }
 }
 
 // Post async request to agent service

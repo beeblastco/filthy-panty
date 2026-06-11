@@ -2,7 +2,7 @@
  * Example Async endpoint with polling
  */
 
-import { createAccount, createAgent, deleteAccount, postAsyncRequest, pollStatus } from "./utils.ts";
+import { createAccount, createAgent, deleteAccount, postAsyncRequest, pollStatus } from "filthy-panty";
 
 // Define all the API keys and url required
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;

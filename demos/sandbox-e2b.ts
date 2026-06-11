@@ -14,7 +14,7 @@ import {
   deleteAccount,
   streamSSE,
   requireEnv,
-} from "./utils.ts";
+} from "filthy-panty";
 
 const googleApiKey = requireEnv("ACCOUNT_GOOGLE_API_KEY");
 const e2bApiKey = requireEnv("E2B_API_KEY");

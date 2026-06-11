@@ -13,7 +13,7 @@ import {
   createSandbox,
   deleteAccount,
   streamSSE,
-} from "./utils.ts";
+} from "filthy-panty";
 
 const minimaxApiKey = process.env.ACCOUNT_MINIMAX_API_KEY!;
 const username = `sandbox-stateless-${Date.now()}`;

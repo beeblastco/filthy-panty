@@ -2,7 +2,7 @@
  * Example async local tool flow.
  */
 
-import { createAccount, createAgent, createTool, deleteAccount, streamSSE } from "./utils.ts";
+import { createAccount, createAgent, createTool, deleteAccount, streamSSE } from "filthy-panty";
 
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 

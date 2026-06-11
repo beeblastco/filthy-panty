@@ -9,7 +9,7 @@ import {
   createAgent,
   deleteAccount,
   streamSSE,
-} from "./utils.ts";
+} from "filthy-panty";
 
 type ToolApprovalRequestChunk = ToolApprovalRequestOutput<ToolSet>;
 

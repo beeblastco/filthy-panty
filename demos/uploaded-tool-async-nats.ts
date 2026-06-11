@@ -9,7 +9,7 @@ import { toRuntimeAgentConfig, type AgentConfig } from "../apps/core/functions/_
 import { connectNats, streamResponseSubject, type NatsStreamEvent } from "../apps/core/functions/_shared/nats.ts";
 import { scopedDirectConversationKey, scopedDirectEventId } from "../apps/core/functions/_shared/runtime-keys.ts";
 import type { DirectInboundEvent } from "../apps/core/functions/harness-processing/integrations.ts";
-import { createAccount, createAgent, createTool, deleteAccount } from "./utils.ts";
+import { createAccount, createAgent, createTool, deleteAccount } from "filthy-panty";
 
 const minimaxApiKey = process.env.ACCOUNT_MINIMAX_API_KEY!;
 const lambdaFunctionName = process.env.HARNESS_FUNCTION_ARN!;

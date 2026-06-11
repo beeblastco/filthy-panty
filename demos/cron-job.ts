@@ -3,7 +3,7 @@
  * Creates a test account, agent, and one-time schedule for one minute from now.
  */
 
-import { ACCOUNT_SERVICE_URL, createAccount, createAgent, deleteAccount } from "./utils.ts";
+import { ACCOUNT_SERVICE_URL, createAccount, createAgent, deleteAccount } from "filthy-panty";
 
 const googleApiKey = process.env.ACCOUNT_GOOGLE_API_KEY!;
 const timezone = process.env.CRON_TIMEZONE ?? "Europe/Amsterdam";

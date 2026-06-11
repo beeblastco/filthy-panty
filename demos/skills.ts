@@ -9,7 +9,7 @@
  * 4. Delete a skill
  */
 
-import { createAccount, createSkill, deleteAccount, deleteSkill, getSkill, listSkills } from "./utils.ts";
+import { createAccount, createSkill, deleteAccount, deleteSkill, getSkill, listSkills } from "filthy-panty";
 
 // Test username account
 const username = `skills-${Date.now()}`;

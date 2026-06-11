@@ -20,7 +20,7 @@ import {
   deleteAccount,
   streamSSE,
   requireEnv,
-} from "./utils.ts";
+} from "filthy-panty";
 
 const googleApiKey = requireEnv("ACCOUNT_GOOGLE_API_KEY");
 const username = `ws-readonly-${Date.now()}`;
