@@ -2,6 +2,31 @@
 
 The deployed system is a multi-account serverless agent harness. Accounts are managed by `account-manage`; runtime traffic is handled by `harness-processing`.
 
+## Monorepo Layout
+
+The repository is a Bun-workspaces monorepo. The core SST app is self-contained under `apps/core/` so it can later be swapped for a Rust/cloud-native runtime without touching the other workspaces.
+
+```mermaid
+flowchart LR
+  subgraph apps
+    Core["apps/core<br/>SST app — Lambdas, scripts, tests"]
+    Dash["apps/dashboard<br/>Next.js dashboard"]
+    Docs["apps/docs<br/>Docusaurus site"]
+  end
+  subgraph packages
+    Cvx["packages/convex<br/>shared Convex backend"]
+    Sdk["packages/filthy-panty<br/>CLI + SDK"]
+  end
+  Demos["demos/<br/>runnable scripts"]
+
+  Dash -->|"deploys + imports _generated API"| Cvx
+  Core -->|"STORAGE_PROVIDER=convex<br/>ConvexHttpClient"| Cvx
+  Demos -->|"imports"| Sdk
+  Sdk -->|"HTTP to deployed Function URLs"| Core
+```
+
+All file paths below are relative to `apps/core/`.
+
 ## Runtime Layer
 
 Both Lambdas use the Bun custom runtime and `startStreamingRuntime()` from `functions/_shared/runtime.ts`.

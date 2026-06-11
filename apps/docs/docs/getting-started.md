@@ -341,25 +341,25 @@ export ACCOUNT_SERVICE_URL=<your-account-service-url>
 export ACCOUNT_GOOGLE_API_KEY=<your-google-api-key>
 export ACCOUNT_TAVILY_API_KEY=<your-tavily-api-key>
 
-bun examples/stream.ts        # SSE with tools
-bun examples/async.ts         # Async with polling
-bun examples/tool-approval.ts # Tool approval flow
-bun examples/subagent.ts      # Subagent dispatch
-bun examples/skills.ts        # Skill CRUD
-bun examples/skill-loads.ts   # Skill loading during a streamed turn
-bun examples/sandbox-workspace-lambda.ts      # Lambda sandbox + workspace smoke test
-bun examples/workspace-multiple.ts            # One agent, two named workspaces
-bun examples/workspace-readonly.ts            # Shared workspace with read-only (no-sandbox) agent
-bun examples/sandbox-stateless.ts             # Sandbox with no workspace (bash-only, stateless)
-bun examples/sandbox-workspace-override.ts    # Per-workspace sandbox override (inherit / pin / read-only)
-bun examples/sandbox-e2b.ts                   # E2B provider (stateless bash)
+bun demos/stream.ts        # SSE with tools
+bun demos/async.ts         # Async with polling
+bun demos/tool-approval.ts # Tool approval flow
+bun demos/subagent.ts      # Subagent dispatch
+bun demos/skills.ts        # Skill CRUD
+bun demos/skill-loads.ts   # Skill loading during a streamed turn
+bun demos/sandbox-workspace-lambda.ts      # Lambda sandbox + workspace smoke test
+bun demos/workspace-multiple.ts            # One agent, two named workspaces
+bun demos/workspace-readonly.ts            # Shared workspace with read-only (no-sandbox) agent
+bun demos/sandbox-stateless.ts             # Sandbox with no workspace (bash-only, stateless)
+bun demos/sandbox-workspace-override.ts    # Per-workspace sandbox override (inherit / pin / read-only)
+bun demos/sandbox-e2b.ts                   # E2B provider (stateless bash)
 ```
 
 Each script creates a temporary account, runs the test, and cleans up.
 
 ### Define Your Own Agent Config
 
-The agent config is a JSON object that controls everything about how your agent runs. See [`examples/account.config.example.json`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/account.config.example.json) for a full working example, or reference the [API Reference](/api-reference) for the complete `AgentConfig` schema.
+The agent config is a JSON object that controls everything about how your agent runs. See [`demos/account.config.example.json`](https://github.com/beeblastco/filthy-panty/blob/dev/demos/account.config.example.json) for a full working example, or reference the [API Reference](/api-reference) for the complete `AgentConfig` schema.
 
 Key config sections:
 

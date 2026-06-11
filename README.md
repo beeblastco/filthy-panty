@@ -6,9 +6,9 @@
 [![Vercel AI SDK](https://img.shields.io/badge/AI%20SDK-Vercel-000000)](https://sdk.vercel.ai/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing)
 
-> An open, experimental serverless multi-account AI chatbot and agent harness on AWS Lambda.
+> An open, experimental serverless multi-account AI chatbot and agent harness on AWS Lambda — now a Bun-workspaces monorepo that also hosts the dashboard, the shared Convex backend, the docs site, the CLI/SDK, and demos.
 
-`filthy-panty` is the reference implementation behind [BeeBlast](https://github.com/beeblastco) — a low-overhead, multi-tenant agent platform designed to let small teams ship production-grade AI agents without standing up Kubernetes, queues, or bespoke streaming infrastructure. It runs on Bun + AWS Lambda, persists state in DynamoDB and S3, and streams responses via SSE through Lambda Function URLs.
+`filthy-panty` is the reference implementation behind [BeeBlast](https://github.com/beeblastco) — a low-overhead, multi-tenant agent platform designed to let small teams ship production-grade AI agents without standing up Kubernetes, queues, or bespoke streaming infrastructure. The core app runs on Bun + AWS Lambda, persists state in DynamoDB and S3, and streams responses via SSE through Lambda Function URLs.
 
 If you want to self-host a multi-agent backend, integrate AI into Telegram/Discord/Slack/GitHub, or learn how to build an agent harness on top of the Vercel AI SDK — this repo is for you.
 
@@ -53,7 +53,7 @@ flowchart LR
   Harness --> Model["Configured model<br/>Vercel AI SDK"]
 ```
 
-For the full architecture deep-dive — including account routing, the harness loop, subagent dispatch, and the NATS streaming gateway — see [`docs/architecture.md`](docs/architecture.md).
+For the full architecture deep-dive — including account routing, the harness loop, subagent dispatch, and the NATS streaming gateway — see [`apps/docs/docs/architecture.md`](apps/docs/docs/architecture.md).
 
 ---
 
@@ -85,12 +85,13 @@ For the full architecture deep-dive — including account routing, the harness l
 git clone https://github.com/beeblastco/filthy-panty.git
 cd filthy-panty
 bun install
-cp .env.example .env
+cp apps/core/.env.example apps/core/.env
 ```
 
 ### 2. Set SST secrets
 
 ```bash
+cd apps/core
 bunx sst secret set AdminAccountSecret <long-random-value>
 bunx sst secret set AccountConfigEncryptionSecret <long-random-value>
 ```
@@ -98,32 +99,32 @@ bunx sst secret set AccountConfigEncryptionSecret <long-random-value>
 ### 3. Deploy
 
 ```bash
-bun run deploy
+bun run deploy   # from the repo root (fans out to apps/core)
 ```
 
-Note the two Function URLs from the deploy output (`accountServiceUrl`, `agentServiceUrl`), then follow [`docs/getting-started.md`](docs/getting-started.md) to create your first account and agent.
+Note the two Function URLs from the deploy output (`accountServiceUrl`, `agentServiceUrl`), then follow [`apps/docs/docs/getting-started.md`](apps/docs/docs/getting-started.md) to create your first account and agent.
 
-### Run the examples
+### Run the demos
 
-The [`examples/`](examples/) directory has runnable scripts for every major feature — streaming, async, tool approval, subagents, skills, sandboxes, multi-workspace setups, and more. Each script creates a temporary account, runs a smoke test, and cleans up.
+The [`demos/`](demos/) directory has runnable scripts for every major feature — streaming, async, tool approval, subagents, skills, sandboxes, multi-workspace setups, and more. Each script creates a temporary account, runs a smoke test, and cleans up. They consume the [`filthy-panty` SDK package](packages/filthy-panty/).
 
 ```bash
-bun examples/stream.ts        # SSE with tools
-bun examples/async.ts         # Async with polling
-bun examples/subagent.ts      # Subagent dispatch
-bun examples/skills.ts        # Skill CRUD
+bun demos/stream.ts        # SSE with tools
+bun demos/async.ts         # Async with polling
+bun demos/subagent.ts      # Subagent dispatch
+bun demos/skills.ts        # Skill CRUD
 ```
 
 ---
 
 ## Documentation
 
-Full documentation lives in [`docs/`](docs/) and is published via Docusaurus.
+Full documentation lives in [`apps/docs/docs/`](apps/docs/docs/) and is published via Docusaurus.
 
-- **Core** — [Getting Started](docs/getting-started.md) · [Architecture](docs/architecture.md) · [Data Security](docs/data-security.md)
-- **Features** — [Workspace](docs/workspace/index.md) · [Sandbox](docs/workspace/sandbox/index.md) · [Skills](docs/skills.md) · [Tools](docs/tools.md) · [Channels](docs/channels/index.md) · [Subagents](docs/sub-agents.md) · [Webhooks](docs/webhook.md) · [Cron Jobs](docs/cron-jobs.md)
-- **Development** — [Extending](docs/extending.md) · [Deployment](docs/deployment.md) · [CI/CD](docs/ci-cd.md)
-- **API Reference** — [OpenAPI spec](docs/api-reference/openapi.yaml) (served interactively on the docs site)
+- **Core** — [Getting Started](apps/docs/docs/getting-started.md) · [Architecture](apps/docs/docs/architecture.md) · [Data Security](apps/docs/docs/data-security.md)
+- **Features** — [Workspace](apps/docs/docs/workspace/index.md) · [Sandbox](apps/docs/docs/workspace/sandbox/index.md) · [Skills](apps/docs/docs/skills.md) · [Tools](apps/docs/docs/tools.md) · [Channels](apps/docs/docs/channels/index.md) · [Subagents](apps/docs/docs/sub-agents.md) · [Webhooks](apps/docs/docs/webhook.md) · [Cron Jobs](apps/docs/docs/cron-jobs.md)
+- **Development** — [Extending](apps/docs/docs/extending.md) · [Deployment](apps/docs/docs/deployment.md) · [CI/CD](apps/docs/docs/ci-cd.md)
+- **API Reference** — [OpenAPI spec](apps/docs/docs/api-reference/openapi.yaml) (served interactively on the docs site)
 
 Preview the docs locally:
 
@@ -136,18 +137,25 @@ bun run docs
 ## Project Layout
 
 ```text
-functions/
-  account-manage/         # Account + agent + skill CRUD Lambda
-  harness-processing/     # Streaming agent loop + channel webhooks Lambda
-    tools/                # Built-in tools (googleSearch, tavily, etc.)
-    integrations.ts       # Request normalization + channel routing
-    harness.ts            # Model/tool execution loop
-    session.ts            # Conversation state + prompt assembly
-  _shared/                # Code shared between Lambdas (runtime, channels, accounts)
-examples/                 # Runnable example scripts
-docs/                     # Docusaurus documentation site
-scripts/                  # Build, deploy, and operational scripts
-sst.config.ts             # Single source of truth for infra
+apps/
+  core/                   # SST app — the serverless agent harness
+    functions/
+      account-manage/     # Account + agent + skill CRUD Lambda
+      harness-processing/ # Streaming agent loop + channel webhooks Lambda
+        tools/            # Built-in tools (googleSearch, tavily, etc.)
+        integrations.ts   # Request normalization + channel routing
+        harness.ts        # Model/tool execution loop
+        session.ts        # Conversation state + prompt assembly
+      _shared/            # Code shared between Lambdas (runtime, channels, accounts)
+    scripts/              # Build, deploy, and operational scripts
+    tests/                # Unit tests for the core app
+    sst.config.ts         # Single source of truth for infra
+  dashboard/              # Next.js dashboard (BeeBlast SaaS frontend)
+  docs/                   # Docusaurus documentation site
+packages/
+  convex/                 # Shared Convex backend (schema + functions, deployed with the dashboard)
+  filthy-panty/           # CLI + TypeScript SDK package
+demos/                    # Runnable demo scripts using the SDK
 ```
 
 A more detailed map (with the routing contract between each module) lives in [`AGENTS.md`](AGENTS.md).
@@ -161,9 +169,9 @@ Contributions are very welcome! Whether you want to fix a bug, add a new channel
 ### Development workflow
 
 ```bash
-bun install              # install deps
-bun run check            # typecheck
-bun run test             # unit tests (max-concurrency 1)
+bun install              # install all workspaces (root only)
+bun run check            # typecheck core, convex, SDK, and demos
+bun run test             # core unit tests (max-concurrency 1)
 bun run build            # build all Lambda binaries
 ```
 
@@ -171,9 +179,9 @@ CI runs `check`, `test`, and `build` on every PR via [`.github/workflows/ci.yaml
 
 ### Conventions
 
-- Bun + TypeScript, ESM, no transpile step.
+- Bun + TypeScript, ESM, no transpile step. Bun workspaces with the isolated linker — declare every dependency a package imports.
 - File header comments use a block-docstring style — see [`AGENTS.md`](AGENTS.md) for the full style guide.
-- Channel-specific logic belongs in `functions/_shared/<channel>-channel.ts`; commands belong in `functions/_shared/commands.ts`.
+- Channel-specific logic belongs in `apps/core/functions/_shared/<channel>-channel.ts`; commands belong in `apps/core/functions/_shared/commands.ts`.
 - Shared code only goes in `functions/_shared/` when it's actually shared between Lambdas.
 - Don't deploy to anyone else's stage — `dev` is the default.
 
@@ -186,7 +194,7 @@ CI runs `check`, `test`, and `build` on every PR via [`.github/workflows/ci.yaml
 
 ## Roadmap
 
-Active plans live under [`docs/plans/`](docs/plans/). Recent and upcoming work includes:
+Active plans live under [`apps/docs/docs/plans/`](apps/docs/docs/plans/). Recent and upcoming work includes:
 
 - BeeBlast CLI and TypeScript SDK
 - Expanded provider matrix (more first-class AI Gateway recipes)
