@@ -11,6 +11,9 @@ import {
 } from "@xyflow/react";
 import { useState } from "react";
 
+const HOVER_COLOR = "rgb(239, 68, 68, 0.9)";
+const ARROW_ID_PREFIX = "deletable-arrow";
+
 /**
  * Custom edge with a hover-to-delete trash icon. Reads its endpoints to style by kind (A):
  * an agent→sandbox edge is labelled "default".
@@ -64,16 +67,41 @@ export function DeletableEdge({
   });
 
   const edgeStyle = hovered
-    ? { ...style, stroke: "rgb(239, 68, 68, 0.9)", strokeWidth: 2 }
+    ? { ...style, stroke: HOVER_COLOR, strokeWidth: 2 }
     : style;
+  const arrowId = `${ARROW_ID_PREFIX}-${id}`;
 
   return (
     <>
+      {/* The default arrowhead is a shared theme-colored marker def, so it can't follow the
+          per-edge hover color — swap in this red copy of the same shape while hovered. */}
+      <defs>
+        <marker
+          id={arrowId}
+          viewBox="-10 -10 20 20"
+          refX="0"
+          refY="0"
+          markerWidth="18"
+          markerHeight="18"
+          markerUnits="strokeWidth"
+          orient="auto-start-reverse"
+        >
+          <polyline
+            points="-5,-4 0,0 -5,4 -5,-4"
+            fill={HOVER_COLOR}
+            stroke={HOVER_COLOR}
+            strokeWidth={1}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </marker>
+      </defs>
+
       <BaseEdge
         id={id}
         path={edgePath}
         style={edgeStyle}
-        markerEnd={markerEnd}
+        markerEnd={hovered ? `url(#${arrowId})` : markerEnd}
       />
       <EdgeLabelRenderer>
         {/* Subtle "default" marker at the midpoint; hidden on hover so the delete button takes over */}

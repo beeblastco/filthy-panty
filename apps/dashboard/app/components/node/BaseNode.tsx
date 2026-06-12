@@ -4,7 +4,7 @@ import { JavaScript } from "@/app/components/icons/JavaScript";
 import { Python } from "@/app/components/icons/Python";
 import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
-import { Handle, Position, useConnection, useStore, useUpdateNodeInternals } from "@xyflow/react";
+import { Handle, Position, useConnection, useStore } from "@xyflow/react";
 import { CornerDownRight, Globe, Lock, Slash, Users } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -78,32 +78,24 @@ export function BaseNode({
     const zoom = useStore(zoomSelector);
     const scale = Math.min(Math.max(1 / Math.sqrt(zoom), 0.9), 1.2);
 
-    // Side handles compete with the top handle for connection snapping, so only mount them when
-    // relevant. Workspace/sandbox sides serve mounts; agent sides serve subagent (agent↔agent)
-    // links. When idle they're all grabbable; mid-drag we light only the sides that match the
-    // drag's intent so agent→service edges still snap cleanly to the top.
-    const sideHandlesActive = useConnection((connection) => {
+    // Side handles must stay mounted at all times — existing mount/subagent edges attach to
+    // them, and ReactFlow drops any edge whose handle disappears (edges used to vanish
+    // mid-drag). Instead we gate `isConnectableEnd` so mid-drag only the sides matching the
+    // drag's intent accept the drop: workspace/sandbox sides serve mounts; agent sides serve
+    // subagent (agent↔agent) links. Plain agent→service edges still land on the top handle.
+    const sideHandlesConnectable = useConnection((connection) => {
         if (!connection.inProgress) return true;
         const fromType = connection.fromNode?.type;
         const fromSide = connection.fromHandle?.id === "left" || connection.fromHandle?.id === "right";
 
         // Gate by THIS node's type so the two side-handle relationships stay isolated: an agent's
         // sides serve only subagent links (another agent dragging from a side), and a
-        // workspace/sandbox's sides serve only mounts. This way an agent never lights up — or
-        // accepts an edge — during a mount drag, and a service never does during a subagent drag;
-        // normal agent→service edges still land on the top handle.
+        // workspace/sandbox's sides serve only mounts. This way an agent never accepts an edge
+        // during a mount drag, and a service never does during a subagent drag.
         if (nodeType === "agent") return fromType === "agent" && fromSide;
 
         return fromType === "workspace" || fromType === "sandbox";
     });
-
-    // ReactFlow caches each node's handle positions; toggling the side handles above does not
-    // change node dimensions, so we must force a recompute or the hidden handles keep stealing
-    // the closest-handle snap during agent connections.
-    const updateNodeInternals = useUpdateNodeInternals();
-    useEffect(() => {
-        if (showSideHandles) updateNodeInternals(id);
-    }, [showSideHandles, sideHandlesActive, id, updateNodeInternals]);
 
     // Infra badges: workspace effective-sandbox state (B) and shared-agent count (F).
     const infraAnalysis = useInfraAnalysis();
@@ -229,18 +221,20 @@ export function BaseNode({
                 />
             )}
 
-            {showSideHandles && sideHandlesActive && (
+            {showSideHandles && (
                 <>
                     <Handle
                         id="left"
                         type="source"
                         position={Position.Left}
+                        isConnectableEnd={sideHandlesConnectable}
                         className="bg-transparent! w-2.5! h-2.5! border-transparent!"
                     />
                     <Handle
                         id="right"
                         type="source"
                         position={Position.Right}
+                        isConnectableEnd={sideHandlesConnectable}
                         className="bg-transparent! w-2.5! h-2.5! border-transparent!"
                     />
                 </>

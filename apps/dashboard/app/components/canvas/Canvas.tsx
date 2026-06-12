@@ -254,6 +254,26 @@ function dedupeEdges(edges: Edge[]): Edge[] {
   });
 }
 
+/**
+ * Serialize a layout to the exact shape we persist, for change detection. Lets the DB-sync
+ * effect skip the echo of our own save — resetting state to raw DB objects drops measured
+ * sizes and selection, which re-measures every node and flickers the whole canvas.
+ */
+function layoutSignature(nodes: Node[], edges: Edge[]): string {
+  return JSON.stringify({
+    n: nodes.map((n) => [n.id, n.type, n.position.x, n.position.y, n.data]),
+    e: edges.map((e) => [e.id, e.source, e.target, e.animated ?? false]),
+  });
+}
+
+/**
+ * Focus-mode dim caches, keyed by source object identity. Reusing the dimmed clone keeps
+ * unchanged elements referentially stable across drag frames — fresh clones each frame
+ * would re-render every dimmed node/edge at 60fps. WeakMap entries follow their keys' GC.
+ */
+const dimmedNodeCache = new WeakMap<Node, Node>();
+const dimmedEdgeCache = new WeakMap<Edge, Edge>();
+
 /** Ignore global shortcuts while typing in editable controls. */
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -325,12 +345,14 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [agentCreatePosition, setAgentCreatePosition] =
     useState<FlowPosition | null>(null);
-  const { screenToFlowPosition, setCenter, getZoom } = useReactFlow();
+  const { screenToFlowPosition, setCenter, getZoom, fitView } = useReactFlow();
   const nextId = useRef(1);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const lastRightClick = useRef<FlowPosition | null>(null);
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
+  const isDraggingNode = useRef(false);
+  const didInitialFit = useRef(false);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -394,8 +416,28 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         })),
       })
         .then(async (savedLayout) => {
+          // The mutation may materialize runtime resources (assign fresh resourceIds), so
+          // merge only changed node `data` back. Replacing whole node objects would drop
+          // measured sizes and any drag started since the snapshot — the post-save flicker.
           const persistedNodes = savedLayout.nodes as Node[];
-          setNodes(persistedNodes);
+          const persistedById = new Map(persistedNodes.map((n) => [n.id, n]));
+          setNodes((current) => {
+            let changed = false;
+            const next = current.map((n) => {
+              const persisted = persistedById.get(n.id);
+              if (
+                !persisted ||
+                JSON.stringify(persisted.data) === JSON.stringify(n.data)
+              ) {
+                return n;
+              }
+              changed = true;
+
+              return { ...n, data: persisted.data };
+            });
+
+            return changed ? next : current;
+          });
 
           const refs = deriveAgentRuntimeRefs(persistedNodes, currentEdges);
           await Promise.all(
@@ -437,6 +479,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     environmentId,
     projectId,
     saveLayoutMutation,
+    setNodes,
     updateRuntimeRefs,
     updateSubagentRefs,
   ]);
@@ -448,31 +491,45 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     };
   }, []);
 
-  // Sync nodes/edges from the database — skip when local changes are pending
+  // Sync nodes/edges from the database — skip when local changes are pending or a drag is in
+  // progress, and skip updates that already match local state (the echo of our own save).
   useEffect(() => {
-    if (hasLocalChanges.current) return;
+    if (hasLocalChanges.current || isDraggingNode.current) return;
 
     if (canvasLayout) {
-      setNodes(canvasLayout.nodes as Node[]);
-      setEdges(
-        dedupeEdges(
-          (canvasLayout.edges as Edge[])
-            .map(unredirectEdge)
-            .map(hydrateMountEdge)
-            .map(hydrateSubagentEdge),
-        ),
+      const incoming = layoutSignature(
+        canvasLayout.nodes as Node[],
+        canvasLayout.edges as Edge[],
       );
-      const maxId = canvasLayout.nodes.reduce(
-        (max: number, n: { id: string }) => Math.max(max, Number(n.id) || 0),
-        0,
-      );
-      nextId.current = maxId + 1;
+      if (incoming !== layoutSignature(nodesRef.current, edgesRef.current)) {
+        setNodes(canvasLayout.nodes as Node[]);
+        setEdges(
+          dedupeEdges(
+            (canvasLayout.edges as Edge[])
+              .map(unredirectEdge)
+              .map(hydrateMountEdge)
+              .map(hydrateSubagentEdge),
+          ),
+        );
+        const maxId = canvasLayout.nodes.reduce(
+          (max: number, n: { id: string }) => Math.max(max, Number(n.id) || 0),
+          0,
+        );
+        nextId.current = maxId + 1;
+      }
+
+      // The `fitView` prop only fires on mount, when nodes are still empty (the layout loads
+      // async) — so center the whole architecture once the first real layout arrives.
+      if (!didInitialFit.current) {
+        didInitialFit.current = true;
+        if (canvasLayout.nodes.length > 0) fitView(FIT_VIEW_OPTIONS);
+      }
     } else {
       setNodes([]);
       setEdges([]);
       nextId.current = 1;
     }
-  }, [canvasLayout, setNodes, setEdges]);
+  }, [canvasLayout, setNodes, setEdges, fitView]);
 
   // Route Delete key to the side-panel confirmation flow instead of immediate node deletion.
   useEffect(() => {
@@ -537,8 +594,16 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     if (duplicate) return false;
 
     // Side handles serve mounts (workspace↔sandbox) and subagent links (agent↔agent) only;
-    // those pairs must use the sides, never the top/bottom handles.
-    if (isSideConnection(connection)) return isMountPair || isAgentPair;
+    // those pairs must use the sides on BOTH ends, never the top/bottom handles — a half-side
+    // edge would encode a null handle into its id and fail to hydrate after a reload.
+    if (isSideConnection(connection)) {
+      const sourceIsSide =
+        connection.sourceHandle === "left" || connection.sourceHandle === "right";
+      const targetIsSide =
+        connection.targetHandle === "left" || connection.targetHandle === "right";
+
+      return sourceIsSide && targetIsSide && (isMountPair || isAgentPair);
+    }
     if (isMountPair || isAgentPair) return false;
 
     // D — an agent has a single default sandbox (config.sandbox); block a 2nd direct one.
@@ -661,8 +726,14 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     [getViewportCenterPosition, setNodes, setEdges, scheduleSave],
   );
 
+  /** Block DB-sync resets while a drag is in flight so remote echoes can't clobber it. */
+  const onNodeDragStart: OnNodeDrag = useCallback(() => {
+    isDraggingNode.current = true;
+  }, []);
+
   /** Save after a node drag completes. */
   const onNodeDragStop: OnNodeDrag = useCallback(() => {
+    isDraggingNode.current = false;
     scheduleSave();
   }, [scheduleSave]);
 
@@ -778,7 +849,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
           const d = n.data as BaseNodeData;
           return [n.id, n.type, d?.resourceId, d?.label, d?.mountName];
         }),
-        e: edges.map((e) => [e.source, e.target]),
+        e: edges.map((e) => [e.source, e.target, e.type]),
       }),
     [nodes, edges],
   );
@@ -829,14 +900,24 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     }
 
     return reachable;
-  }, [selectedNode, nodes, edges]);
+    // BFS reads only node ids/types and edge endpoints — all captured by infraKey — so skip
+    // the per-drag-frame recompute that `nodes` position churn would otherwise cause.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNode, infraKey]);
 
   const displayNodes = useMemo(() => {
     if (!focusedIds) return nodes;
 
-    return nodes.map((n) =>
-      focusedIds.has(n.id) ? n : { ...n, style: { ...n.style, opacity: 0.25 } },
-    );
+    return nodes.map((n) => {
+      if (focusedIds.has(n.id)) return n;
+      let dimmed = dimmedNodeCache.get(n);
+      if (!dimmed) {
+        dimmed = { ...n, style: { ...n.style, opacity: 0.25 } };
+        dimmedNodeCache.set(n, dimmed);
+      }
+
+      return dimmed;
+    });
   }, [nodes, focusedIds]);
 
   const displayEdges = useMemo(() => {
@@ -845,11 +926,16 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     const base = dedupeEdges(edges);
     if (!focusedIds) return base;
 
-    return base.map((e) =>
-      focusedIds.has(e.source) && focusedIds.has(e.target)
-        ? e
-        : { ...e, style: { ...e.style, opacity: 0.12 } },
-    );
+    return base.map((e) => {
+      if (focusedIds.has(e.source) && focusedIds.has(e.target)) return e;
+      let dimmed = dimmedEdgeCache.get(e);
+      if (!dimmed) {
+        dimmed = { ...e, style: { ...e.style, opacity: 0.12 } };
+        dimmedEdgeCache.set(e, dimmed);
+      }
+
+      return dimmed;
+    });
   }, [edges, focusedIds]);
 
   const flow = (
@@ -861,6 +947,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         isValidConnection={isValidConnection}
+        onNodeDragStart={onNodeDragStart}
         onNodeDragStop={onNodeDragStop}
         onNodesDelete={onNodesDelete}
         onEdgesDelete={onEdgesDeleteHandler}
