@@ -281,7 +281,7 @@ MVP limits: uploaded code must already be bundled JavaScript, server-side `npm i
 6. Add the factory to the static `toolFactories` map with the exact model-facing tool name.
 7. Add config validation in [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/storage/agent-config.ts) only for options the account can set.
 8. Optionally set `config.tools.<name>.async: true` for slow local `execute` tools. Built-in async tools always run in the current Lambda; uploaded async tools are waited on for SSE and detached automatically for `/async`, channels, and NATS.
-9. Update the [API Reference](/api-reference) `AgentConfig.tools` schema, [`packages/demos/account.config.example.json`](https://github.com/beeblastco/filthy-panty/blob/dev/packages/demos/account.config.example.json), and focused tests/examples when the public config shape changes.
+9. Update the [API Reference](/api-reference) `AgentConfig.tools` schema, and focused tests/examples when the public config shape changes.
 
 Keep the factory small. It should read `context.config`, resolve any API key, return a `ToolSet`, and leave unrelated orchestration to `harness.ts`.
 

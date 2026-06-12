@@ -25,4 +25,4 @@ BeeBlast is a serverless AI agent platform that lets you build, deploy, and mana
 ## Need Help?
 
 - [Discord](https://discord.gg/beeblast) — Join our community
-- [GitHub](https://github.com/beeblast) — View source code and report issues
+- [GitHub](https://github.com/beeblastco/filthy-panty) — View source code and report issues

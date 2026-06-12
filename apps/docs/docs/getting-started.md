@@ -357,7 +357,7 @@ Each script creates a temporary account, runs the test, and cleans up.
 
 ### Define Your Own Agent Config
 
-The agent config is a JSON object that controls everything about how your agent runs. See [`packages/demos/account.config.example.json`](https://github.com/beeblastco/filthy-panty/blob/dev/packages/demos/account.config.example.json) for a full working example, or reference the [API Reference](/api-reference) for the complete `AgentConfig` schema.
+The agent config is a JSON object that controls everything about how your agent runs. Reference the [API Reference](/api-reference) for the complete `AgentConfig` schema.
 
 Key config sections:
 

@@ -1,3 +1,3 @@
-# cherry-coke
+# BeeBlast Dashboard
 
-BeeBlast dashboard frontend.
+Next.js dashboard frontend for the BeeBlast agent platform.

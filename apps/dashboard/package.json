@@ -5,9 +5,9 @@
   "private": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/beeblastco/cherry-coke.git"
+    "url": "https://github.com/beeblastco/filthy-panty.git"
   },
-  "homepage": "https://github.com/beeblastco/cherry-coke",
+  "homepage": "https://github.com/beeblastco/filthy-panty",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

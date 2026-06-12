@@ -1,6 +1,6 @@
 {
-  "name": "filthy-panty-monorepo",
-  "description": "BeeBlast monorepo — serverless AI agent harness (apps/core), dashboard (apps/dashboard), docs (apps/docs), Convex backend, SDK, CLI, and demos.",
+  "name": "filthy-panty",
+  "description": "Serverless, multi-account AI agent harness built on AWS Lambda and Bun. The open-source engine behind BeeBlast.",
   "type": "module",
   "private": true,
   "workspaces": [

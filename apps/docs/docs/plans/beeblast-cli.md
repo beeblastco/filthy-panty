@@ -16,7 +16,7 @@ inside their application repository, write normal TypeScript resource definition
 and let the CLI sync those definitions to the BeeBlast SaaS project/environment
 backed by Convex.
 
-This product workflow is SaaS-first. It should align with `../cherry-coke` and
+This product workflow is SaaS-first. It should align with `apps/dashboard` and
 its Convex schema/functions, because CLI changes are applied directly to the
 production SaaS control plane. DynamoDB-backed account-management paths in
 `filthy-panty` are for the community open-source/self-hosted runtime and should
@@ -98,8 +98,8 @@ not from a parallel hand-written schema.
 Primary public contract source of truth:
 
 - `docs/api-reference/openapi.yaml`
-- the Convex SaaS resource model in `../cherry-coke/convex/`
-- `../cherry-coke/convex/model/agentConfigCodec.ts`
+- the Convex SaaS resource model in `packages/convex/`
+- `packages/convex/model/agentConfigCodec.ts`
 - current runtime-compatible config semantics from `functions/_shared/storage/accounts.ts`
 
 The SDK should generate public API types from OpenAPI, then layer ergonomic
@@ -245,13 +245,13 @@ flowchart TD
   Code[".beeblast TypeScript resources"] --> Compile["Resource collector + type validation"]
   Compile --> Manifest["Desired-state manifest"]
   Manifest --> Diff["Diff remote BeeBlast SaaS project/environment"]
-  Diff --> Sync["Sync cherry-coke Convex SaaS records"]
-  Sync --> AgentConfigs["cherry-coke agentConfigs"]
+  Diff --> Sync["Sync dashboard Convex SaaS records"]
+  Sync --> AgentConfigs["dashboard agentConfigs"]
   AgentConfigs --> Agents["filthy-panty agents row + encrypted config"]
   Agents --> Harness["harness-processing runtime"]
 ```
 
-This should align with the current `cherry-coke` model:
+This should align with the current `dashboard` model:
 
 - projects
 - environments
@@ -271,7 +271,7 @@ but they are not the source of truth for the hosted BeeBlast product.
 
 BeeBlast has two related but distinct surfaces:
 
-- **Hosted SaaS product:** `../cherry-coke` + Convex. This is the primary target
+- **Hosted SaaS product:** `apps/dashboard` + Convex. This is the primary target
   for `beeblast dev`, `beeblast deploy`, generated IDs, project/environment
   management, logs, deployment history, billing-aware features, and production
   resource state.

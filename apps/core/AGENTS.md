@@ -1,10 +1,14 @@
-This is `apps/core` (`@filthy-panty/core`) — the serverless AI agent harness on AWS (Lambda + Vercel AI SDK + SST) and the future Rust port boundary. It lives in the filthy-panty Bun-workspaces monorepo. Paths in this file are relative to `apps/core/` unless written with `../../`.
+# apps/core Agent Guide
+
+Scope: this file applies to `apps/core` (`@filthy-panty/core`) — the serverless AI agent harness on AWS (Lambda + Vercel AI SDK + SST) and the future Rust port boundary.
+
+Paths in this file are relative to `apps/core/` unless written with `../../`. If you started directly in this folder, also read `../../AGENTS.md` for the monorepo-wide rules.
 
 Dependent workspaces (in this monorepo):
 
-- `../../packages/convex` (`@filthy-panty/convex`): shared Convex backend. Core's storage adapter at `functions/_shared/storage/convex/` reads it; convex mode is active on the `production` stage only (`dev` uses DynamoDB).
+- `../../packages/convex` (`@filthy-panty/convex`): shared Convex backend. Core's storage adapter at `functions/_shared/storage/convex/` reads it; convex mode is active on the `production` stage only (`dev` uses DynamoDB). Read `../../packages/convex/AGENTS.md` before changing Convex files.
 - `../../packages/filthy-panty` (`filthy-panty`): CLI + SDK npm package that calls core's deployed Function URLs. Update its types/client when the public API or config shape changes.
-- `../../packages/demos` (`@filthy-panty/demos`): runnable scripts against the deployed API, importing the SDK. Keep them and `account.config.example.json` in sync with config changes.
+- `../../packages/demos` (`@filthy-panty/demos`): runnable scripts against the deployed API, importing the SDK. Keep them in sync with config changes.
 - `../../apps/dashboard` (`@filthy-panty/dashboard`): Next.js dashboard sharing the Convex backend. Has its own AGENTS.md — read it before dashboard work.
 - `../../apps/docs` (`@filthy-panty/docs`): Docusaurus docs site. Update docs and diagrams there when core behavior changes.
 
@@ -13,12 +17,11 @@ Related external repos (siblings of the monorepo checkout):
 - `../../../infra`: infrastructure repo for the kubernetes cluster and VM provision. Keep `sst.config.ts` constants, naming pattern, and tag conventions aligned with it.
 - `../../../lambda-sanbdox`: custom Lambda runtime for sandbox to run bash, node and python script, simulate VM machine.
 
-Workspace rules:
+Local workspace rules:
 
-- Run `bun install` at the repo root only. Bun uses the isolated linker: every import a package uses must be declared in that package's `package.json` (no hoisted transitive freeloading).
-- Root scripts fan out with `bun run --filter`: `build`/`check`/`test`/`deploy` target `@filthy-panty/core`; `dashboard`/`dashboard:build` target `@filthy-panty/dashboard`; `docs`/`docs:build` target `@filthy-panty/docs`. Run `sst` commands from this directory (`apps/core/`).
-- Demos run via `bun run demo <script>.ts` from the repo root — the `demo` script is `bun --cwd packages/demos`, so Bun loads `packages/demos/.env`. Env files are per-package (Bun reads `.env` from cwd only): this dir's `.env` holds SST/deploy inputs, `packages/demos/.env` holds demo service URLs + keys, `packages/convex/.env.local` holds `CONVEX_DEPLOYMENT`, `apps/dashboard/.env.local` holds the Next.js app env. Each has a committed `.env.example` (demos, core, dashboard) — keep them in sync with new env reads, never commit real values.
-- React versions are intentionally split: docs pins React 18 (Docusaurus), dashboard pins React 19 (Next 16). Never add react to the root package.json.
+- Use Bun from the repo root for install/check/build scripts; run `sst` commands from `apps/core/`.
+- Demos run via `bun run demo <script>.ts` from the repo root, which loads `packages/demos/.env`.
+- Env files are per-package. Keep the matching `.env.example` files in sync with new env reads, and never commit real values.
 - The core storage adapter reaches the Convex generated API via `require("@filthy-panty/convex/_generated/api")` on purpose — a typed import would drag every backend source into core's stricter typecheck. Keep it a require().
 - `../../packages/convex/_generated/` is committed. After schema changes run `bun run --filter @filthy-panty/convex codegen` and commit the diff. The dashboard image build re-runs `convex deploy`.
 
@@ -49,8 +52,8 @@ Key rules:
 
 - Leave one blank line between the file header docstring and the first import or code line.
 - Keep file header docstrings short. They should describe the file boundary, what belongs there, and where adjacent logic should go. Do not turn them into a function inventory.
-- Use `bun run build` to compile all functions, then `bun run deploy` to deploy. Do not deploy except when the user ask to.
-- CI/CD runs automatically on push/PR via GitHub Actions. Use `gh run list` and `gh run view` to monitor pipeline status.
+- Use `bun run build` to compile all functions, then `bun run deploy` to deploy from local. Do not use local deploy except when the user ask to. Only have the `dev` stage.
+- Priority to push to `dev` or `main` branch and let CI/CD workflows handle deployment.
 - To add a new communication channel (e.g. Slack, WhatsApp): create `functions/_shared/<channel>-channel.ts` implementing the `ChannelAdapter` interface from `functions/_shared/channels.ts`, then wire the normalization path into `functions/harness-processing/integrations.ts`. Reply sending should stay inside that channel's `ChannelActions`; do not hardcode channel-specific logic into shared handlers or the core agent loop.
 - To add a new bot command: add an entry to the `commands` array in `functions/_shared/commands.ts` with aliases, description, and an execute function. Commands receive a `CommandContext` with a channel-agnostic `ChannelActions` interface — do not import channel-specific modules from commands.
 - Reply formatting uses `markdownToHtml()` from `functions/_shared/telegram.ts` for Telegram. New channels should implement their own formatting in their channel module if needed.
@@ -64,22 +67,7 @@ Remember:
 - `functions/harness-processing/handler.ts` should stay thin and orchestration-focused.
 - `functions/harness-processing/integrations.ts` owns request normalization and channel/webhook routing.
 - `functions/harness-processing/harness.ts` owns the model/tool execution loop.
-- Existing custom tools live in `functions/harness-processing/tools/`.
-- There is no `phicks` stage for deployment, only `dev`. DO NOT put to `phicks` stage.
+- Existing tools live in `functions/harness-processing/tools/`.
 - Update docs, examples, and tests file when changes somethings, refactoring something from the original code or added new features. Make sure that when writing the docs, only added in the suitable files, don’t add in every files, avoid writing too much, focus on visualization, diagrams. Remember to update diagrams as well.
-- Please check for the interface, some interface can be import directly from the ai-sdk vercel library or other library. Don't over doing this, don't create new interface where we can reuse the interface from the librar. Always double check when you want to create new interface or new types.
+- Please check for the interface, some interface can be import directly from the ai-sdk vercel library or other library. Don't over doing this, don't create new interface where we can reuse the interface from the library. Always double check when you want to create new interface or new types.
 - Don't over engineering new features or patch fixes. Keep it simple and keep it elegant. Keep the code readable and easy to visible, easy to navigate. Don't put too much abstraction and functions if it is not necessary.
-
-<!-- convex-ai-start -->
-
-This project uses [Convex](https://convex.dev) as its backend.
-
-When working on Convex code, **always read
-`../../packages/convex/_generated/ai/guidelines.md` first** for important guidelines on
-how to correctly use Convex APIs and patterns. The file contains rules that
-override what you may have learned about Convex from training data.
-
-Convex agent skills for common tasks can be installed by running
-`npx convex ai-files install`.
-
-<!-- convex-ai-end -->

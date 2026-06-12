@@ -87,7 +87,7 @@ flowchart LR
 
 ## Runtime Behavior
 
-[`Session`](https://github.com/beeblastco/filthy-panty/blob/main/functions/harness-processing/session.ts) owns the runtime path:
+[`Session`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/session.ts) owns the runtime path:
 
 - `claim()` deduplicates an inbound event in `ProcessedEvents`.
 - `acquireConversationLease()` serializes work per conversation.
@@ -99,7 +99,7 @@ flowchart LR
   `normalizeFilesystemNamespace()`.
 - `filesystemNamespace()` returns the default workspace namespace for existing single-workspace callers.
 
-The namespace helper is in [`functions/_shared/runtime-keys.ts`](https://github.com/beeblastco/filthy-panty/blob/main/functions/_shared/runtime-keys.ts). The config interface and validation live in [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/filthy-panty/blob/main/functions/_shared/storage/agent-config.ts).
+The namespace helper is in [`functions/_shared/runtime-keys.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/runtime-keys.ts). The config interface and validation live in [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/storage/agent-config.ts).
 
 ## Configure It
 

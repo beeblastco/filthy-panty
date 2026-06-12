@@ -4,9 +4,12 @@ on:
   push:
     branches:
       - main
+      - dev
     paths:
       - 'apps/dashboard/**'
       - 'packages/convex/**'
+      - 'package.json'
+      - 'bun.lock'
       - '.github/workflows/build-dashboard.yaml'
   workflow_dispatch:
 
