@@ -81,15 +81,18 @@ export function DeletableEdge({
   return (
     <>
       {/* Inline marker matching the mount/subagent arrowhead geometry, so every edge kind
-          shares one arrow style and the color can follow the per-edge hover state. */}
+          shares one arrow style and the color can follow the per-edge hover state. Sized in
+          user space (6 × the 1.5 base stroke) so the hover strokeWidth bump to 2 doesn't
+          scale the arrow up — markers default to strokeWidth units. */}
       <defs>
         <marker
           id={arrowId}
           viewBox="-10 -5 10 10"
           refX="-1"
           refY="0"
-          markerWidth="6"
-          markerHeight="6"
+          markerWidth="9"
+          markerHeight="9"
+          markerUnits="userSpaceOnUse"
           orient="auto-start-reverse"
         >
           <path d="M -10,-4 L 0,0 L -10,4 Z" fill={arrowColor} />
