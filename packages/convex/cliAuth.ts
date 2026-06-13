@@ -3,8 +3,7 @@
  */
 
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
-import { internalMutation, mutation, type MutationCtx } from "./_generated/server";
+import { internalMutation, mutation } from "./_generated/server";
 import { authKit } from "./auth";
 import { getActiveOrgForUser, requireOrgMember } from "./model/ownership/org";
 
@@ -154,8 +153,6 @@ export const exchangeLoginCode = internalMutation({
 export const resolveCliToken = internalMutation({
     args: {
         tokenHash: v.string(),
-        project: v.string(),
-        environment: v.string(),
     },
     returns: v.union(
         v.null(),
@@ -178,14 +175,6 @@ export const resolveCliToken = internalMutation({
         const account = await ctx.db.get(token.accountId);
         if (!account || account.status !== "active") return null;
 
-        const project = await resolveProject(ctx, token.orgId, args.project);
-        if (!project) return null;
-        const environment = await ctx.db
-            .query("environments")
-            .withIndex("by_projectId", (q) => q.eq("projectId", project))
-            .collect();
-        if (!environment.some((entry) => entry.name === normalizeName(args.environment))) return null;
-
         await ctx.db.patch(token._id, { lastUsedAt: now });
 
         return {
@@ -195,22 +184,3 @@ export const resolveCliToken = internalMutation({
         };
     },
 });
-
-async function resolveProject(
-    ctx: MutationCtx,
-    orgId: Id<"orgs">,
-    project: string,
-): Promise<Id<"projects"> | null> {
-    const normalized = normalizeName(project);
-    const projects = await ctx.db
-        .query("projects")
-        .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-        .collect();
-    const match = projects.find((entry) => entry.name === normalized || entry.slug === normalized);
-
-    return match?._id ?? null;
-}
-
-function normalizeName(value: string): string {
-    return value.trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "default";
-}

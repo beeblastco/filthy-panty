@@ -55,8 +55,6 @@ export const handle = httpAction(async (ctx, req) => {
         });
         const cliResolved = resolved ? null : await ctx.runMutation(internal.cliAuth.resolveCliToken, {
             tokenHash: auth.secretHash,
-            project: route.project,
-            environment: route.environment,
         });
         const authResult = resolved ?? (cliResolved ? {
             accountId: cliResolved.accountId,
