@@ -96,7 +96,7 @@ async function init(args: string[]): Promise<void> {
   const root = resolve(process.cwd(), PROJECT_DIR);
   await mkdir(resolve(root, GENERATED_DIR), { recursive: true });
   await writeStarter(resolve(root, "agents.ts"), starterAgent(), force);
-  await writeStarter(resolve(root, ".gitignore"), "_generated/*.tmp\n.cache/\n", force);
+  await writeStarter(resolve(root, ".gitignore"), "_generated/\n.cache/\n", force);
   await writeLocalEnvDefaults({
     dashboardUrl: optionValue(args, "--dashboard-url") ?? DEFAULT_DASHBOARD_URL,
     project: optionValue(args, "--project") ?? inferProjectName(process.cwd()),
@@ -153,6 +153,7 @@ async function deploy(args: string[]): Promise<void> {
   const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
   const result = await client.putManifest(manifest, hasFlag(args, "--prune"), hasFlag(args, "--rotate-key"));
   await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment);
+  await ensureGitIgnore();
   console.log(`Synced ${result.manifest.resources.length} resources to ${manifest.project}/${manifest.environment}`);
   await applyDeploymentKey(result.deployment);
   printSyncWarnings(result);
@@ -329,6 +330,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   // Push creates/updates (and canvas wiring) immediately, undeleted.
   let result = await client.putManifest(manifest, false);
   await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment);
+  await ensureGitIgnore();
 
   const declined = await loadDeclinedDeletes();
   const deletes = diff.filter((entry) => entry.operation === "delete");
@@ -531,6 +533,17 @@ async function writeStarter(path: string, contents: string, force: boolean): Pro
     if ((error as { code?: string }).code === "EEXIST") return;
     throw error;
   }
+}
+
+/** Ensure the project directory has a .gitignore that ignores generated files. */
+async function ensureGitIgnore(): Promise<void> {
+  const path = resolve(process.cwd(), PROJECT_DIR, ".gitignore");
+  const existing = await readTextIfExists(path);
+  const needed = ["_generated/", ".cache/"];
+  const missing = needed.filter((line) => !existing.split(/\r?\n/).some((l) => l.trim() === line));
+  if (missing.length === 0) return;
+  const body = existing ? existing.trimEnd() + "\n" + missing.join("\n") + "\n" : missing.join("\n") + "\n";
+  await writeFile(path, body, "utf8");
 }
 
 async function writeLocalEnvDefaults(options: {
