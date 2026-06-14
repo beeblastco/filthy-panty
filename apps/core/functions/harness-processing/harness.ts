@@ -19,6 +19,7 @@ import { logError, logInfo } from "../_shared/log.ts";
 import {
   modelOutputFromModelConfig,
   modelSettingsFromModelConfig,
+  providerOptionsFromModelConfig,
   resolveConfiguredModel,
 } from "./provider.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
@@ -98,6 +99,7 @@ export async function runAgentLoop(
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;
   const modelSettings = modelSettingsFromModelConfig(agentConfig);
   const modelOutput = modelOutputFromModelConfig(agentConfig);
+  const providerOptions = providerOptionsFromModelConfig(agentConfig);
   let approvalSummaries: ToolApprovalSummary[] = [];
   let finalResponse: JSONValue | undefined;
 
@@ -135,7 +137,7 @@ export async function runAgentLoop(
     messages: turnContext.messages,
     ...(modelOutput ? { output: modelOutput } : {}),
     ...(enabledTools ? { tools: enabledTools } : {}),
-    ...(agentConfig.model?.options ? { providerOptions: agentConfig.model.options as never } : {}),
+    ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
     stopWhen: stepCountIs(agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS),
     prepareStep: async () => {
       // `systemContextSnapshot` is the persisted system-message snapshot from

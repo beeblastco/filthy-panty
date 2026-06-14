@@ -9,6 +9,7 @@ import { basename, join, relative, resolve } from "node:path";
 import { watch } from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
+import { performance } from "node:perf_hooks";
 import { compileProject } from "../manifest.ts";
 import { GENERATED_DIR, PROJECT_DIR } from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
@@ -16,6 +17,7 @@ import { type CliLogEntry, diffManifests, FilthyPantySyncClient, type RemoteMani
 import { FilthyPantyClient } from "../client.ts";
 import { loadFilthyPantyRuntimeConfig } from "../runtime-config.ts";
 import { hasFlag, loginWithBrowser, optionValue, promptConfirm, promptSecret, requireAuth } from "./utils.ts";
+import { printDeploymentTarget, printDiffEntries, printReadyLine, printWarning } from "./output.ts";
 
 const VERSION = "0.1.0";
 const DEFAULT_DASHBOARD_URL = "https://dashboard.beeblast.co";
@@ -27,7 +29,7 @@ Usage: filthy-panty <command>
 Commands:
   init                 Create a filthypanty/ project shell
   login                Authenticate with WorkOS through the dashboard
-  dev                  Watch resources, sync the dev environment, and tail logs (confirms before deleting)
+  dev                  Watch resources and sync the dev environment (confirms before deleting)
   dev --once           Sync the dev environment a single time and exit (no watch)
   diff                 Show local desired state vs remote state
   deploy               Sync resources once; writes FILTHY_PANTY_API_KEY to .env.local on first run
@@ -42,7 +44,6 @@ Options:
   --env <name>          Target environment override
   --prune               Allow deploy to delete undeclared remote resources
   --rotate-key          Mint a fresh runtime API key on deploy and write it to .env.local
-  --no-logs             Do not tail logs during \`dev\`
   -f, --follow          Tail logs live (with \`logs\`)
   --all                 Include INFO/WARN/DEBUG logs (with \`logs\`)
   --limit <n>           Max log lines to fetch (with \`logs\`, default 50)
@@ -177,7 +178,7 @@ async function applyDeploymentKey(
   const path = resolve(process.cwd(), ".env.local");
   const existing = parseEnv(await readTextIfExists(path));
   if (!existing.FILTHY_PANTY_API_KEY) {
-    console.log(
+    printWarning(
       `⚠ Runtime key already exists (${deployment.keyHint}) but its secret is only shown once. ` +
       "Run `filthy-panty deploy --rotate-key` to mint a fresh one and write it to .env.local.",
     );
@@ -188,7 +189,7 @@ async function applyDeploymentKey(
 function printSyncWarnings(result: RemoteManifestResponse): void {
   const missing = result.warnings?.missingEnv ?? [];
   if (missing.length === 0) return;
-  console.log(
+  printWarning(
     `⚠ ${missing.length} env var(s) referenced in agent config but not set: ${missing.join(", ")}`,
   );
   for (const name of missing) console.log(`    filthy-panty env set ${name}`);
@@ -196,8 +197,12 @@ function printSyncWarnings(result: RemoteManifestResponse): void {
 
 async function dev(args: string[]): Promise<void> {
   if (hasFlag(args, "--once")) {
-    const result = await syncDev(args);
-    console.log(`Synced ${result.manifest.resources.length} resources to ${result.manifest.project}/${result.manifest.environment}`);
+    if (!process.env.FILTHY_PANTY_SUPPRESS_DEV_TARGET) {
+      await printDevTarget(args);
+    }
+    const start = performance.now();
+    await syncDev(args);
+    printReadyLine(performance.now() - start);
     return;
   }
 
@@ -207,18 +212,14 @@ async function dev(args: string[]): Promise<void> {
   // child shares a declined-deletes file so a removed resource is not re-prompted
   // on every later save.
   const declinedFile = join(tmpdir(), `filthy-panty-declined-${process.pid}.txt`);
-  const childEnv = { ...process.env, FILTHY_PANTY_DECLINED_FILE: declinedFile };
+  const childEnv = {
+    ...process.env,
+    FILTHY_PANTY_DECLINED_FILE: declinedFile,
+    FILTHY_PANTY_SUPPRESS_DEV_TARGET: "1",
+  };
 
+  await printDevTarget(args);
   await runSyncChild(args, childEnv);
-  console.log(`Watching ${PROJECT_DIR}/`);
-
-  // Live log tail alongside the file watch, mirroring `convex dev` so logs show
-  // up in the same terminal without opening the dashboard. Suppress with --no-logs.
-  const logController = new AbortController();
-  if (!hasFlag(args, "--no-logs")) {
-    console.log("Streaming logs (Ctrl+C to stop) …");
-    void startDevLogTail(args, logController.signal);
-  }
 
   let timer: NodeJS.Timeout | undefined;
   let syncing = false;
@@ -254,32 +255,9 @@ async function dev(args: string[]): Promise<void> {
   });
 
   process.on("SIGINT", () => {
-    logController.abort();
     watcher.close();
     process.exit(0);
   });
-}
-
-/**
- * Background log tail for `dev` watch mode. Compiles once to learn the
- * project/environment, then streams logs until `signal` aborts. Failures are
- * non-fatal: the file watch keeps running even if log streaming can't start.
- */
-async function startDevLogTail(args: string[], signal: AbortSignal): Promise<void> {
-  try {
-    const { manifest, config } = await compileProject({
-      project: optionValue(args, "--project"),
-      environment: optionValue(args, "--env"),
-      command: "dev",
-    });
-    const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
-    const client = new FilthyPantySyncClient({ dashboardUrl: auth.dashboardUrl, token: auth.token });
-    await tailLogs(client, manifest.project, manifest.environment, { errorOnly: true, signal: signal });
-  } catch (error) {
-    if (!signal.aborted) {
-      console.error(`log tail: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
 }
 
 /**
@@ -337,8 +315,8 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   const undecided = deletes.filter((entry) => !declined.has(`${entry.kind}:${entry.name}`));
   let pruned = false;
   if (undecided.length > 0) {
-    console.log("These remote resources are no longer declared locally:");
-    for (const entry of undecided) console.log(`  delete ${entry.kind}:${entry.name}`);
+    printWarning("⚠ These remote resources are no longer declared locally:");
+    printDiff(undecided);
     if (await promptConfirm(`Delete ${undecided.length} resource(s) from ${manifest.project}/${manifest.environment}?`)) {
       result = await client.putManifest(manifest, true);
       await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment);
@@ -354,12 +332,26 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   // until they are re-declared in code or pruned.
   if (!pruned && deletes.length > 0) {
     const names = deletes.map((entry) => `${entry.kind}:${entry.name}`).join(", ");
-    console.log(`⚠ ${deletes.length} undeclared resource(s) kept remotely: ${names} — re-declare in code or run \`deploy --prune\` to remove.`);
+    printWarning(`⚠ ${deletes.length} undeclared resource(s) kept remotely: ${names} — re-declare in code or run \`deploy --prune\` to remove.`);
   }
 
   await applyDeploymentKey(result.deployment);
   printSyncWarnings(result);
   return result;
+}
+
+async function printDevTarget(args: string[]): Promise<void> {
+  const { manifest, config } = await compileProject({
+    project: optionValue(args, "--project"),
+    environment: optionValue(args, "--env"),
+    command: "dev",
+  });
+  const auth = await requireAuth(optionValue(args, "--dashboard-url") ?? config.dashboardUrl);
+  printDeploymentTarget({
+    project: manifest.project,
+    environment: manifest.environment,
+    dashboardUrl: auth.dashboardUrl,
+  });
 }
 
 /** Reads the delete keys already declined this watch session, if any. */
@@ -679,13 +671,7 @@ function starterAgent(): string {
 }
 
 function printDiff(entries: ReturnType<typeof diffManifests>): void {
-  if (entries.length === 0) {
-    console.log("No changes.");
-    return;
-  }
-  for (const entry of entries) {
-    console.log(`${entry.operation.padEnd(6)} ${entry.kind}:${entry.name}`);
-  }
+  printDiffEntries(entries);
 }
 
 main().catch((error) => {

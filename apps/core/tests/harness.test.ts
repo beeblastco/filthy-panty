@@ -654,6 +654,147 @@ describe("runAgentLoop", () => {
     });
   });
 
+  it("ports top-level thinking config into providerOptions", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+
+    const stream = await runAgentLoop({
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
+      persistModelMessages: async () => { },
+      loadRefreshedSystemPromptParts: async () => ({
+        systemContextSnapshot: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    }, {
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
+      model: {
+        provider: "google",
+        modelId: "gemini-custom",
+        thinkingConfig: {
+          thinkingBudget: 8192,
+          includeThoughts: true,
+        },
+        thinkingEffort: "high",
+        options: {
+          google: {
+            thinkingConfig: {
+              includeThoughts: false,
+            },
+          },
+        },
+      },
+    });
+
+    await stream.consumeStream();
+
+    expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
+      providerOptions: {
+        google: {
+          thinkingConfig: {
+            thinkingLevel: "high",
+            thinkingBudget: 8192,
+            includeThoughts: false,
+          },
+        },
+      },
+    });
+    expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("thinkingConfig");
+    expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("thinkingEffort");
+  });
+
+  it("ports OpenAI and Anthropic reasoning aliases into providerOptions", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+
+    const baseSession = {
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
+      persistModelMessages: async () => { },
+      loadRefreshedSystemPromptParts: async () => ({
+        systemContextSnapshot: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never;
+    const turnContext = {
+      messages: [{ role: "user" as const, content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    };
+
+    const openAIStream = await runAgentLoop(baseSession, turnContext, {
+      provider: {
+        openai: {
+          apiKey: "openai-key",
+        },
+      },
+      model: {
+        provider: "openai",
+        modelId: "gpt-5-mini",
+        reasoningEffort: "high",
+        reasoningSummary: "detailed",
+      },
+    });
+    await openAIStream.consumeStream();
+
+    expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
+      providerOptions: {
+        openai: {
+          reasoningEffort: "high",
+          reasoningSummary: "detailed",
+        },
+      },
+    });
+
+    const anthropicStream = await runAgentLoop(baseSession, turnContext, {
+      provider: {
+        anthropic: {
+          apiKey: "anthropic-key",
+        },
+      },
+      model: {
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        thinking: {
+          type: "enabled",
+          budgetTokens: 12000,
+        },
+        effort: "low",
+      },
+    });
+    await anthropicStream.consumeStream();
+
+    expect(streamTextMock.mock.calls[1]?.[0]).toMatchObject({
+      providerOptions: {
+        anthropic: {
+          thinking: {
+            type: "enabled",
+            budgetTokens: 12000,
+          },
+          effort: "low",
+        },
+      },
+    });
+  });
+
   it("passes structured output config into streamText and returns parsed output", async () => {
     streamTextScenario = "structured-output";
     installHarnessEnv();
@@ -1328,6 +1469,7 @@ describe("runAgentLoop", () => {
       model: {
         provider: "gateway",
         modelId: "openai/gpt-5.4",
+        reasoningEffort: "low",
       },
     });
     await gatewayStream.consumeStream();
@@ -1338,6 +1480,11 @@ describe("runAgentLoop", () => {
     expect(gatewayModelMock).toHaveBeenCalledWith("openai/gpt-5.4");
     expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
       model: { provider: "gateway", modelId: "openai/gpt-5.4" },
+      providerOptions: {
+        openai: {
+          reasoningEffort: "low",
+        },
+      },
     });
   });
 });

@@ -77,6 +77,17 @@ export interface AgentModelConfig {
   modelId?: string;
   options?: Record<string, unknown>;
   output?: AgentModelOutputConfig;
+  /**
+   * Convenience aliases for common AI SDK provider options. At runtime these
+   * are translated into `providerOptions` for the active provider and merged
+   * with `options`, which remains the raw providerOptions escape hatch.
+   */
+  thinking?: Record<string, unknown>;
+  thinkingConfig?: Record<string, unknown>;
+  thinkingEffort?: string;
+  reasoningEffort?: string;
+  reasoningSummary?: string;
+  effort?: string;
   [key: string]: unknown;
 }
 
@@ -372,6 +383,16 @@ function normalizeModelConfig(value: unknown): void {
   if (config.options !== undefined && !isPlainObject(config.options)) {
     throw new Error("config.model.options must be an object");
   }
+  if (config.thinking !== undefined && !isPlainObject(config.thinking)) {
+    throw new Error("config.model.thinking must be an object");
+  }
+  if (config.thinkingConfig !== undefined && !isPlainObject(config.thinkingConfig)) {
+    throw new Error("config.model.thinkingConfig must be an object");
+  }
+  assertOptionalString(config.thinkingEffort, "config.model.thinkingEffort");
+  assertOptionalString(config.reasoningEffort, "config.model.reasoningEffort");
+  assertOptionalString(config.reasoningSummary, "config.model.reasoningSummary");
+  assertOptionalString(config.effort, "config.model.effort");
   normalizeModelOutputConfig(config.output);
 }
 

@@ -1,0 +1,63 @@
+import { expect, test } from "bun:test";
+import {
+  formatDeploymentTarget,
+  formatDiffEntries,
+  formatReadyLine,
+  formatWarning,
+} from "../src/cli/output.ts";
+
+test("formatDiffEntries prints nothing for no changes", () => {
+  expect(formatDiffEntries([], { color: false })).toEqual([]);
+});
+
+test("formatDiffEntries renders create, update, and delete labels", () => {
+  const lines = formatDiffEntries([
+    { operation: "create", kind: "agent", name: "support" },
+    { operation: "update", kind: "workspace", name: "repo" },
+    { operation: "delete", kind: "sandbox", name: "old" },
+  ], { color: false });
+
+  expect(lines).toEqual([
+    "  [+] agent:support",
+    "  [*] workspace:repo",
+    "  [-] sandbox:old",
+  ]);
+});
+
+test("formatDiffEntries colors create, update, and delete markers", () => {
+  const lines = formatDiffEntries([
+    { operation: "create", kind: "agent", name: "support" },
+    { operation: "update", kind: "workspace", name: "repo" },
+    { operation: "delete", kind: "sandbox", name: "old" },
+  ], { color: true });
+
+  expect(lines[0]).toBe("  [\x1b[32m+\x1b[0m] agent:support");
+  expect(lines[1]).toBe("  [\x1b[36m*\x1b[0m] workspace:repo");
+  expect(lines[2]).toBe("  [\x1b[31m-\x1b[0m] sandbox:old");
+});
+
+test("formatReadyLine includes a checkmark, time, message, and duration", () => {
+  const line = formatReadyLine(3110, {
+    color: false,
+    now: new Date(2026, 5, 14, 20, 5, 32),
+  });
+
+  expect(line).toBe("✔ 20:05:32 Resources ready! (3.11s)");
+});
+
+test("formatDeploymentTarget includes project, environment, and dashboard URL", () => {
+  const output = formatDeploymentTarget({
+    project: "sandbox-stateless",
+    environment: "development",
+    dashboardUrl: "https://dashboard.dev.beeblast.co",
+  }, { color: false });
+
+  expect(output).toContain("▌ Developing against deployment:");
+  expect(output).toContain("[Development] sandbox-stateless/development (dashboard)");
+  expect(output).toContain("▌ └─ https://dashboard.dev.beeblast.co");
+});
+
+test("formatWarning renders yellow warning output", () => {
+  expect(formatWarning("⚠ Heads up", { color: false })).toBe("⚠ Heads up");
+  expect(formatWarning("⚠ Heads up", { color: true })).toBe("\x1b[33m⚠ Heads up\x1b[0m");
+});

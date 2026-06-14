@@ -17,11 +17,7 @@ export const myAgent = defineAgent("my-agent", {
     modelId: "MiniMax-M3",
   },
   agent: {
-    system: [
-      "You only have the bash tool — there is no persistent workspace.",
-      "Each bash call is a fresh container, so write any files and run them in the SAME command.",
-      "Report stdout and status for every run.",
-    ].join("\n"),
+    system: "You are a helpful assistant. You can use bash commands to write files and run code in a sandboxed environment. Always use the tools provided to interact with the sandbox, and never assume you have direct access to the filesystem or execution environment.",
   },
   sandbox: statelessSandbox,
 });

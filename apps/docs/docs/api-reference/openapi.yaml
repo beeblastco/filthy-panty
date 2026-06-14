@@ -2108,6 +2108,36 @@ components:
           type: number
         maxOutputTokens:
           type: integer
+        thinking:
+          type: object
+          description: Anthropic thinking configuration. Ported to `providerOptions.anthropic.thinking`.
+          additionalProperties: true
+          example:
+            type: enabled
+            budgetTokens: 12000
+        thinkingConfig:
+          type: object
+          description: Google Gemini thinking configuration. Ported to `providerOptions.google.thinkingConfig`.
+          additionalProperties: true
+          example:
+            thinkingBudget: 8192
+            includeThoughts: true
+        thinkingEffort:
+          type: string
+          description: Provider-neutral convenience alias. Ports to OpenAI `reasoningEffort`, Anthropic `effort`, or Google `thinkingConfig.thinkingLevel` based on the active provider.
+          enum: [none, minimal, low, medium, high, xhigh, max]
+        reasoningEffort:
+          type: string
+          description: OpenAI reasoning effort. Ported to `providerOptions.openai.reasoningEffort`.
+          enum: [none, minimal, low, medium, high, xhigh]
+        reasoningSummary:
+          type: string
+          description: OpenAI reasoning summary mode. Ported to `providerOptions.openai.reasoningSummary`.
+          enum: [auto, detailed]
+        effort:
+          type: string
+          description: Anthropic effort setting. Ported to `providerOptions.anthropic.effort`.
+          enum: [low, medium, high, max]
         topP:
           type: number
         topK:

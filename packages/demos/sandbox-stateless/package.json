@@ -4,13 +4,13 @@
   "private": true,
   "scripts": {
     "check": "tsc --noEmit",
-    "cli:login": "bun ../../filthy-panty/src/cli/index.ts login --dashboard-url https://dashboard.dev.beeblast.co",
-    "dev": "bun ../../filthy-panty/src/cli/index.ts dev --dashboard-url https://dashboard.dev.beeblast.co",
-    "deploy": "bun ../../filthy-panty/src/cli/index.ts deploy --dashboard-url https://dashboard.dev.beeblast.co",
+    "cli:login": "filthy-panty login --dashboard-url https://dashboard.dev.beeblast.co",
+    "dev": "filthy-panty dev --dashboard-url https://dashboard.dev.beeblast.co",
+    "deploy": "filthy-panty deploy --dashboard-url https://dashboard.dev.beeblast.co",
     "start": "bun index.ts"
   },
   "dependencies": {
-    "filthy-panty": "workspace:*"
+    "filthy-panty": "file:../../filthy-panty"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14"

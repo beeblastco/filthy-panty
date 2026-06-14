@@ -20,8 +20,6 @@
     "ai": "^6.0.195"
   },
   "devDependencies": {
-    "@filthy-panty/convex": "workspace:*",
-    "@filthy-panty/core": "workspace:*",
     "@types/bun": "^1.3.14"
   },
   "peerDependencies": {

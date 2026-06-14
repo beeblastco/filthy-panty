@@ -130,15 +130,6 @@
         "convex": "^1.40.0",
       },
     },
-    "packages/demos/sandbox-stateless": {
-      "name": "@filthy-panty/demo-sandbox-stateless",
-      "dependencies": {
-        "filthy-panty": "workspace:*",
-      },
-      "devDependencies": {
-        "@types/bun": "^1.3.14",
-      },
-    },
     "packages/filthy-panty": {
       "name": "filthy-panty",
       "version": "0.1.0",
@@ -149,8 +140,6 @@
         "ai": "^6.0.195",
       },
       "devDependencies": {
-        "@filthy-panty/convex": "workspace:*",
-        "@filthy-panty/core": "workspace:*",
         "@types/bun": "^1.3.14",
       },
       "peerDependencies": {
@@ -811,8 +800,6 @@
     "@filthy-panty/core": ["@filthy-panty/core@workspace:apps/core"],
 
     "@filthy-panty/dashboard": ["@filthy-panty/dashboard@workspace:apps/dashboard"],
-
-    "@filthy-panty/demo-sandbox-stateless": ["@filthy-panty/demo-sandbox-stateless@workspace:packages/demos/sandbox-stateless"],
 
     "@filthy-panty/docs": ["@filthy-panty/docs@workspace:apps/docs"],
 

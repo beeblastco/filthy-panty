@@ -184,6 +184,11 @@ describe("agent config", () => {
         provider: "google",
         modelId: "gemini-custom",
         temperature: 0.2,
+        thinkingConfig: {
+          thinkingBudget: 8192,
+          includeThoughts: true,
+        },
+        thinkingEffort: "high",
         options: {
           google: {
             thinkingConfig: {
@@ -218,6 +223,11 @@ describe("agent config", () => {
         provider: "google",
         modelId: "gemini-custom",
         temperature: 0.2,
+        thinkingConfig: {
+          thinkingBudget: 8192,
+          includeThoughts: true,
+        },
+        thinkingEffort: "high",
         options: {
           google: {
             thinkingConfig: {
@@ -239,6 +249,12 @@ describe("agent config", () => {
         options: "bad",
       },
     })).toThrow("config.model.options must be an object");
+
+    expect(() => normalizeAgentConfig({
+      model: {
+        thinkingConfig: "bad",
+      },
+    })).toThrow("config.model.thinkingConfig must be an object");
 
     expect(() => normalizeAgentConfig({
       provider: {
@@ -726,6 +742,10 @@ describe("agent config", () => {
       model: {
         provider: "google",
         modelId: "gemini-custom",
+        thinkingConfig: {
+          thinkingBudget: 8192,
+        },
+        thinkingEffort: "medium",
         options: {
           google: {
             thinkingConfig: {
@@ -783,6 +803,10 @@ describe("agent config", () => {
       model: {
         provider: "google",
         modelId: "gemini-custom",
+        thinkingConfig: {
+          thinkingBudget: 8192,
+        },
+        thinkingEffort: "medium",
         options: {
           google: {
             thinkingConfig: {

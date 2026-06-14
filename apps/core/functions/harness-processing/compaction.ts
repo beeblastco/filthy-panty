@@ -7,7 +7,11 @@ import { generateText, type ModelMessage, type SystemModelMessage } from "ai";
 import { DEFAULT_COMPACTION_PROMPT } from "../_shared/.generated/compaction-prompt.ts";
 import type { AgentConfig } from "../_shared/storage/index.ts";
 import { logInfo } from "../_shared/log.ts";
-import { modelSettingsFromModelConfig, resolveConfiguredModel } from "./provider.ts";
+import {
+  modelSettingsFromModelConfig,
+  providerOptionsFromModelConfig,
+  resolveConfiguredModel,
+} from "./provider.ts";
 import { hasPendingToolApprovalResponse, stripReasoningFromMessages } from "./pruning.ts";
 
 const DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH = 100_000; // Runtime default when compaction is enabled without a max.
@@ -46,6 +50,7 @@ export async function compactSessionContext(input: CompactionInput): Promise<Sys
   }
 
   const configuredModel = resolveConfiguredModel(input.agentConfig);
+  const providerOptions = providerOptionsFromModelConfig(input.agentConfig);
   const result = await generateText({
     ...modelSettingsFromModelConfig(input.agentConfig),
     model: configuredModel.model,
@@ -54,7 +59,7 @@ export async function compactSessionContext(input: CompactionInput): Promise<Sys
       role: "user",
       content: formatMessagesForCompaction(compactableContext),
     }],
-    ...(input.agentConfig.model?.options ? { providerOptions: input.agentConfig.model.options as never } : {}),
+    ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
   });
 
   const summary = createCompactionSummaryMessage(result.text);
