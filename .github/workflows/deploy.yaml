@@ -2,7 +2,8 @@
 # `main` = SaaS production: PR CI already validated, skip re-validation and
 #   deploy directly (Convex storage provider).
 # `dev` = OSS / community staging: re-validates (typecheck + test + build)
-#   before deploying. DynamoDB only.
+#   before deploying. Uses Convex storage when the development environment
+#   provides CONVEX_URL + CONVEX_DEPLOY_KEY, otherwise DynamoDB.
 
 name: Deploy
 
@@ -66,8 +67,8 @@ jobs:
     # Run if validate succeeded OR validate was skipped (main branch).
     if: ${{ always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped') && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'))) }}
     runs-on: ubuntu-24.04
-    # main resolves CONVEX_URL/CONVEX_DEPLOY_KEY from the production
-    # environment (prod Convex deployment); repo-level secrets stay dev.
+    # Resolves CONVEX_URL/CONVEX_DEPLOY_KEY from the matching environment:
+    # production (prod Convex) on main, development (dev Convex) otherwise.
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
     concurrency:
       group: ${{ github.workflow }}-deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || github.ref_name }}
@@ -130,9 +131,10 @@ jobs:
       KUBERNETES_SANDBOX_IMAGE: ${{ vars.KUBERNETES_SANDBOX_IMAGE }}
       KUBERNETES_SANDBOX_SERVICE_ACCOUNT: ${{ vars.KUBERNETES_SANDBOX_SERVICE_ACCOUNT }}
       KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS: ${{ vars.KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS }}
-      # Convex storage provider — required only on main branch.
-      CONVEX_URL: ${{ github.ref == 'refs/heads/main' && secrets.CONVEX_URL || '' }}
-      CONVEX_DEPLOY_KEY: ${{ github.ref == 'refs/heads/main' && secrets.CONVEX_DEPLOY_KEY || '' }}
+      # Convex storage provider. Resolved per environment (production on main,
+      # development otherwise). A stage uses Convex when both are set, else DynamoDB.
+      CONVEX_URL: ${{ secrets.CONVEX_URL }}
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
       # This is for testing purposes only.
       MOCK_WEBHOOK_SECRET: ${{ secrets.MOCK_WEBHOOK_SECRET }}
     steps:
@@ -246,7 +248,7 @@ jobs:
       # accounts are owned by cherry-coke / Convex; calling account-manage
       # in convex mode would hit NOT_SUPPORTED_IN_CONVEX_MODE.
       - name: Configure Telegram account webhook
-        if: github.ref != 'refs/heads/main'
+        if: env.CONVEX_DEPLOY_KEY == ''
         env:
           ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.SST_SECRET_TELEGRAMBOTTOKEN }}
@@ -274,7 +276,7 @@ jobs:
           bun run scripts/configure-telegram-account.ts
 
       - name: Configure Discord account
-        if: github.ref != 'refs/heads/main'
+        if: env.CONVEX_DEPLOY_KEY == ''
         env:
           ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN || secrets.SST_SECRET_DISCORDBOTTOKEN }}
@@ -324,7 +326,7 @@ jobs:
           bun run scripts/discord-sync.ts
 
       - name: Configure GitHub account
-        if: github.ref != 'refs/heads/main'
+        if: env.CONVEX_DEPLOY_KEY == ''
         env:
           ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           GITHUB_APP_ID: ${{ secrets.GITHUB_APP_ID || secrets.SST_SECRET_GITHUBAPPID }}
@@ -354,7 +356,7 @@ jobs:
           bun run scripts/configure-github-account.ts
 
       - name: Configure Slack account
-        if: github.ref != 'refs/heads/main'
+        if: env.CONVEX_DEPLOY_KEY == ''
         env:
           ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN || secrets.SST_SECRET_SLACKBOTTOKEN }}
@@ -386,7 +388,7 @@ jobs:
           bun run scripts/configure-slack-account.ts
 
       - name: Configure Zalo account webhook
-        if: github.ref != 'refs/heads/main'
+        if: env.CONVEX_DEPLOY_KEY == ''
         env:
           ADMIN_ACCOUNT_SECRET: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
           ZALO_BOT_TOKEN: ${{ secrets.ZALO_BOT_TOKEN || secrets.SST_SECRET_ZALOBOTTOKEN }}

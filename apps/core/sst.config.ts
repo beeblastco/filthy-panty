@@ -21,9 +21,9 @@ const SANDBOX_WORKSPACE_MOUNT_PATH = "/mnt/workspaces";
 const NATS_URL = process.env.NATS_URL?.trim();
 // Token-auth credential for the NATS server; omit for an unauthenticated server.
 const NATS_TOKEN = process.env.NATS_TOKEN?.trim();
-// Production runs the Convex storage provider. Other stages stay on
-// DynamoDB. CONVEX_URL + CONVEX_DEPLOY_KEY are set by the deploy workflow only
-// for the main branch.
+// Convex storage provider credentials. Always set for production; also set for
+// any other stage (e.g. dev) that opts into Convex storage. When present the
+// stage runs the Convex provider instead of DynamoDB (see `useConvexStorage`).
 const CONVEX_URL = process.env.CONVEX_URL?.trim();
 const CONVEX_DEPLOY_KEY = process.env.CONVEX_DEPLOY_KEY?.trim();
 const DAYTONA_ORGANIZATION_ID = process.env.DAYTONA_ORGANIZATION_ID?.trim();
@@ -190,12 +190,18 @@ export default $config({
     // Async tools, dedupe, conversations still rely on DDB until those modules
     // are lifted into the StorageProvider abstraction in a follow-up.
     const isProduction = stage === "production";
-    if (isProduction && (!CONVEX_URL || !CONVEX_DEPLOY_KEY)) {
+    // Convex storage is used whenever Convex credentials are supplied: always on
+    // production, and opt-in on any other stage (e.g. dev) by setting CONVEX_URL +
+    // CONVEX_DEPLOY_KEY. Stages without them fall back to DynamoDB. When a stage
+    // switches to Convex the per-account config tables below are dropped from the
+    // desired state, so the deploy also removes those DynamoDB tables.
+    const useConvexStorage = Boolean(CONVEX_URL && CONVEX_DEPLOY_KEY);
+    if (isProduction && !useConvexStorage) {
       throw new Error(
         "Production stage requires CONVEX_URL and CONVEX_DEPLOY_KEY env vars",
       );
     }
-    const storageEnv: Record<string, string> = isProduction
+    const storageEnv: Record<string, string> = useConvexStorage
       ? {
         STORAGE_PROVIDER: "convex",
         CONVEX_URL: CONVEX_URL!,
@@ -253,7 +259,7 @@ export default $config({
     // accounts / agents / cron-jobs DDB tables are skipped on production —
     // those domains live in Convex on SaaS. Tables stay for dev / community
     // stages so the DynamoDB provider has somewhere to read/write.
-    const accountConfigsTable = isProduction
+    const accountConfigsTable = useConvexStorage
       ? null
       : new sst.aws.Dynamo("AccountConfig", {
         fields: {
@@ -286,7 +292,7 @@ export default $config({
       },
     });
 
-    const agentConfigsTable = isProduction
+    const agentConfigsTable = useConvexStorage
       ? null
       : new sst.aws.Dynamo("AgentConfig", {
         fields: {
@@ -304,7 +310,7 @@ export default $config({
 
     // Account-scoped, reusable sandbox / workspace config records. Like agents,
     // these live in Convex on production and DynamoDB elsewhere.
-    const sandboxConfigsTable = isProduction
+    const sandboxConfigsTable = useConvexStorage
       ? null
       : new sst.aws.Dynamo("SandboxConfig", {
         fields: {
@@ -320,7 +326,7 @@ export default $config({
         },
       });
 
-    const workspaceConfigsTable = isProduction
+    const workspaceConfigsTable = useConvexStorage
       ? null
       : new sst.aws.Dynamo("WorkspaceConfig", {
         fields: {
@@ -336,7 +342,7 @@ export default $config({
         },
       });
 
-    const accountToolsTable = isProduction
+    const accountToolsTable = useConvexStorage
       ? null
       : new sst.aws.Dynamo("AccountTool", {
         fields: {
@@ -352,7 +358,7 @@ export default $config({
         },
       });
 
-    const cronJobsTable = isProduction
+    const cronJobsTable = useConvexStorage
       ? null
       : new sst.aws.Dynamo("CronJob", {
         fields: {
