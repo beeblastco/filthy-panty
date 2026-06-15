@@ -27,8 +27,10 @@ COPY --from=deps /app/packages/convex/node_modules ./packages/convex/node_module
 COPY package.json bun.lock ./
 COPY packages/convex/ ./packages/convex/
 COPY apps/dashboard/ ./apps/dashboard/
-RUN --mount=type=secret,id=CONVEX_DEPLOY_KEY,env=CONVEX_DEPLOY_KEY \
-    cd packages/convex && bunx convex deploy --cmd 'bun run --cwd ../../apps/dashboard build'
+# Convex is deployed separately by .github/workflows/deploy-convex.yaml; this
+# build only compiles the Next app against the committed _generated/ types and
+# NEXT_PUBLIC_CONVEX_URL.
+RUN bun run --cwd apps/dashboard build
 
 FROM oven/bun:1.3.4-alpine AS runner
 WORKDIR /app

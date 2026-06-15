@@ -20,8 +20,8 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     # main builds against the production Convex deployment, everything else
-    # against dev. Environment-scoped secrets/vars (CONVEX_DEPLOY_KEY,
-    # NEXT_PUBLIC_CONVEX_URL, ...) override the repo-level dev defaults.
+    # against dev. Environment-scoped vars (NEXT_PUBLIC_CONVEX_URL, ...) override
+    # the repo-level dev defaults. Convex itself is deployed by deploy-convex.yaml.
     environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
     permissions:
       contents: read
@@ -55,20 +55,9 @@ jobs:
         shell: bash
         env:
           NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL }}
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
         run: |
           if [[ -z "$NEXT_PUBLIC_CONVEX_URL" ]]; then
             echo "Missing repository variable: NEXT_PUBLIC_CONVEX_URL" >&2
-            exit 1
-          fi
-          if [[ -z "$CONVEX_DEPLOY_KEY" ]]; then
-            echo "Missing repository secret: CONVEX_DEPLOY_KEY" >&2
-            exit 1
-          fi
-          # Convex deploy keys encode their target deployment. Refuse to ship a
-          # main build that would deploy functions to a non-production deployment.
-          if [[ "${{ github.ref_name }}" == "main" && "$CONVEX_DEPLOY_KEY" != prod:* ]]; then
-            echo "main requires a production Convex deploy key (prod:...) in the 'production' environment secret CONVEX_DEPLOY_KEY" >&2
             exit 1
           fi
 
@@ -81,8 +70,6 @@ jobs:
           tags: |
             ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
-          secrets: |
-            CONVEX_DEPLOY_KEY=${{ secrets.CONVEX_DEPLOY_KEY }}
           build-args: |
             NEXT_PUBLIC_AGENT_GATEWAY_URL=${{ vars.NEXT_PUBLIC_AGENT_GATEWAY_URL }}
             NEXT_PUBLIC_CONVEX_URL=${{ vars.NEXT_PUBLIC_CONVEX_URL }}

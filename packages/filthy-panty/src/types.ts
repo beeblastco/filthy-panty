@@ -71,6 +71,19 @@ export interface CronJob {
   lastError?: string;
 }
 
+export interface CronJobRun {
+  accountId: string;
+  cronJobId: string;
+  runId: string;
+  eventId: string;
+  conversationKey: string;
+  status: CronJobLastStatus;
+  result?: unknown;
+  error?: string;
+  startedAt: string;
+  completedAt?: string;
+}
+
 export interface Skill {
   path: string;
   name: string;

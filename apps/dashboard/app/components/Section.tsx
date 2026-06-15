@@ -13,7 +13,7 @@ export function Section({
     children: React.ReactNode;
 }) {
     return (
-        <section className={cn("grid gap-4", danger && "rounded-lg border border-destructive/40 p-6")}>
+        <section className={cn("grid grid-cols-1 gap-4", danger && "rounded-lg border border-destructive/40 p-6")}>
             <div>
                 <h2 className={cn("text-sm font-semibold", danger ? "text-destructive" : "text-foreground")}>
                     {title}

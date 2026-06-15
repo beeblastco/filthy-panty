@@ -1,51 +1,47 @@
 /**
- * Cron job SDK example using declarative filthy-panty resources.
+ * Prints the synced cron job status and recent run results.
  *
- * The agent is defined in filthypanty/agents.ts and deployed via the CLI.
- * This script creates a one-time schedule for one minute from now using the
- * deployed agent's ID.
+ * Cron jobs are declared in filthypanty/agents.ts and synced by `bun run dev`.
  */
 
 import { FilthyPantyClient } from "filthy-panty";
 import { api } from "./filthypanty/_generated/api";
 
-const timezone = process.env.CRON_TIMEZONE ?? "Europe/Amsterdam";
-
-const scheduleExpression = atExpressionOneMinuteFromNow(timezone);
+const cronJobName = "one-minute-cron-test";
+const cronJobId = (api.cronJobs as Record<string, string | undefined>)[cronJobName];
 
 const client = new FilthyPantyClient({
-  host: process.env.FILTHY_PANTY_HOST,
   apiKey: process.env.FILTHY_PANTY_API_KEY!,
+  host: process.env.FILTHY_PANTY_HOST!,
 });
 
-const cronJob = await client.createCronJob({
-  name: "One minute cron test",
-  agent: api.agents.cronAgent,
-  conversationKey: "cron:one-minute-test",
-  prompt: "Confirm this scheduled cron test ran successfully in one sentence.",
-  scheduleExpression,
-  timezone,
-});
+const cronJob = cronJobId
+  ? await client.getCronJob(cronJobId)
+  : (await client.listCronJobs()).find((job) => job.name === cronJobName) ?? null;
+
+if (!cronJob) {
+  throw new Error(`Cron job not found: ${cronJobName}. Run \`bun run dev\` first.`);
+}
+
+const runs = await client.listCronJobRuns(cronJob.cronJobId, { limit: 10 });
 
 console.log(JSON.stringify({
-  agentId: api.agents.cronAgent.id,
-  scheduleExpression,
-  timezone,
-  cronJob,
+  cronJob: {
+    cronJobId: cronJob.cronJobId,
+    name: cronJob.name,
+    status: cronJob.status,
+    lastStatus: cronJob.lastStatus ?? null,
+    lastInvokedAt: cronJob.lastInvokedAt ?? null,
+    lastError: cronJob.lastError ?? null,
+  },
+  runs: runs.map((run) => ({
+    runId: run.runId,
+    eventId: run.eventId,
+    conversationKey: run.conversationKey,
+    status: run.status,
+    startedAt: run.startedAt,
+    completedAt: run.completedAt ?? null,
+    result: run.result ?? null,
+    error: run.error ?? null,
+  })),
 }, null, 2));
-
-function atExpressionOneMinuteFromNow(timeZone: string): string {
-  const date = new Date(Date.now() + 60_000);
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(date);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `at(${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second})`;
-}

@@ -6,5 +6,5 @@
     "moduleResolution": "Bundler",
     "types": ["bun"]
   },
-  "include": ["filthypanty/**/*.ts"]
+  "include": ["filthypanty/**/*.ts", "index.ts"]
 }

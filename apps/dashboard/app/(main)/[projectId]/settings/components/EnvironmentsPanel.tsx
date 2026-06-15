@@ -8,7 +8,7 @@ import { cn } from "@/app/lib/utils";
 import { api } from "@filthy-panty/convex/_generated/api";
 import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
-import { Eye, EyeOff, Plus, Trash2 } from "lucide-react";
+import { Check, Eye, EyeOff, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
 
 // Shared sizing so read-only value chips and the add inputs match height, font,
@@ -102,9 +102,9 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
             {variables && variables.length === 0 && (
                 <p className="text-sm text-muted-foreground">No variables yet.</p>
             )}
-            <div className="grid gap-2">
+            <div className="grid grid-cols-1 gap-2">
                 {variables?.map((v) => (
-                    <div key={v._id} className="flex items-center gap-2">
+                    <div key={v._id} className="flex min-w-0 items-center gap-2">
                         <code className={cn(FIELD_CLASS, "truncate rounded-md bg-muted px-3 leading-8")}>{v.name}</code>
                         <code className={cn(FIELD_CLASS, "truncate rounded-md bg-muted px-3 leading-8")}>
                             {revealed[v._id] !== undefined
@@ -116,7 +116,7 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
                         <Button
                             variant="ghost"
                             size="icon-xs"
-                            className="cursor-pointer text-muted-foreground hover:text-foreground"
+                            className="shrink-0 cursor-pointer text-muted-foreground hover:text-foreground"
                             title={revealed[v._id] !== undefined ? "Hide value" : "Reveal value"}
                             onClick={() => toggleReveal(v._id)}
                         >
@@ -125,7 +125,7 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
                         <Button
                             variant="ghost"
                             size="icon-xs"
-                            className="cursor-pointer text-muted-foreground hover:text-destructive"
+                            className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
                             onClick={() => removeVariable({ variableId: v._id })}
                         >
                             <Trash2 className="size-3.5" />
@@ -134,7 +134,7 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
                 ))}
             </div>
             {adding ? (
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 items-center gap-2">
                     <Input
                         value={name}
                         onChange={(e) => setName(e.target.value)}
@@ -149,24 +149,34 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
                         className={cn(FIELD_CLASS, "md:text-xs")}
                     />
                     <Button
-                        size="sm"
-                        className="cursor-pointer disabled:cursor-not-allowed"
+                        variant="ghost"
+                        size="icon-xs"
+                        className={cn(
+                            "shrink-0",
+                            !name.trim() || busy
+                                ? "cursor-not-allowed text-muted-foreground/50"
+                                : "cursor-pointer text-muted-foreground hover:text-foreground",
+                        )}
                         disabled={!name.trim() || busy}
                         onClick={handleAdd}
+                        title="Add variable"
+                        aria-label="Add variable"
                     >
-                        Add
+                        <Check className="size-3.5" />
                     </Button>
                     <Button
                         variant="ghost"
-                        size="sm"
-                        className="cursor-pointer"
+                        size="icon-xs"
+                        className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
                         onClick={() => {
                             setAdding(false);
                             setName("");
                             setValue("");
                         }}
+                        title="Cancel"
+                        aria-label="Cancel"
                     >
-                        Cancel
+                        <X className="size-3.5" />
                     </Button>
                 </div>
             ) : (

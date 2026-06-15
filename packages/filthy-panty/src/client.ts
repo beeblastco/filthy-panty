@@ -10,6 +10,7 @@ import type {
   AsyncRequestAccepted,
   AsyncStatus,
   CronJob,
+  CronJobRun,
 } from "./types.ts";
 import type { CreateCronJobInput, UpdateCronJobInput } from "./contracts.ts";
 
@@ -288,7 +289,7 @@ export class FilthyPantyClient {
       body: JSON.stringify(resolveCronJobInput(input)),
     });
 
-    if (response.status !== 201) throw new Error(`Create cron job failed: ${response.status} ${await response.text()}`);
+    if (response.status !== 201) throw new Error(`Create cron job failed: ${response.status} ${await cronJobErrorDetails(response)}`);
 
     return await response.json() as CronJob;
   }
@@ -299,7 +300,7 @@ export class FilthyPantyClient {
       headers: this.apiKeyHeaders(),
     });
 
-    if (!response.ok) throw new Error(`List cron jobs failed: ${response.status} ${await response.text()}`);
+    if (!response.ok) throw new Error(`List cron jobs failed: ${response.status} ${await cronJobErrorDetails(response)}`);
 
     const payload = await response.json() as { cronJobs: CronJob[] };
 
@@ -313,9 +314,28 @@ export class FilthyPantyClient {
     });
 
     if (response.status === 404) return null;
-    if (!response.ok) throw new Error(`Get cron job failed: ${response.status} ${await response.text()}`);
+    if (!response.ok) throw new Error(`Get cron job failed: ${response.status} ${await cronJobErrorDetails(response)}`);
 
     return await response.json() as CronJob;
+  }
+
+  async listCronJobRuns(cronJobId: string, options: { limit?: number } = {}): Promise<CronJobRun[]> {
+    const params = new URLSearchParams();
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    const suffix = params.size > 0 ? `?${params}` : "";
+    const response = await this.fetchJson(
+      `${this.baseUrl}/accounts/me/cron-jobs/${encodeURIComponent(cronJobId)}/runs${suffix}`,
+      {
+        method: "GET",
+        headers: this.apiKeyHeaders(),
+      },
+    );
+
+    if (!response.ok) throw new Error(`List cron job runs failed: ${response.status} ${await cronJobErrorDetails(response)}`);
+
+    const payload = await response.json() as { runs: CronJobRun[] };
+
+    return payload.runs;
   }
 
   async updateCronJob(cronJobId: string, patch: UpdateCronJobInput): Promise<CronJob> {
@@ -325,7 +345,7 @@ export class FilthyPantyClient {
       body: JSON.stringify(patch),
     });
 
-    if (!response.ok) throw new Error(`Update cron job failed: ${response.status} ${await response.text()}`);
+    if (!response.ok) throw new Error(`Update cron job failed: ${response.status} ${await cronJobErrorDetails(response)}`);
 
     return await response.json() as CronJob;
   }
@@ -337,7 +357,7 @@ export class FilthyPantyClient {
     });
 
     if (response.status === 404) return false;
-    if (!response.ok) throw new Error(`Delete cron job failed: ${response.status} ${await response.text()}`);
+    if (!response.ok) throw new Error(`Delete cron job failed: ${response.status} ${await cronJobErrorDetails(response)}`);
 
     const payload = await response.json() as { deleted: boolean };
 
@@ -516,6 +536,16 @@ async function responseErrorDetails(response: Response, expected: string): Promi
   if (text.length <= 2_000) return text;
 
   return `${text.slice(0, 2_000)}... [truncated ${text.length - 2_000} chars]`;
+}
+
+async function cronJobErrorDetails(response: Response): Promise<string> {
+  const text = await response.text();
+  if (text.includes("Request body must include eventId and conversationKey")) {
+    return `${text}. Cron job APIs must be served by the configured baseUrl. ` +
+      "Prefer defining stable cron jobs with defineCronJob(...) in filthypanty/ and syncing with `filthy-panty dev` or `filthy-panty deploy`.";
+  }
+
+  return text;
 }
 
 function resolveCronJobInput(input: CreateClientCronJobInput): CreateCronJobInput {

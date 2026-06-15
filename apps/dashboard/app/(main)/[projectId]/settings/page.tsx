@@ -119,8 +119,8 @@ export default function SettingsPage() {
         </nav>
       </aside>
 
-      {/* Content area */}
-      <div className="flex flex-1 flex-col overflow-auto">
+      {/* Content area — min-w-0 lets long values truncate instead of widening the column */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-auto">
         {/* Page title — aligned with sidebar header height */}
         <div className="px-8 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">
           <h2 className="text-xl font-semibold text-foreground">

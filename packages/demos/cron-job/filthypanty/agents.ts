@@ -1,6 +1,6 @@
-import { defineAgent, env } from "filthy-panty";
+import { defineAgent, defineCronJob, env } from "filthy-panty";
 
-export const cronAgent = defineAgent("cron-agent", {
+export const cron = defineAgent("cron-agent", {
   provider: {
     google: { apiKey: env.GOOGLE_API_KEY },
   },
@@ -12,3 +12,28 @@ export const cronAgent = defineAgent("cron-agent", {
     system: "You are a concise scheduled maintenance assistant.",
   },
 });
+
+export const oneMinuteCron = defineCronJob("one-minute-cron-test", {
+  agent: cron,
+  conversationKey: "cron:one-minute-test",
+  prompt: "Confirm this scheduled cron test ran successfully in one sentence.",
+  scheduleExpression: process.env.CRON_SCHEDULE_EXPRESSION ?? atExpressionOneMinuteFromNow("Europe/Amsterdam"),
+  timezone: "Europe/Amsterdam",
+});
+
+function atExpressionOneMinuteFromNow(timeZone: string): string {
+  const date = new Date(Date.now() + 60_000);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return `at(${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second})`;
+}

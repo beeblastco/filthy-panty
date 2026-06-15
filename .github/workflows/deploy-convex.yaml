@@ -1,0 +1,55 @@
+# Deploys the shared Convex backend (schema + functions) on its own, so a
+# backend change reaches Convex without waiting on — or being blocked by — the
+# dashboard image build. The dashboard image still rebuilds separately to pick
+# up generated type changes; it no longer runs `convex deploy` itself.
+
+name: Deploy Convex
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'packages/convex/**'
+      - '.github/workflows/deploy-convex.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-convex-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    # main deploys to the production Convex deployment, everything else to dev.
+    # The environment provides the matching CONVEX_DEPLOY_KEY secret.
+    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Deploy Convex
+        working-directory: packages/convex
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: |
+          if [[ -z "$CONVEX_DEPLOY_KEY" ]]; then
+            echo "Missing environment secret: CONVEX_DEPLOY_KEY" >&2
+            exit 1
+          fi
+          # Convex deploy keys encode their target deployment. Refuse to ship a
+          # main deploy that would push functions to a non-production deployment.
+          if [[ "${{ github.ref_name }}" == "main" && "$CONVEX_DEPLOY_KEY" != prod:* ]]; then
+            echo "main requires a production Convex deploy key (prod:...) in the 'production' environment secret CONVEX_DEPLOY_KEY" >&2
+            exit 1
+          fi
+          bun run deploy

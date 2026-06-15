@@ -242,3 +242,41 @@ test("client creates cron jobs using agent references", async () => {
     },
   }]);
 });
+
+test("client sends cron job APIs to the configured base URL", async () => {
+  const urls: string[] = [];
+  const client = new FilthyPantyClient({
+    baseUrl: "https://app.example",
+    apiKey: "runtime-key",
+    fetch: async (input) => {
+      urls.push(String(input));
+
+      if (String(input).includes("/runs")) return Response.json({ runs: [] });
+      return Response.json({ cronJobs: [] });
+    },
+  });
+
+  await client.listCronJobs();
+  await client.listCronJobRuns("cron_1", { limit: 5 });
+
+  expect(urls).toEqual([
+    "https://app.example/accounts/me/cron-jobs",
+    "https://app.example/accounts/me/cron-jobs/cron_1/runs?limit=5",
+  ]);
+});
+
+test("client explains cron job calls routed to the runtime harness", async () => {
+  const client = new FilthyPantyClient({
+    baseUrl: "https://runtime.example",
+    apiKey: "runtime-key",
+    fetch: async () =>
+      Response.json({ error: "Request body must include eventId and conversationKey" }, { status: 400 }),
+  });
+
+  await expect(client.createCronJob({
+    name: "daily",
+    agentId: "agent_1",
+    prompt: "run",
+    scheduleExpression: "rate(1 day)",
+  })).rejects.toThrow("Cron job APIs must be served by the configured baseUrl");
+});

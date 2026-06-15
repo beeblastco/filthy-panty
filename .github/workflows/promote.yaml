@@ -1,7 +1,7 @@
 # One-click promotion: fast-forwards main to dev, then dispatches the main
 # deploy workflows. Pushes made with GITHUB_TOKEN do not fire `on: push`
-# workflows (recursion guard), so deploy.yaml and build-dashboard.yaml are
-# dispatched explicitly after the merge.
+# workflows (recursion guard), so deploy.yaml, deploy-convex.yaml, and
+# build-dashboard.yaml are dispatched explicitly after the merge.
 
 name: Promote dev to main
 
@@ -53,4 +53,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh workflow run deploy.yaml --ref main --repo "$GITHUB_REPOSITORY"
+          gh workflow run deploy-convex.yaml --ref main --repo "$GITHUB_REPOSITORY"
           gh workflow run build-dashboard.yaml --ref main --repo "$GITHUB_REPOSITORY"

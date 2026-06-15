@@ -11,7 +11,7 @@ import type { DataModel, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { getActiveOrgForUser } from "./model/ownership/org";
-import { cronJobsFields } from "./schema";
+import { cronJobRunsFields, cronJobsFields } from "./schema";
 
 const cronJobDoc = v.object({
     ...cronJobsFields,
@@ -19,7 +19,15 @@ const cronJobDoc = v.object({
     _creationTime: v.number(),
 });
 
+const cronJobRunDoc = v.object({
+    ...cronJobRunsFields,
+    _id: v.id("cronJobRuns"),
+    _creationTime: v.number(),
+});
+
 const cronJobStatusValidator = v.union(v.literal("active"), v.literal("paused"));
+const optionalCronJobStringValidator = v.optional(v.string());
+const clearableCronJobStringValidator = v.optional(v.union(v.string(), v.null()));
 
 const cronJobLastStatusValidator = v.union(
     v.literal("started"),
@@ -119,12 +127,12 @@ export const create = internalMutation({
     args: {
         accountId: v.id("accounts"),
         name: v.string(),
-        description: v.optional(v.string()),
+        description: optionalCronJobStringValidator,
         agentId: v.id("agents"),
         prompt: v.string(),
-        conversationKey: v.optional(v.string()),
+        conversationKey: optionalCronJobStringValidator,
         scheduleExpression: v.string(),
-        timezone: v.optional(v.string()),
+        timezone: optionalCronJobStringValidator,
         status: v.optional(cronJobStatusValidator),
         schedulerName: v.string(),
         schedulerGroupName: v.string(),
@@ -154,12 +162,12 @@ export const update = internalMutation({
         accountId: v.id("accounts"),
         cronJobId: v.id("cronJobs"),
         name: v.optional(v.string()),
-        description: v.optional(v.string()),
+        description: clearableCronJobStringValidator,
         agentId: v.optional(v.id("agents")),
         prompt: v.optional(v.string()),
-        conversationKey: v.optional(v.string()),
+        conversationKey: clearableCronJobStringValidator,
         scheduleExpression: v.optional(v.string()),
-        timezone: v.optional(v.string()),
+        timezone: clearableCronJobStringValidator,
         status: v.optional(cronJobStatusValidator),
     },
     returns: v.null(),
@@ -179,7 +187,9 @@ export const update = internalMutation({
         }
 
         const defined = Object.fromEntries(
-            Object.entries({ ...patch, agentId }).filter(([, v]) => v !== undefined),
+            Object.entries({ ...patch, agentId })
+                .filter(([, v]) => v !== undefined)
+                .map(([key, value]) => [key, value === null ? undefined : value]),
         );
 
         await ctx.db.patch(cronJobId, { ...defined, updatedAt: Date.now() });
@@ -213,6 +223,101 @@ export const recordInvocation = internalMutation({
             updatedAt: Date.now(),
         });
         return null;
+    },
+});
+
+/** Creates a cron job run history row when EventBridge invokes a schedule. */
+export const createRun = internalMutation({
+    args: {
+        accountId: v.id("accounts"),
+        cronJobId: v.id("cronJobs"),
+        eventId: v.string(),
+        conversationKey: v.string(),
+    },
+    returns: v.id("cronJobRuns"),
+    handler: async (ctx, args) => {
+        const cronJob = await getOwned(ctx, args.accountId, args.cronJobId);
+        if (!cronJob) {
+            throw new Error("Cron job does not belong to the supplied accountId");
+        }
+
+        return await ctx.db.insert("cronJobRuns", {
+            ...args,
+            status: "started",
+            startedAt: Date.now(),
+        });
+    },
+});
+
+/** Marks a cron job run complete and stores the final model result. */
+export const completeRun = internalMutation({
+    args: {
+        accountId: v.id("accounts"),
+        cronJobId: v.id("cronJobs"),
+        runId: v.id("cronJobRuns"),
+        result: v.any(),
+    },
+    returns: v.null(),
+    handler: async (ctx, { accountId, cronJobId, runId, result }) => {
+        const run = await ctx.db.get(runId);
+        if (!run || run.accountId !== accountId || run.cronJobId !== cronJobId) {
+            throw new Error("Cron job run does not belong to the supplied accountId and cronJobId");
+        }
+
+        await ctx.db.patch(runId, {
+            status: "completed",
+            result,
+            completedAt: Date.now(),
+        });
+
+        return null;
+    },
+});
+
+/** Marks a cron job run failed and stores the error. */
+export const failRun = internalMutation({
+    args: {
+        accountId: v.id("accounts"),
+        cronJobId: v.id("cronJobs"),
+        runId: v.id("cronJobRuns"),
+        error: v.string(),
+    },
+    returns: v.null(),
+    handler: async (ctx, { accountId, cronJobId, runId, error }) => {
+        const run = await ctx.db.get(runId);
+        if (!run || run.accountId !== accountId || run.cronJobId !== cronJobId) {
+            throw new Error("Cron job run does not belong to the supplied accountId and cronJobId");
+        }
+
+        await ctx.db.patch(runId, {
+            status: "failed",
+            error,
+            completedAt: Date.now(),
+        });
+
+        return null;
+    },
+});
+
+/** Lists recent cron job runs newest-first for account-management APIs. */
+export const listRuns = internalQuery({
+    args: {
+        accountId: v.id("accounts"),
+        cronJobId: v.id("cronJobs"),
+        limit: v.optional(v.number()),
+    },
+    returns: v.array(cronJobRunDoc),
+    handler: async (ctx, { accountId, cronJobId, limit }) => {
+        const cronJob = await getOwned(ctx, accountId, cronJobId);
+        if (!cronJob) return [];
+
+        return await ctx.db
+            .query("cronJobRuns")
+            .withIndex("by_accountId_and_cronJobId_and_startedAt", (q) =>
+                q.eq("accountId", accountId).eq("cronJobId", cronJobId)
+            )
+            .order("desc")
+            .take(limit ?? 20);
     },
 });
 

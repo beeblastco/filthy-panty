@@ -464,6 +464,22 @@ export const cronJobsFields = {
     updatedAt: v.number(),
 };
 
+export const cronJobRunsFields = {
+    accountId: v.id("accounts"),
+    cronJobId: v.id("cronJobs"),
+    eventId: v.string(),
+    conversationKey: v.string(),
+    status: v.union(
+        v.literal("started"),
+        v.literal("completed"),
+        v.literal("failed"),
+    ),
+    result: v.optional(v.any()),
+    error: v.optional(v.string()),
+    startedAt: v.number(),
+    completedAt: v.optional(v.number()),
+};
+
 export default defineSchema({
     users: defineTable(usersFields)
         .index("by_authId", ["authId"])
@@ -557,4 +573,6 @@ export default defineSchema({
         .index("by_accountId_and_agentId", ["accountId", "agentId"])
         .index("by_accountId_and_status", ["accountId", "status"])
         .index("by_schedulerName", ["schedulerName"]),
+    cronJobRuns: defineTable(cronJobRunsFields)
+        .index("by_accountId_and_cronJobId_and_startedAt", ["accountId", "cronJobId", "startedAt"]),
 });

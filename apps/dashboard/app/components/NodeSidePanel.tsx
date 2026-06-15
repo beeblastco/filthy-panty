@@ -21,7 +21,6 @@ import {
 import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
 import { ToolConfigTab } from "@/app/components/side-panel/ToolConfigTab";
 import { ToolDetailsTab } from "@/app/components/side-panel/ToolDetailsTab";
-import { VariablesTab } from "@/app/components/side-panel/VariablesTab";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
@@ -299,7 +298,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const [editName, setEditName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
-  const [isSavingVariables, setIsSavingVariables] = useState(false);
   const [isSavingKey, setIsSavingKey] = useState(false);
   const [deploymentApiKey, setDeploymentApiKey] = useState<string | undefined>(
     undefined,
@@ -544,20 +542,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     });
   }
 
-  async function handleSaveVariables(next: RuntimeVariable[]) {
-    if (!agentConfigId) return;
-
-    setIsSavingVariables(true);
-    try {
-      await updateConfig({
-        configId: agentConfigId,
-        runtimeVariables: next,
-      });
-    } finally {
-      setIsSavingVariables(false);
-    }
-  }
-
   // Resource owned by a filthypanty/ project. Agents read the authoritative
   // `managedBy` from their config row; workspaces/sandboxes read it from the live
   // `resourceOwnership` query keyed by the row `_id` (the node's `resourceId`),
@@ -787,7 +771,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 (nodeData?.config?.skillSource ?? "") === "files")) && (
               <TabsTrigger value="files">Files</TabsTrigger>
             )}
-            {isAgent && <TabsTrigger value="variables">Variables</TabsTrigger>}
             {(isAgent || isTool || isWorkspace || isSandbox || isSkill) && (
               <TabsTrigger value="config">Config</TabsTrigger>
             )}
@@ -917,22 +900,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                   setEditName(path);
                   onUpdateNodeLabel(node.id, path);
                 }}
-              />
-            </TabsContent>
-          )}
-
-          {/* Variables tab — agent and workspace */}
-          {isAgent && (
-            <TabsContent
-              value="variables"
-              className="flex flex-col overflow-hidden"
-            >
-              <VariablesTab
-                key={`${agentConfigId ?? "agent"}-${JSON.stringify(runtimeVariables)}`}
-                runtimeVariables={runtimeVariables}
-                isSaving={isSavingVariables}
-                onSave={handleSaveVariables}
-                provider={selectedProvider}
               />
             </TabsContent>
           )}

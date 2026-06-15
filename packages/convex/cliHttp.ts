@@ -120,8 +120,7 @@ export const handle = httpAction(async (ctx, req) => {
 
             const cronJobIds = forwardToken
                 ? await syncCronJobs(forwardToken, syncManifest, result.ids, body.prune === true)
-                : await syncCronJobsWithServiceToken(accountId, syncManifest, result.ids, body.prune === true)
-                    .catch(() => ({}));
+                : await syncCronJobsWithServiceToken(accountId, syncManifest, result.ids, body.prune === true);
             const refreshed = await ctx.runQuery(internal.cliSync.getManifestBySecretHash, {
                 secretHash: secretHash,
                 project: route.project,
