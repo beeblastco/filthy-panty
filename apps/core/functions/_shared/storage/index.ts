@@ -53,6 +53,7 @@ export {
   applyCronJobPatch,
   isCronJobsConfigured,
   type CronJobRecord,
+  type CronJobRunRecord,
   type CronJobStatus,
   type CronJobLastStatus,
   type CreateCronJobInput,

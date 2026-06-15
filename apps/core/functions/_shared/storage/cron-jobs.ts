@@ -33,6 +33,19 @@ export interface CronJobRecord {
   lastError?: string;
 }
 
+export interface CronJobRunRecord {
+  accountId: string;
+  cronJobId: string;
+  runId: string;
+  eventId: string;
+  conversationKey: string;
+  status: CronJobLastStatus;
+  result?: unknown;
+  error?: string;
+  startedAt: string;
+  completedAt?: string;
+}
+
 export interface CreateCronJobInput {
   name: string;
   description?: string;

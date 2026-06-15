@@ -22,6 +22,7 @@ import type {
 } from "./agents.ts";
 import type {
   CronJobRecord,
+  CronJobRunRecord,
   CronJobStatus,
   CreateCronJobInput,
   UpdateCronJobInput,
@@ -52,6 +53,7 @@ export type {
   CreateAgentInput,
   UpdateAgentInput,
   CronJobRecord,
+  CronJobRunRecord,
   CronJobStatus,
   CreateCronJobInput,
   UpdateCronJobInput,
@@ -118,6 +120,10 @@ export interface CronJobStore {
   markStarted(accountId: string, cronJobId: string): Promise<void>;
   markCompleted(accountId: string, cronJobId: string): Promise<void>;
   markFailed(accountId: string, cronJobId: string, error: string): Promise<void>;
+  createRun(input: Omit<CronJobRunRecord, "runId" | "status" | "startedAt">): Promise<CronJobRunRecord>;
+  completeRun(accountId: string, cronJobId: string, runId: string, result: unknown): Promise<void>;
+  failRun(accountId: string, cronJobId: string, runId: string, error: string): Promise<void>;
+  listRuns(accountId: string, cronJobId: string, limit?: number): Promise<CronJobRunRecord[]>;
 }
 
 /**

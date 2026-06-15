@@ -449,11 +449,17 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
               response: response,
             })
           ));
+          if (event.cronRun) {
+            await getStorage().cronJobs.completeRun(event.accountId, event.cronRun.cronJobId, event.cronRun.runId, response);
+          }
           await pushReplyToChannel(event, typeof response === "string" ? response : JSON.stringify(response, null, 2));
         },
         onErrorText: async (error) => {
           didSettle = true;
           await settleAsyncFailure(event, error);
+          if (event.cronRun) {
+            await getStorage().cronJobs.failRun(event.accountId, event.cronRun.cronJobId, event.cronRun.runId, error);
+          }
           await pushReplyToChannel(event, formatChannelErrorText(error));
         },
         onApprovalRequired: async (approvals) => {
@@ -472,6 +478,14 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
 
     if (result.didFail && !didSettle) {
       await settleAsyncFailure(event, result.failureText ?? AGENT_PROCESSING_FAILED);
+      if (event.cronRun) {
+        await getStorage().cronJobs.failRun(
+          event.accountId,
+          event.cronRun.cronJobId,
+          event.cronRun.runId,
+          result.failureText ?? AGENT_PROCESSING_FAILED,
+        );
+      }
     }
     if (result.hasDetachedCallbacks) {
       await continueDetachedAsyncToolsIfReady(event, event.agentConfig);
@@ -491,6 +505,14 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
         error: err instanceof Error ? err.message : String(err),
     });
     await settleAsyncFailure(event, err instanceof Error ? err.message : "Async request failed");
+    if (event.cronRun) {
+      await getStorage().cronJobs.failRun(
+        event.accountId,
+        event.cronRun.cronJobId,
+        event.cronRun.runId,
+        err instanceof Error ? err.message : "Async request failed",
+      );
+    }
     throw err;
   }
 }
@@ -1071,7 +1093,24 @@ function asyncToolContinuationEventId(parentEventId: string): string {
 
 async function startScheduledAgentRun(job: CronJobRecord): Promise<{ eventId: string; conversationKey: string }> {
   const event = await createCronDirectEvent(job);
-  await invokeAsyncWorker(event);
+  const run = await getStorage().cronJobs.createRun({
+    accountId: job.accountId,
+    cronJobId: job.cronJobId,
+    eventId: event.publicEventId,
+    conversationKey: event.publicConversationKey,
+  });
+  event.cronRun = { cronJobId: job.cronJobId, runId: run.runId };
+  try {
+    await invokeAsyncWorker(event);
+  } catch (err) {
+    await getStorage().cronJobs.failRun(
+      job.accountId,
+      job.cronJobId,
+      run.runId,
+      err instanceof Error ? err.message : "Failed to start cron async worker",
+    );
+    throw err;
+  }
 
   return {
     eventId: event.publicEventId,

@@ -124,6 +124,39 @@ describe("cron job persistence", () => {
     expect(job?.agentId).toBe("agent_main");
     expect(job?.prompt).toBe("Run.");
   });
+
+  it("records and lists cron job run history", async () => {
+    process.env.CRON_JOBS_TABLE_NAME = "cron-jobs";
+    dynamo.send = sendMock as never;
+    const { getStorage, resetStorageForTests } = await import("../functions/_shared/storage/index.ts");
+    resetStorageForTests();
+    let runItem: Record<string, AttributeValue> | undefined;
+    sendMock.mockImplementation(async (command: unknown) => {
+      if (command instanceof PutItemCommand) {
+        runItem = command.input.Item as Record<string, AttributeValue>;
+        return {};
+      }
+      if (command instanceof QueryCommand) {
+        return { Items: runItem ? [runItem] : [] };
+      }
+      throw new Error("unexpected command");
+    });
+
+    const run = await getStorage().cronJobs.createRun({
+      accountId: "acct_test",
+      cronJobId: "cron_one",
+      eventId: "cron_one-event",
+      conversationKey: "cron:daily-maintenance",
+    });
+    const runs = await getStorage().cronJobs.listRuns("acct_test", "cron_one", 5);
+
+    expect(run.status).toBe("started");
+    expect(runs[0]?.eventId).toBe("cron_one-event");
+    expect(runs[0]?.conversationKey).toBe("cron:daily-maintenance");
+    const queryCommand = sendMock.mock.calls[1]?.[0] as QueryCommand;
+    expect(queryCommand.input.KeyConditionExpression).toBe("accountId = :accountId AND begins_with(cronJobId, :prefix)");
+    expect(queryCommand.input.ExpressionAttributeValues?.[":prefix"]).toEqual({ S: "run#cron_one#" });
+  });
 });
 
 function cronJobItem(accountId: string, cronJobId: string): Record<string, AttributeValue> {

@@ -58,6 +58,7 @@ import type {
   AccountToolStore,
   AgentStore,
   CronJobRecord,
+  CronJobRunRecord,
   CronJobStore,
   SandboxConfigRecord,
   SandboxConfigStore,
@@ -149,6 +150,19 @@ interface ConvexCronJobDoc {
   lastError?: string;
 }
 
+interface ConvexCronJobRunDoc {
+  _id: string;
+  accountId: string;
+  cronJobId: string;
+  eventId: string;
+  conversationKey: string;
+  status: "started" | "completed" | "failed";
+  result?: unknown;
+  error?: string;
+  startedAt: number;
+  completedAt?: number;
+}
+
 function cronJobFromConvex(doc: ConvexCronJobDoc | null): CronJobRecord | null {
   if (!doc) return null;
   return {
@@ -169,6 +183,22 @@ function cronJobFromConvex(doc: ConvexCronJobDoc | null): CronJobRecord | null {
     ...(doc.lastInvokedAt ? { lastInvokedAt: new Date(doc.lastInvokedAt).toISOString() } : {}),
     ...(doc.lastStatus ? { lastStatus: doc.lastStatus } : {}),
     ...(doc.lastError ? { lastError: doc.lastError } : {}),
+  };
+}
+
+function cronJobRunFromConvex(doc: ConvexCronJobRunDoc | null): CronJobRunRecord | null {
+  if (!doc) return null;
+  return {
+    accountId: doc.accountId,
+    cronJobId: doc.cronJobId,
+    runId: doc._id,
+    eventId: doc.eventId,
+    conversationKey: doc.conversationKey,
+    status: doc.status,
+    ...(doc.result !== undefined ? { result: doc.result } : {}),
+    ...(doc.error ? { error: doc.error } : {}),
+    startedAt: new Date(doc.startedAt).toISOString(),
+    ...(doc.completedAt ? { completedAt: new Date(doc.completedAt).toISOString() } : {}),
   };
 }
 
@@ -319,12 +349,12 @@ const cronJobs: CronJobStore = {
       accountId: accountId as any,
       cronJobId: cronJobId as any,
       name: patch.name,
-      description: patch.description ?? undefined,
+      description: patch.description,
       agentId: patch.agentId as any,
       prompt: patch.prompt,
-      conversationKey: patch.conversationKey ?? undefined,
+      conversationKey: patch.conversationKey,
       scheduleExpression: patch.scheduleExpression,
-      timezone: patch.timezone ?? undefined,
+      timezone: patch.timezone,
       status: patch.status,
     });
     return this.getById(accountId, cronJobId);
@@ -357,6 +387,44 @@ const cronJobs: CronJobStore = {
       lastStatus: "failed",
       lastError: error,
     });
+  },
+  async createRun(input) {
+    const runId = await getConvexClient().mutation(internal.cronJobs.createRun, {
+      accountId: input.accountId as any,
+      cronJobId: input.cronJobId as any,
+      eventId: input.eventId,
+      conversationKey: input.conversationKey,
+    }) as string;
+    return {
+      ...input,
+      runId,
+      status: "started",
+      startedAt: new Date().toISOString(),
+    };
+  },
+  async completeRun(accountId, cronJobId, runId, result) {
+    await getConvexClient().mutation(internal.cronJobs.completeRun, {
+      accountId: accountId as any,
+      cronJobId: cronJobId as any,
+      runId: runId as any,
+      result,
+    });
+  },
+  async failRun(accountId, cronJobId, runId, error) {
+    await getConvexClient().mutation(internal.cronJobs.failRun, {
+      accountId: accountId as any,
+      cronJobId: cronJobId as any,
+      runId: runId as any,
+      error,
+    });
+  },
+  async listRuns(accountId, cronJobId, limit) {
+    const docs = await getConvexClient().query(internal.cronJobs.listRuns, {
+      accountId: accountId as any,
+      cronJobId: cronJobId as any,
+      limit,
+    }) as ConvexCronJobRunDoc[];
+    return docs.map((d) => cronJobRunFromConvex(d)!).filter(Boolean);
   },
 };
 

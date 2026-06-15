@@ -4,11 +4,18 @@
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
+import { cn } from "@/app/lib/utils";
 import { api } from "@filthy-panty/convex/_generated/api";
 import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { Eye, EyeOff, Plus, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+
+// Shared sizing so read-only value chips and the add inputs match height, font,
+// and shrink behaviour exactly. `md:text-xs` overrides the Input's `md:text-sm`
+// so typed text stays the same size as the chips; `min-w-0` lets long values
+// truncate instead of widening the row.
+const FIELD_CLASS = "h-8 min-w-0 flex-1 font-mono text-xs";
 
 interface Props {
     /** Project that owns the environment. */
@@ -32,20 +39,20 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
     const [value, setValue] = useState("");
     const [busy, setBusy] = useState(false);
     // Plaintext values revealed via the eye icon, keyed by variable id. Each reveal is audited server-side.
-    const [revealed, setRevealed] = useState<Record<string, string>>({});
-
-    useEffect(() => {
-        setRevealed({});
-    }, [environmentId]);
+    const [revealedState, setRevealedState] = useState<{
+        environmentId: Id<"environments"> | null;
+        values: Record<string, string>;
+    }>({ environmentId: null, values: {} });
+    const revealed = revealedState.environmentId === environmentId ? revealedState.values : {};
 
     async function toggleReveal(variableId: Id<"environmentVariables">) {
         if (!environmentId) return;
         if (revealed[variableId] !== undefined) {
-            setRevealed((prev) => {
-                const next = { ...prev };
+            setRevealedState((prev) => {
+                const next = { ...(prev.environmentId === environmentId ? prev.values : {}) };
                 delete next[variableId];
 
-                return next;
+                return { environmentId: environmentId, values: next };
             });
 
             return;
@@ -55,7 +62,13 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
             environmentId: environmentId,
             variableId: variableId,
         });
-        setRevealed((prev) => ({ ...prev, [variableId]: plaintext }));
+        setRevealedState((prev) => ({
+            environmentId: environmentId,
+            values: {
+                ...(prev.environmentId === environmentId ? prev.values : {}),
+                [variableId]: plaintext,
+            },
+        }));
     }
 
     async function handleAdd() {
@@ -92,8 +105,8 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
             <div className="grid gap-2">
                 {variables?.map((v) => (
                     <div key={v._id} className="flex items-center gap-2">
-                        <code className="flex-1 rounded bg-muted px-2 py-1 font-mono text-xs">{v.name}</code>
-                        <code className="flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-xs">
+                        <code className={cn(FIELD_CLASS, "truncate rounded-md bg-muted px-3 leading-8")}>{v.name}</code>
+                        <code className={cn(FIELD_CLASS, "truncate rounded-md bg-muted px-3 leading-8")}>
                             {revealed[v._id] !== undefined
                                 ? (revealed[v._id] || <span className="text-muted-foreground">empty</span>)
                                 : v.value
@@ -126,14 +139,14 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         placeholder="KEY_NAME"
-                        className="flex-1 font-mono text-xs"
+                        className={cn(FIELD_CLASS, "md:text-xs")}
                         autoFocus
                     />
                     <Input
                         value={value}
                         onChange={(e) => setValue(e.target.value)}
                         placeholder="value"
-                        className="flex-1 font-mono text-xs"
+                        className={cn(FIELD_CLASS, "md:text-xs")}
                     />
                     <Button
                         size="sm"

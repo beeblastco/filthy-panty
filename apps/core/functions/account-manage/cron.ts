@@ -10,7 +10,7 @@ import {
   SchedulerClient,
   UpdateScheduleCommand,
 } from "@aws-sdk/client-scheduler";
-import type { CronJobRecord } from "../_shared/storage/index.ts";
+import { isCronJobsConfigured, type CronJobRecord } from "../_shared/storage/index.ts";
 import { optionalEnv, requireEnv } from "../_shared/env.ts";
 
 const scheduler = new SchedulerClient({ region: process.env.AWS_REGION });
@@ -23,7 +23,7 @@ export class CronJobsUnavailableError extends Error {
 
 export function assertCronJobsAvailable(): void {
   if (
-    !optionalEnv("CRON_JOBS_TABLE_NAME") ||
+    !isCronJobsConfigured() ||
     !optionalEnv("CRON_SCHEDULER_TARGET_FUNCTION_ARN") ||
     !optionalEnv("CRON_SCHEDULER_ROLE_ARN") ||
     !optionalEnv("CRON_SCHEDULER_GROUP_NAME")

@@ -21,6 +21,7 @@ import {
     type AccountRecord,
     type AgentRecord,
     type CronJobRecord,
+    type CronJobRunRecord,
 } from "../_shared/storage/index.ts";
 import {
     errorResponse,
@@ -122,10 +123,13 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         }
 
         const selfCronCollection = rawPath === "/accounts/me/cron-jobs";
+        const selfCronRunsMatch = rawPath.match(/^\/accounts\/me\/cron-jobs\/([^/]+)\/runs$/);
         const selfCronMatch = rawPath.match(/^\/accounts\/me\/cron-jobs\/([^/]+)$/);
-        if (selfCronCollection || selfCronMatch?.[1]) {
+        if (selfCronCollection || selfCronMatch?.[1] || selfCronRunsMatch?.[1]) {
             const account = requireAccountAuth(auth, { allowServiceToken: true, allowDeployment: true });
-            return await handleCronJobRoute(method, account.accountId, selfCronMatch?.[1], event);
+            return await handleCronJobRoute(method, account.accountId, selfCronMatch?.[1] ?? selfCronRunsMatch?.[1], event, {
+                runs: Boolean(selfCronRunsMatch?.[1]),
+            });
         }
 
         const selfToolCollection = rawPath === "/accounts/me/tools";
@@ -239,11 +243,20 @@ async function handleCronJobRoute(
     accountId: string,
     rawCronJobId: string | undefined,
     event: LambdaFunctionURLEvent,
+    options: { runs?: boolean } = {},
 ): Promise<LambdaResponse> {
     assertCronJobsAvailable();
     const cronJobId = rawCronJobId ? decodeURIComponent(rawCronJobId) : undefined;
 
     const cronJobs = getStorage().cronJobs;
+    if (options.runs) {
+        if (!cronJobId) return errorResponse(404, "Cron job not found");
+        if (method !== "GET") return errorResponse(405, "Method not allowed", { method, allowedMethods: ["GET"] });
+        const limit = parsePositiveLimit(event.queryStringParameters?.limit);
+        const records = await cronJobs.listRuns(accountId, cronJobId, limit);
+        return jsonResponse(200, { runs: records.map(toCronJobRunResponse) });
+    }
+
     if (!cronJobId) {
         if (method === "GET") {
             const records = await cronJobs.list(accountId);
@@ -665,6 +678,30 @@ function toCronJobResponse(cronJob: CronJobRecord): Record<string, unknown> {
         ...(cronJob.lastStatus ? { lastStatus: cronJob.lastStatus } : {}),
         ...(cronJob.lastError ? { lastError: cronJob.lastError } : {}),
     };
+}
+
+function toCronJobRunResponse(run: CronJobRunRecord): Record<string, unknown> {
+    return {
+        accountId: run.accountId,
+        cronJobId: run.cronJobId,
+        runId: run.runId,
+        eventId: run.eventId,
+        conversationKey: run.conversationKey,
+        status: run.status,
+        ...(run.result !== undefined ? { result: run.result } : {}),
+        ...(run.error ? { error: run.error } : {}),
+        startedAt: run.startedAt,
+        ...(run.completedAt ? { completedAt: run.completedAt } : {}),
+    };
+}
+
+function parsePositiveLimit(value: string | undefined): number | undefined {
+    if (value === undefined) return undefined;
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
+        throw new Error("limit must be an integer between 1 and 100");
+    }
+    return parsed;
 }
 
 async function deleteAccountCronJobs(accountId: string): Promise<number> {

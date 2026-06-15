@@ -24,12 +24,15 @@ import {
 import type {
   CreateCronJobInput,
   CronJobRecord,
+  CronJobRunRecord,
   CronJobStatus,
   CronJobStore,
   UpdateCronJobInput,
 } from "../types.ts";
 
 const CRON_JOB_ID_PREFIX = "cron_";
+const CRON_RUN_ID_PREFIX = "run_";
+const CRON_RUN_SORT_PREFIX = "run#";
 const SCHEDULE_NAME_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
 
 function cronJobsTableName(): string {
@@ -38,6 +41,18 @@ function cronJobsTableName(): string {
 
 function createCronJobId(): string {
   return `${CRON_JOB_ID_PREFIX}${randomBytes(10).toString("hex")}`;
+}
+
+function createCronRunId(startedAt: string): string {
+  return `${startedAt}#${CRON_RUN_ID_PREFIX}${randomBytes(10).toString("hex")}`;
+}
+
+function cronRunSortKey(cronJobId: string, startedAt: string, runId: string): string {
+  return `${CRON_RUN_SORT_PREFIX}${cronJobId}#${startedAt}#${runId}`;
+}
+
+function cronRunSortPrefix(cronJobId: string): string {
+  return `${CRON_RUN_SORT_PREFIX}${cronJobId}#`;
 }
 
 function createCronScheduleName(accountId: string, cronJobId: string): string {
@@ -67,6 +82,23 @@ function cronJobToItem(record: CronJobRecord): Record<string, AttributeValue> {
     ...(record.lastInvokedAt ? { lastInvokedAt: { S: record.lastInvokedAt } } : {}),
     ...(record.lastStatus ? { lastStatus: { S: record.lastStatus } } : {}),
     ...(record.lastError ? { lastError: { S: record.lastError } } : {}),
+  };
+}
+
+function cronRunToItem(record: CronJobRunRecord): Record<string, AttributeValue> {
+  return {
+    accountId: { S: record.accountId },
+    cronJobId: { S: cronRunSortKey(record.cronJobId, record.startedAt, record.runId) },
+    itemType: { S: "cronJobRun" },
+    parentCronJobId: { S: record.cronJobId },
+    runId: { S: record.runId },
+    eventId: { S: record.eventId },
+    conversationKey: { S: record.conversationKey },
+    status: { S: record.status },
+    ...(record.result !== undefined ? { result: { S: JSON.stringify(record.result) } } : {}),
+    ...(record.error ? { error: { S: record.error } } : {}),
+    startedAt: { S: record.startedAt },
+    ...(record.completedAt ? { completedAt: { S: record.completedAt } } : {}),
   };
 }
 
@@ -123,6 +155,40 @@ function itemToCronJob(item: Record<string, AttributeValue>): CronJobRecord | nu
     lastStatus: optionalLastStatus(item.lastStatus),
     lastError: optionalString(item.lastError),
   };
+}
+
+function itemToCronJobRun(item: Record<string, AttributeValue>): CronJobRunRecord | null {
+  const accountId = item.accountId?.S;
+  const cronJobId = item.parentCronJobId?.S;
+  const runId = item.runId?.S;
+  const eventId = item.eventId?.S;
+  const conversationKey = item.conversationKey?.S;
+  const status = item.status?.S;
+  const startedAt = item.startedAt?.S;
+  if (!accountId || !cronJobId || !runId || !eventId || !conversationKey || !isCronJobLastStatus(status) || !startedAt) {
+    return null;
+  }
+
+  return {
+    accountId,
+    cronJobId,
+    runId,
+    eventId,
+    conversationKey,
+    status,
+    ...(item.result?.S !== undefined ? { result: parseJsonValue(item.result.S) } : {}),
+    error: optionalString(item.error),
+    startedAt,
+    completedAt: optionalString(item.completedAt),
+  };
+}
+
+function parseJsonValue(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }
 
 async function markRun(
@@ -320,6 +386,71 @@ export const dynamoCronJobStore: CronJobStore = {
   async markFailed(accountId, cronJobId, error) {
     await markRun(accountId, cronJobId, { lastStatus: "failed", lastError: error });
   },
+  async createRun(input) {
+    const now = new Date().toISOString();
+    const record: CronJobRunRecord = {
+      ...input,
+      runId: createCronRunId(now),
+      status: "started",
+      startedAt: now,
+    };
+    await dynamo.send(new PutItemCommand({
+      TableName: cronJobsTableName(),
+      Item: cronRunToItem(record),
+      ConditionExpression: "attribute_not_exists(accountId) AND attribute_not_exists(cronJobId)",
+    }));
+    return record;
+  },
+  async completeRun(accountId, cronJobId, runId, result) {
+    const now = new Date().toISOString();
+    await dynamo.send(new UpdateItemCommand({
+      TableName: cronJobsTableName(),
+      Key: { accountId: { S: accountId }, cronJobId: { S: cronRunSortKey(cronJobId, runIdStartedAt(runId), runId) } },
+      UpdateExpression: "SET #status = :status, #result = :result, completedAt = :completedAt",
+      ExpressionAttributeNames: { "#status": "status", "#result": "result" },
+      ExpressionAttributeValues: {
+        ":status": { S: "completed" },
+        ":result": { S: JSON.stringify(result) },
+        ":completedAt": { S: now },
+      },
+    }));
+  },
+  async failRun(accountId, cronJobId, runId, error) {
+    const now = new Date().toISOString();
+    await dynamo.send(new UpdateItemCommand({
+      TableName: cronJobsTableName(),
+      Key: { accountId: { S: accountId }, cronJobId: { S: cronRunSortKey(cronJobId, runIdStartedAt(runId), runId) } },
+      UpdateExpression: "SET #status = :status, #error = :error, completedAt = :completedAt",
+      ExpressionAttributeNames: { "#status": "status", "#error": "error" },
+      ExpressionAttributeValues: {
+        ":status": { S: "failed" },
+        ":error": { S: error },
+        ":completedAt": { S: now },
+      },
+    }));
+  },
+  async listRuns(accountId, cronJobId, limit = 20) {
+    const result = await dynamo.send(new QueryCommand({
+      TableName: cronJobsTableName(),
+      KeyConditionExpression: "accountId = :accountId AND begins_with(cronJobId, :prefix)",
+      ExpressionAttributeValues: {
+        ":accountId": { S: accountId },
+        ":prefix": { S: cronRunSortPrefix(cronJobId) },
+      },
+      ScanIndexForward: false,
+      Limit: limit,
+      ConsistentRead: true,
+    }));
+    return (result.Items ?? [])
+      .map(itemToCronJobRun)
+      .filter((run): run is CronJobRunRecord => run !== null);
+  },
 };
+
+function runIdStartedAt(runId: string): string {
+  const startedAt = runId.split("#", 2)[0];
+  if (!startedAt) throw new Error("Cron run id is missing startedAt prefix");
+  return startedAt;
+}
 
 export { createCronScheduleName };
