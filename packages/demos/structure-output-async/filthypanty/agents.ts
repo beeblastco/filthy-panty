@@ -4,11 +4,13 @@ export const structuredAssistant = defineAgent({
   name: "structured-assistant",
   config: {
     provider: {
-      google: { apiKey: env.GOOGLE_API_KEY },
+      minimax: {
+        apiKey: env.MINIMAX_API_KEY
+      },
     },
     model: {
-      provider: "google",
-      modelId: "gemma-4-31b-it",
+      provider: "minimax",
+      modelId: "MiniMax-M3",
       output: {
         type: "object",
         name: "AgentAnswer",

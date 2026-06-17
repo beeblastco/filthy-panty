@@ -4,13 +4,13 @@ export const search = defineAgent({
   name: "async-search",
   config: {
     provider: {
-      google: {
-        apiKey: env.GOOGLE_API_KEY,
+      minimax: { 
+        apiKey: env.MINIMAX_API_KEY 
       },
     },
     model: {
-      provider: "google",
-      modelId: "gemma-4-31b-it",
+      provider: "minimax",
+      modelId: "MiniMax-M3",
     },
     agent: {
       system: "You are a helpful assistant.",

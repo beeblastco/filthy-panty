@@ -18,6 +18,7 @@ import {
     setSkillsBearerToken,
 } from "@/app/lib/skillsCredentials";
 import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
+import { includesSkillRef, withoutSkillRef } from "@/app/lib/skillRefs";
 import { api } from "@filthy-panty/convex/_generated/api";
 import { useAction } from "convex/react";
 import { Eye, EyeOff, FolderOpen, GitBranch, Loader2, RotateCcw, Sparkles } from "lucide-react";
@@ -329,7 +330,7 @@ export function SkillDetailsTab({
     const path = editName.trim();
     // This skill is "active" only when the agent's skills master is on AND this path is allowed —
     // the exact condition the canvas node badge renders, so the toggle and node stay in lockstep.
-    const isActive = skills.enabled === true && path.length > 0 && (skills.allowed ?? []).includes(path);
+    const isActive = skills.enabled === true && path.length > 0 && includesSkillRef(skills.allowed, path);
 
     function setSource(source: SkillSource) {
         onUpdateNodeConfig({ skillSource: source });
@@ -345,11 +346,11 @@ export function SkillDetailsTab({
      * branch keeps the master and allow-list consistent so the node badge never lags the panel.
      */
     function setActive(next: boolean) {
-        const allowedSet = new Set(skills.allowed ?? []);
+        const allowedSet = new Set(next ? skills.allowed ?? [] : withoutSkillRef(skills.allowed, path));
         if (next && path) {
-            allowedSet.add(path);
-        } else {
-            allowedSet.delete(path);
+            if (!includesSkillRef(skills.allowed, path)) {
+                allowedSet.add(path);
+            }
         }
         const allowed = Array.from(allowedSet);
 

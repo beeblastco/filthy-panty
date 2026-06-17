@@ -4,6 +4,7 @@
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
 import { readAgentBranch, type FlatAgentConfig } from "@/app/lib/agentConfigCodec";
+import { includesSkillRef } from "@/app/lib/skillRefs";
 import type { NodeProps } from "@xyflow/react";
 import { Sparkles } from "lucide-react";
 import { useMemo } from "react";
@@ -20,7 +21,7 @@ export function SkillNode({ id, data }: NodeProps) {
         const skills = readAgentBranch<SkillsSlice>(agentConfig as FlatAgentConfig | undefined, "skills");
         if (skills.enabled !== true) return false;
 
-        return (skills.allowed ?? []).includes(path);
+        return includesSkillRef(skills.allowed, path);
     }, [agentConfig, path]);
 
     return (

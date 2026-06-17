@@ -23,7 +23,8 @@ for await (const chunk of client.stream(api.agents.e2bAgent, {
     "1. echo \"shell:$SANDBOX_SMOKE_VAR\" (expect sandbox-env-ok).",
     "2. In a single bash command, write main.py that prints the Python version, then run python3 main.py.",
     "3. In a single bash command, write main.js that prints the Node version, then run node main.js.",
-    "4. Summarize stdout and status for every step.",
+    "4. Write a bash command that curls https://httpbin.org/get and prints the result.",
+    "5. write and run the fibonacci sequence in bash up to the 10th number.",
   ].join("\n"),
 })) {
     switch (chunk.type) {

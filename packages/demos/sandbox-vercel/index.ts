@@ -1,5 +1,5 @@
 /**
- * Example: Vercel Sandbox provider with persistent lifecycle hooks via declarative filthy-panty resources.
+ * Example: Vercel Sandbox provider with persistent stateless execution via declarative filthy-panty resources.
  */
 
 import { FilthyPantyClient } from "filthy-panty";
@@ -14,12 +14,12 @@ const client = new FilthyPantyClient({
 // Stream the response from the agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.vercelAgent, {
   input: [
-    "Run this Vercel Sandbox smoke test using separate bash calls.",
-    "1. Print the contents of .fp-vercel-hook.txt and echo shell:$SANDBOX_SMOKE_VAR.",
-    "2. Write hook-check.txt containing the hook file contents, then read it back.",
-    "3. Start a background job with bash background:true that runs: sleep 2; echo vercel-bg-done.",
-    "4. Poll async_status for the returned statusId until it is completed, then fetch logs.",
-    "5. Summarize the hook side effects and the background job result.",
+    "Run this Vercel Sandbox smoke test.",
+    "Use exactly one bash tool call. Do not use write, read, edit, glob, or grep.",
+    "In that single bash call, print `shell:$SANDBOX_SMOKE_VAR`, `pwd`, `whoami`,",
+    "write vercel-smoke.txt containing only `vercel-persist-ok`, print the file contents,",
+    "and print `node --version`.",
+    "Then summarize stdout and confirm the Vercel sandbox command executed successfully.",
   ].join("\n"),
 })) {
     switch (chunk.type) {

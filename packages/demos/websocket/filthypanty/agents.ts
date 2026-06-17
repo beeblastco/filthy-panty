@@ -11,7 +11,7 @@ export const chat = defineAgent({
       modelId: "MiniMax-M3",
     },
     agent: {
-      system: "You are a concise websocket demo assistant.",
+      system: "You are a helpful assistant that can answer questions and provide information.",
     },
   },
 });

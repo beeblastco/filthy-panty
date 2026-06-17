@@ -83,9 +83,13 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
   const workspaces = context.workspaces ?? [];
   const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
   const statelessSandbox = workspaces.length === 0 ? context.statelessSandbox : undefined;
-  if (statelessSandbox?.persistent === true) {
+  const statelessOptions = typeof statelessSandbox?.options === "object" && statelessSandbox.options !== null
+    ? statelessSandbox.options as Record<string, unknown>
+    : {};
+  const hasStatelessReservation = typeof statelessOptions.reservationKey === "string" && statelessOptions.reservationKey.trim().length > 0;
+  if (statelessSandbox?.persistent === true && !hasStatelessReservation) {
     // Persistence is keyed by workspace namespace; a stateless (no-workspace)
-    // sandbox cannot reconnect, run background jobs, or keep packages — warn so a
+    // sandbox needs an explicit options.reservationKey to reconnect — warn so a
     // misconfiguration is visible rather than silently behaving ephemerally.
     logWarn("persistent sandbox attached without a workspace; it runs ephemerally", {
       conversationKey: context.conversationKey,

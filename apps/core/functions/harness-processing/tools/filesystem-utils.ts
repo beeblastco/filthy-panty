@@ -51,6 +51,13 @@ export function workspaceRootFor(config: SandboxExecutorConfig): string {
     : DEFAULT_WORKSPACE_ROOT;
 }
 
+function statelessReservationKeyFor(config: SandboxExecutorConfig): string | undefined {
+  const options = isRecordObject(config.options) ? config.options : {};
+  const reservationKey = options.reservationKey;
+
+  return typeof reservationKey === "string" && reservationKey.trim() ? reservationKey.trim() : undefined;
+}
+
 export function sandboxSupportsBackgroundJobs(config: SandboxExecutorConfig | undefined): boolean {
   return config?.persistent === true && config.provider !== "lambda";
 }
@@ -97,9 +104,11 @@ export async function runSandbox(
 ): Promise<SandboxRunResult> {
   const executor = createSandboxExecutor(config);
   const limits = workspaceSandboxLimits(config.provider);
+  const reservationKey = !namespace && config.persistent === true ? statelessReservationKeyFor(config) : undefined;
   return executor.run({
     code,
     ...(namespace ? { namespace, workspaceRoot: workspaceRootFor(config) } : {}),
+    ...(reservationKey ? { reservationKey, workspaceRoot: workspaceRootFor(config) } : {}),
     timeoutSeconds: boundedInteger(config.timeout, limits.defaultTimeoutSeconds, limits.maxTimeoutSeconds),
     outputLimitBytes: boundedInteger(config.outputLimitBytes, limits.defaultOutputLimitBytes, limits.maxOutputLimitBytes),
   });

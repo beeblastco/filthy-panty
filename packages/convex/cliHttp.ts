@@ -5,7 +5,7 @@
  * `cliSync` so the CLI can sync desired-state manifests without browser auth.
  */
 
-import { httpAction } from "./_generated/server";
+import { httpAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { CliManifest, GeneratedIds } from "./cliTypes";
 
@@ -116,6 +116,12 @@ export const handle = httpAction(async (ctx, req) => {
                 secretHash: secretHash,
                 manifest: syncManifest as never,
                 prune: body.prune === true,
+            });
+            await syncSkillNodeFiles(ctx, {
+                secretHash: secretHash,
+                project: route.project,
+                environment: route.environment,
+                manifest: originalManifest,
             });
 
             const cronIds = forwardToken
@@ -316,6 +322,63 @@ function booleanSearchParam(url: URL, name: string): boolean | undefined {
 
 function isResourceKind(value: string): value is "agent" | "workspace" | "sandbox" | "cron" {
     return value === "agent" || value === "workspace" || value === "sandbox" || value === "cron";
+}
+
+/**
+ * Stores CLI-bundled skill files in Convex storage and mirrors them into workspaceFiles.
+ */
+async function syncSkillNodeFiles(
+    ctx: ActionCtx,
+    options: {
+        secretHash: string;
+        project: string;
+        environment: string;
+        manifest: CliManifest;
+    },
+): Promise<void> {
+    for (const resource of options.manifest.resources.filter((entry) => entry.kind === "skill")) {
+        const config = asRecord(resource.config, `skill:${resource.name}`);
+        const files = config.files;
+        if (!Array.isArray(files)) continue;
+        const storedFiles = [];
+        for (const entry of files) {
+            const file = asRecord(entry, `skill:${resource.name}.files[]`);
+            const path = stringField(file.path, `skill:${resource.name}.files[].path`);
+            const contentBase64 = stringField(file.contentBase64, `skill:${resource.name}.files[].contentBase64`);
+            const mimeType = typeof file.contentType === "string" ? file.contentType : "text/plain";
+            const bytes = base64ArrayBuffer(contentBase64);
+            const storageId = await ctx.storage.store(new Blob([bytes], { type: mimeType }));
+            const parts = path.split("/");
+            storedFiles.push({
+                path: path,
+                name: parts[parts.length - 1] || path,
+                storageId: storageId,
+                mimeType: mimeType,
+                sizeBytes: bytes.byteLength,
+            });
+        }
+
+        await ctx.runMutation(internal.cliSync.replaceSkillNodeFilesBySecretHash, {
+            secretHash: options.secretHash,
+            project: options.project,
+            environment: options.environment,
+            skillName: resource.name,
+            files: storedFiles,
+        });
+    }
+}
+
+/**
+ * Decodes base64 without Node Buffer because Convex HTTP actions run in the web runtime.
+ */
+function base64ArrayBuffer(value: string): ArrayBuffer {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+    }
+
+    return bytes.buffer as ArrayBuffer;
 }
 
 async function bearerAuth(req: Request): Promise<{ token: string; secretHash: string }> {

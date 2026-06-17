@@ -453,6 +453,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             description?: string;
             config?: Record<string, unknown>;
             properties?: { color: string };
+            readOnly?: boolean;
           },
         })),
         edges: currentEdges.map((e) => ({
@@ -897,7 +898,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
       JSON.stringify({
         n: nodes.map((n) => {
           const d = n.data as BaseNodeData;
-          return [n.id, n.type, d?.resourceId, d?.label, d?.mountName];
+          return [n.id, n.type, d?.resourceId, d?.label, d?.mountName, d?.readOnly === true];
         }),
         e: edges.map((e) => [e.source, e.target, e.type]),
       }),

@@ -48,7 +48,9 @@ export const multiWorkspaceAgent = defineAgent({
         "Report any bash tool error exactly.",
       ].join("\n"),
     },
-    sandbox: lambdaSandbox,
-    workspaces: [personalWorkspace, teamWorkspace],
+    workspaces: [
+      { workspace: personalWorkspace, sandbox: lambdaSandbox },
+      { workspace: teamWorkspace, sandbox: null },
+    ],
   },
 });

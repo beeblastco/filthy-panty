@@ -66,6 +66,13 @@ const vercelGetOrCreateMock = mock(async (options: Record<string, unknown>) => {
   if (typeof options.onCreate === "function") await options.onCreate(sandbox);
   return sandbox;
 });
+function vercelCommandIncludes(text: string): boolean {
+  return vercelRunCommandMock.mock.calls.some((call) => {
+    const params = call[0] as { args?: string[] } | undefined;
+
+    return params?.args?.[1]?.includes(text) === true;
+  });
+}
 let storedSandboxExternalId: string | null = null;
 const getSandboxExternalIdMock = mock(async (_provider: string, _key: string) => storedSandboxExternalId);
 const claimSandboxInstanceMock = mock(async (_provider: string, _key: string, externalId: string) => {
@@ -530,7 +537,7 @@ describe("createSandboxExecutor", () => {
     expect(vercelStopMock).toHaveBeenCalledTimes(1);
   });
 
-  it("uses Vercel native create/resume lifecycle callbacks for persistent sandboxes", async () => {
+  it("runs Vercel lifecycle hooks explicitly for persistent sandboxes", async () => {
     const { VercelSandboxExecutor } = await import("../functions/harness-processing/sandbox/vercel-executor.ts");
     const executor = new VercelSandboxExecutor({
       provider: "vercel",
@@ -549,7 +556,7 @@ describe("createSandboxExecutor", () => {
       outputLimitBytes: 4096,
     });
     expect(vercelGetOrCreateMock).toHaveBeenCalled();
-    expect((vercelRunCommandMock.mock.calls[0]![0] as { args: string[] }).args[1]).toContain("echo create > hook.txt");
+    expect(vercelCommandIncludes("echo create > hook.txt")).toBe(true);
 
     vercelRunCommandMock.mockClear();
     await executor.run({
@@ -560,7 +567,7 @@ describe("createSandboxExecutor", () => {
       outputLimitBytes: 4096,
     });
     expect(vercelGetMock).toHaveBeenCalled();
-    expect((vercelRunCommandMock.mock.calls[0]![0] as { args: string[] }).args[1]).toContain("echo resume >> hook.txt");
+    expect(vercelCommandIncludes("echo resume >> hook.txt")).toBe(true);
   });
 
   it("uses the workspace service account for Kubernetes S3 mounts by default", async () => {

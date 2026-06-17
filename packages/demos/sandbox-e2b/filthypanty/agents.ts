@@ -14,7 +14,6 @@ export const e2bSandbox = defineSandbox({
     options: {
       apiKey: env.E2B_API_KEY,
       // template: env.E2B_TEMPLATE,
-      // workspaceRoot: "/mnt/workspaces",
     },
   },
 });
@@ -23,18 +22,16 @@ export const e2bAgent = defineAgent({
   name: "e2b-agent",
   config: {
     provider: {
-      google: { apiKey: env.GOOGLE_API_KEY },
+      minimax: {
+        apiKey: env.MINIMAX_API_KEY
+      },
     },
     model: {
-      provider: "google",
-      modelId: "gemma-4-31b-it",
+      provider: "minimax",
+      modelId: "MiniMax-M3",
     },
     agent: {
-      system: [
-        "You only have the bash tool — E2B does not mount a persistent workspace.",
-        "Write any files and run them in the SAME bash command.",
-        "Report stdout and status for every run.",
-      ].join("\n"),
+      system: "You are a helpful assistant with access to a sandbox environment where you can run code and access the internet. Use the tools available to you to answer the user's question.",
     },
     sandbox: e2bSandbox,
   },

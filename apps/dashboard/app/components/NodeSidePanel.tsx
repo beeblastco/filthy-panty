@@ -53,6 +53,7 @@ import {
   getRememberedDeploymentApiKey,
   rememberDeploymentCredential,
 } from "@/app/lib/deploymentCredentials";
+import { includesSkillRef } from "@/app/lib/skillRefs";
 import { api } from "@filthy-panty/convex/_generated/api";
 import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import { useStore, type Node } from "@xyflow/react";
@@ -447,7 +448,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       );
       const path = (nodeData?.label ?? "").trim();
       const enabled =
-        skills.enabled === true && (skills.allowed ?? []).includes(path);
+        skills.enabled === true && includesSkillRef(skills.allowed, path);
 
       return {
         text: enabled ? "Enabled" : "Disabled",

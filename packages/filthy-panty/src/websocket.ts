@@ -10,6 +10,7 @@ import { resolveRunEvents, type AgentRunEventInput, type AgentRunOverrides } fro
 const DEFAULT_CONNECT_TIMEOUT_MS = 2000;
 const WS_CONNECTING = 0;
 const WS_OPEN = 1;
+const LAMBDA_FUNCTION_URL_HOST_RE = /\.lambda-url\.[a-z0-9-]+\.on\.aws$/i;
 
 export type WebSocketServerMessage =
   | { type: "meta"; sessionId: string; taskId: string }
@@ -85,6 +86,7 @@ export class FilthyPantyWebSocketClient {
 
   constructor(options: FilthyPantyWebSocketClientOptions) {
     this.baseUrl = normalizeWebSocketServiceUrl(options.baseUrl ||
+      process.env.FILTHY_PANTY_WEBSOCKET_URL ||
       options.host ||
       process.env.FILTHY_PANTY_BASE_URL ||
       process.env.FILTHY_PANTY_HOST ||
@@ -100,11 +102,12 @@ export class FilthyPantyWebSocketClient {
   subscribe(input: WebSocketRunInput, handlers: WebSocketHandlers = {}): WebSocketSubscription {
     const WebSocketImpl = this.resolveWebSocket();
     const url = this.buildUrl(input);
+    const accessError = webSocketAccessError(this.baseUrl);
     const socket = new WebSocketImpl(url);
     let opened = false;
     let closed = false;
     const timeout = setTimeout(() => {
-      if (!opened) fail(new Error(`Cannot access the WebSocket service at ${this.baseUrl}.`));
+      if (!opened) fail(accessError);
     }, this.connectTimeoutMs);
 
     const close = (code = 1000, reason = "client closed") => {
@@ -119,7 +122,7 @@ export class FilthyPantyWebSocketClient {
 
     const fail = (error: Error) => {
       handlers.onError?.(error);
-      close(1011, error.message);
+      close(1011, "websocket error");
     };
 
     const finish = () => {
@@ -189,7 +192,7 @@ export class FilthyPantyWebSocketClient {
     };
 
     socket.onerror = () => {
-      fail(new Error(`Cannot access the WebSocket service at ${this.baseUrl}.`));
+      fail(accessError);
     };
 
     socket.onclose = (event) => {
@@ -294,6 +297,18 @@ function normalizeWebSocketServiceUrl(value: string): string {
   if (/^wss?:\/\//.test(trimmed)) return stripTrailingSlash(trimmed);
 
   return normalizeHttpServiceUrl(trimmed);
+}
+
+function webSocketAccessError(baseUrl: string): Error {
+  const host = new URL(baseUrl).hostname;
+  if (LAMBDA_FUNCTION_URL_HOST_RE.test(host)) {
+    return new Error(
+      `Cannot access the WebSocket service at ${baseUrl}. AWS Lambda Function URLs do not support WebSocket upgrades; ` +
+      "set FILTHY_PANTY_WEBSOCKET_URL or FILTHY_PANTY_HOST to the deployed WebSocket gateway URL instead.",
+    );
+  }
+
+  return new Error(`Cannot access the WebSocket service at ${baseUrl}.`);
 }
 
 function parseServerMessage(data: string): WebSocketServerMessage | null {

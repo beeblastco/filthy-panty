@@ -41,6 +41,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       if (cwd) {
         await this.#shell(sandbox, `mkdir -p ${shellQuote(cwd)}`, { cwd: "/" });
       }
+      if (persistent && cwd) {
+        await this.#runLifecycle(sandbox, cwd);
+      }
       const result = await sandbox.runCommand({
         cmd: "bash",
         args: ["-lc", request.code],
@@ -65,6 +68,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     const workDir = this.#workDir(ns);
     await this.#shell(sandbox, `mkdir -p ${shellQuote(workDir)}`, { cwd: "/" });
     const jobId = request.jobId ?? generateJobId();
+    await this.#runLifecycle(sandbox, workDir);
     const script = launchScript(this.#jobsDir(ns), jobId, workDir, request.code, {
       maxConcurrentJobs: MAX_CONCURRENT_BACKGROUND_JOBS,
       ...(request.callback ? { callback: request.callback } : {}),
@@ -159,7 +163,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         const sandbox = await Sandbox.get({
           name: storedName,
           ...vercelAuthOptions(this.#config),
-          onResume: lifecycleCallback(this.#workDir(key), this.#config.onResume),
         });
         await saveSandboxInstance("vercel", key, storedName).catch(() => {});
         return sandbox;
@@ -172,8 +175,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     const sandbox = await Sandbox.getOrCreate({
       ...vercelCreateOptions(this.#config, request, true),
       name,
-      onCreate: lifecycleCallback(this.#workDir(key), this.#config.onCreate),
-      onResume: lifecycleCallback(this.#workDir(key), this.#config.onResume),
     });
     if (await claimSandboxInstance("vercel", key, name)) {
       return sandbox;
@@ -186,7 +187,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     return Sandbox.get({
       name: winner,
       ...vercelAuthOptions(this.#config),
-      onResume: lifecycleCallback(this.#workDir(key), this.#config.onResume),
     });
   }
 
@@ -199,7 +199,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     const sandbox = await Sandbox.get({
       name,
       ...vercelAuthOptions(this.#config),
-      onResume: lifecycleCallback(this.#workDir(key), this.#config.onResume),
     });
     return { sandbox, jobsDir: this.#jobsDir(key) };
   }
@@ -215,6 +214,25 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       throw new Error(await commandError(result, "vercel sandbox setup command failed"));
     }
     return await result.stdout();
+  }
+
+  async #runLifecycle(sandbox: VercelSandbox, workDir: string): Promise<void> {
+    if (!this.#config.onCreate?.length && !this.#config.onResume?.length) return;
+    const marker = `${workDir}/.fp-lifecycle-created`;
+    const createCommands = this.#config.onCreate ?? [];
+    const resumeCommands = this.#config.onResume ?? [];
+    const script = [
+      "set -e",
+      `mkdir -p ${shellQuote(workDir)}`,
+      `cd ${shellQuote(workDir)}`,
+      `if [ ! -f ${shellQuote(marker)} ]; then`,
+      ...createCommands.map((cmd) => `  ${cmd}`),
+      `  touch ${shellQuote(marker)}`,
+      "else",
+      ...resumeCommands.map((cmd) => `  ${cmd}`),
+      "fi",
+    ].join("\n");
+    await this.#shell(sandbox, script, { cwd: "/" });
   }
 
   async #adaptResult(result: CommandFinished, request: SandboxRunRequest, startedAt: number): Promise<SandboxRunResult> {
@@ -278,17 +296,6 @@ function vercelNetworkPolicy(config: SandboxExecutorConfig): NetworkPolicy {
   return {
     ...(network.allowDomains?.length ? { allow: network.allowDomains } : {}),
     ...(network.allowCidrs?.length ? { subnets: { allow: network.allowCidrs } } : {}),
-  };
-}
-
-function lifecycleCallback(workDir: string, commands?: string[]): ((sandbox: VercelSandbox) => Promise<void>) | undefined {
-  if (!commands?.length) return undefined;
-  return async (sandbox: VercelSandbox) => {
-    const script = ["set -e", `mkdir -p ${shellQuote(workDir)}`, `cd ${shellQuote(workDir)}`, ...commands].join("\n");
-    const result = await sandbox.runCommand({ cmd: "bash", args: ["-lc", script] });
-    if (result.exitCode !== 0) {
-      throw new Error(await commandError(result, "vercel lifecycle hook failed"));
-    }
   };
 }
 

@@ -41,6 +41,7 @@ class FakeWebSocket implements WebSocketLike {
 afterEach(() => {
   FakeWebSocket.instances = [];
   delete process.env.FILTHY_PANTY_API_KEY;
+  delete process.env.FILTHY_PANTY_WEBSOCKET_URL;
 });
 
 test("websocket client accepts host as a shorthand for the core service URL", () => {
@@ -74,6 +75,47 @@ test("websocket client reads apiKey from the shared SDK environment variable", (
   expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
     "wss://app.example/v1/agents/agent_1/ws?token=env-key",
   );
+});
+
+test("websocket client lets the gateway URL override an HTTP core host", () => {
+  process.env.FILTHY_PANTY_WEBSOCKET_URL = "wss://ws.example";
+  const client = new FilthyPantyWebSocketClient({
+    host: "neqw2f4jkhicsoyybmb5lckebm0fsrgb.lambda-url.eu-central-1.on.aws",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+
+  expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
+    "wss://ws.example/v1/agents/agent_1/ws?token=test-key",
+  );
+});
+
+test("websocket client explains Lambda Function URL upgrade failures", async () => {
+  class FailingWebSocket extends FakeWebSocket {
+    constructor(url: string) {
+      super(url);
+      queueMicrotask(() => this.onerror?.({}));
+    }
+  }
+  let error: Error | undefined;
+  const client = new FilthyPantyWebSocketClient({
+    host: "https://neqw2f4jkhicsoyybmb5lckebm0fsrgb.lambda-url.eu-central-1.on.aws",
+    apiKey: "test-key",
+    WebSocket: FailingWebSocket,
+  });
+
+  client.subscribe({
+    endpointId: "agent_1",
+    events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+  }, {
+    onError(nextError) {
+      error = nextError;
+    },
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(error?.message).toContain("AWS Lambda Function URLs do not support WebSocket upgrades");
 });
 
 test("websocket client subscribes to the core service and forwards server messages", async () => {

@@ -12,7 +12,7 @@ const client = new FilthyPantyClient({
   apiKey: process.env.FILTHY_PANTY_API_KEY!,
 });
 
-async function runAgent(label: string, agentRef: ReturnType<typeof api.agents.writer>, input: string): Promise<void> {
+async function runAgent(label: string, agentRef: any, input: string): Promise<void> {
   console.log(`\n[${label}]\n`);
 
   for await (const chunk of client.stream(agentRef, { input })) {

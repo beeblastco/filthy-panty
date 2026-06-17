@@ -329,6 +329,65 @@ export const recordExternalResourcesBySecretHash = internalMutation({
     },
 });
 
+/**
+ * Replaces the dashboard file tree for a CLI-managed skill node with uploaded bundle files.
+ */
+export const replaceSkillNodeFilesBySecretHash = internalMutation({
+    args: {
+        secretHash: v.string(),
+        project: v.string(),
+        environment: v.string(),
+        skillName: v.string(),
+        files: v.array(v.object({
+            path: v.string(),
+            name: v.string(),
+            storageId: v.id("_storage"),
+            mimeType: v.optional(v.string()),
+            sizeBytes: v.optional(v.number()),
+        })),
+    },
+    returns: v.null(),
+    handler: async (ctx, args) => {
+        const account = await accountFromSecretHash(ctx, args.secretHash);
+        if (!account) throw new Error("Invalid BeeBlast token");
+        const resolved = await getProjectEnvironment(ctx, account, args.project, args.environment);
+        if (!resolved) throw new Error("Project or environment not found");
+        const authId = await authIdForAccount(ctx, account);
+        if (!authId) throw new Error("Account org owner not found");
+        const nodeId = canvasNodeId("skill", resourceName(args.skillName));
+
+        const existing = await ctx.db
+            .query("workspaceFiles")
+            .withIndex("by_projectId_and_nodeId", (q) =>
+                q.eq("projectId", resolved.projectDoc._id).eq("nodeId", nodeId),
+            )
+            .collect();
+        for (const file of existing) {
+            if (file.storageId) await ctx.storage.delete(file.storageId);
+            await ctx.db.delete(file._id);
+        }
+
+        const now = Date.now();
+        for (const file of args.files) {
+            await ctx.db.insert("workspaceFiles", {
+                authId: authId,
+                projectId: resolved.projectDoc._id,
+                nodeId: nodeId,
+                path: file.path,
+                name: file.name,
+                isFolder: false,
+                storageId: file.storageId,
+                mimeType: file.mimeType,
+                sizeBytes: file.sizeBytes,
+                createdAt: now,
+                updatedAt: now,
+            });
+        }
+
+        return null;
+    },
+});
+
 export const deleteResourceBySecretHash = internalMutation({
     args: {
         secretHash: v.string(),
@@ -1134,8 +1193,8 @@ type CanvasEdge = {
     animated?: boolean;
 };
 
-type RuntimeCliResource = CliResource & {
-    kind: "agent" | "workspace" | "sandbox";
+type CanvasCliResource = CliResource & {
+    kind: "agent" | "workspace" | "sandbox" | "skill";
 };
 
 async function syncCanvasLayoutForManifest(
@@ -1175,9 +1234,9 @@ async function syncCanvasLayoutForManifest(
         )
         .collect();
     const agentConfigByName = new Map(agentConfigs.map((entry) => [entry.name, entry]));
-    const desiredResources: RuntimeCliResource[] = resources
-        .filter((entry): entry is RuntimeCliResource =>
-            entry.kind === "agent" || entry.kind === "workspace" || entry.kind === "sandbox",
+    const desiredResources: CanvasCliResource[] = resources
+        .filter((entry): entry is CanvasCliResource =>
+            entry.kind === "agent" || entry.kind === "workspace" || entry.kind === "sandbox" || entry.kind === "skill",
         )
         .map((entry) => ({ ...entry, name: resourceName(entry.name) }));
     const desiredNodeKeys = new Set(desiredResources.map((entry) => `${entry.kind}:${entry.name}`));
@@ -1186,7 +1245,7 @@ async function syncCanvasLayoutForManifest(
     const nodeIdByKindName = new Map<string, string>();
 
     const ordered = [...desiredResources].sort((a, b) => {
-        const rank = { agent: 0, sandbox: 1, workspace: 2 } as const;
+        const rank = { agent: 0, sandbox: 1, workspace: 2, skill: 3 } as const;
         return rank[a.kind] - rank[b.kind] || a.name.localeCompare(b.name);
     });
     ordered.forEach((resource, index) => {
@@ -1209,6 +1268,32 @@ async function syncCanvasLayoutForManifest(
                 },
             });
             nodeIdByKindName.set(`agent:${resource.name}`, node.id);
+            return;
+        }
+
+        if (resource.kind === "skill") {
+            const configSnapshot = snapshotExternalConfig(resource.config);
+            const node = upsertCanvasNode({
+                nextById,
+                existingById,
+                preferred: existingById.get(canvasNodeId("skill", resource.name)),
+                kind: "skill",
+                name: resource.name,
+                position: { x: 760, y: 80 + index * 180 },
+                data: {
+                    label: resource.name,
+                    status: "idle",
+                    resourceId: resource.name,
+                    description: resource.description,
+                    config: {
+                        skillSource: "files",
+                        ...(isRecord(configSnapshot) ? configSnapshot : {}),
+                    },
+                    managedBy: "cli",
+                    cliResourceKey: `skill:${resource.name}`,
+                },
+            });
+            nodeIdByKindName.set(`skill:${resource.name}`, node.id);
             return;
         }
 
@@ -1291,6 +1376,15 @@ async function syncCanvasLayoutForManifest(
                 if (calleeNodeId && calleeNodeId !== agentId) {
                     addDesiredSubagentEdge(desiredEdges, agentId, calleeNodeId);
                 }
+            }
+        }
+
+        const skills = agent.config.skills;
+        if (isRecord(skills) && Array.isArray(skills.allowed)) {
+            for (const entry of skills.allowed) {
+                if (typeof entry !== "string" || !entry.trim()) continue;
+                const skillNodeId = skillNodeIdForReference(nodeIdByKindName, entry);
+                if (skillNodeId) addDesiredDefaultEdge(desiredEdges, agentId, skillNodeId);
             }
         }
     }
@@ -1425,6 +1519,17 @@ function addDesiredMountEdge(
 function addDesiredSubagentEdge(edges: Map<string, CanvasEdge>, source: string, target: string): void {
     const id = `subagent:${source}-right-${target}-left`;
     edges.set(id, { id: id, source: source, target: target, animated: false });
+}
+
+function skillNodeIdForReference(nodeIdByKindName: Map<string, string>, value: string): string | undefined {
+    const direct = nodeIdByKindName.get(`skill:${resourceName(value)}`);
+    if (direct) return direct;
+
+    const slashIndex = value.lastIndexOf("/");
+    if (slashIndex < 0) return undefined;
+    const localName = value.slice(slashIndex + 1);
+
+    return localName.trim() ? nodeIdByKindName.get(`skill:${resourceName(localName)}`) : undefined;
 }
 
 function edgeIsCliManaged(edge: CanvasEdge, nodesById: Map<string, CanvasNode>): boolean {

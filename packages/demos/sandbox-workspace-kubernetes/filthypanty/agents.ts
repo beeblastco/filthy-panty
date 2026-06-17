@@ -6,6 +6,11 @@ export const k8sSandbox = defineSandbox({
     provider: "kubernetes",
     network: { mode: "allow-all" },
     permissionMode: "bypass",
+    persistent: true,
+    ephemeralHome: true,
+    lifecycle: {
+      idleTimeoutSeconds: 300,
+    },
     timeout: 60,
     outputLimitBytes: 65536,
     envVars: {
@@ -14,6 +19,7 @@ export const k8sSandbox = defineSandbox({
     },
     options: {
       mountAwsS3Buckets: true,
+      imagePullSecrets: ["ghcr-pull-secret"],
       workspaceRoot: "/mnt/workspaces",
     },
   },

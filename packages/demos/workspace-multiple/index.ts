@@ -44,16 +44,16 @@ async function runAgent(label: string, input: string): Promise<void> {
   }
 }
 
-await runAgent("create files in two named workspaces", [
+await runAgent("write personal workspace and inspect read-only team workspace", [
   "Run these exact workspace checks.",
   "1. In the default personal workspace, write personal.txt containing only personal-alpha.",
-  "2. In the team workspace, write team.txt containing only team-shared.",
-  "3. Read both files back with bash and summarize the exact stdout.",
+  "2. Read personal.txt back with bash and summarize the exact stdout.",
+  "3. Confirm the team workspace is configured read-only for sandbox access, so this run does not write team files with bash.",
 ].join("\n"));
 
-await runAgent("verify both workspaces persist by workspaceId", [
+await runAgent("verify writable personal workspace persists", [
   "Run these exact workspace checks from this new conversation.",
   "1. In the default personal workspace, read personal.txt.",
-  "2. In the team workspace, read team.txt.",
-  "3. Report that personal.txt contains personal-alpha and team.txt contains team-shared.",
+  "2. Report that personal.txt contains personal-alpha.",
+  "3. Confirm the team workspace remains read-only in the configuration and should show read-only on the dashboard.",
 ].join("\n"));
