@@ -149,6 +149,7 @@ function denyUnlessProjectPrincipal(stage: string, region: string) {
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3mount", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-infra-deploy`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-sst-infra-deploy`,
+          `arn:aws:iam::${AWS_ACCOUNT_ID}:root`,
         ],
       },
     ],
@@ -452,21 +453,14 @@ export default $config({
     const toolBundlesBucketArn = `arn:aws:s3:::${names.toolBundles}`;
     const filesystemBucket = new sst.aws.Bucket("Memory", {
       versioning: true,
-      policy: stage === "production"
-        ? [denyUnlessProjectPrincipal(stage, region)]
-        : [{
-          effect: "allow",
-          principals: "*",
-          actions: ["s3:GetObject"],
-          paths: ["*"],
-        }],
+      policy: [denyUnlessProjectPrincipal(stage, region)],
       transform: {
         bucket: {
           bucket: names.memory,
         },
         publicAccessBlock: {
           blockPublicAcls: true,
-          ignorePublicAcls: true,
+          ignorePublicAcls: false,
           blockPublicPolicy: true,
           restrictPublicBuckets: true,
         },
