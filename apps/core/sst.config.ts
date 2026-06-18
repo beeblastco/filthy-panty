@@ -452,16 +452,23 @@ export default $config({
     const toolBundlesBucketArn = `arn:aws:s3:::${names.toolBundles}`;
     const filesystemBucket = new sst.aws.Bucket("Memory", {
       versioning: true,
-      policy: [denyUnlessProjectPrincipal(stage, region)],
+      policy: stage === "production"
+        ? [denyUnlessProjectPrincipal(stage, region)]
+        : [{
+          effect: "allow",
+          principals: "*",
+          actions: ["s3:GetObject"],
+          paths: ["*"],
+        }],
       transform: {
         bucket: {
           bucket: names.memory,
         },
         publicAccessBlock: {
-          blockPublicAcls: false,
-          ignorePublicAcls: false,
-          blockPublicPolicy: false,
-          restrictPublicBuckets: false,
+          blockPublicAcls: true,
+          ignorePublicAcls: true,
+          blockPublicPolicy: true,
+          restrictPublicBuckets: true,
         },
       },
     });
