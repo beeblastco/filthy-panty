@@ -183,7 +183,7 @@ async function callWorkspaceApi(
     const url = process.env.FILTHY_PANTY_ACCOUNT_MANAGE_URL;
     const secret = process.env.FILTHY_PANTY_SERVICE_AUTH_SECRET;
     if (!url || !secret) throw new Error("Workspace file service is not configured");
-    const endpoint = `${url}/accounts/me/workspaces/${encodeURIComponent(workspace.workspaceId)}/files` +
+    const endpoint = `${url.replace(/\/+$/, "")}/accounts/me/workspaces/${encodeURIComponent(workspace.workspaceId)}/files` +
         (path ? `?path=${encodeURIComponent(path)}` : "");
     const response = await fetch(endpoint, {
         method: method,
