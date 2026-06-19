@@ -6,6 +6,7 @@
  * lists them per agent and lets you add one, toggle it active/inactive, or remove
  * it. Edits write straight to the agent config the harness delivers from.
  */
+import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
@@ -68,8 +69,11 @@ export function WebhooksPanel({ projectId, environmentId }: Props) {
                 {agents?.map((agent) => (
                     <div key={agent.agentConfigId} className="grid gap-2">
                         <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
-                                {agent.agentName}
+                            <span className="flex min-w-0 items-center gap-2">
+                                <DitherAvatarSVG seed={agent.agentName} size={20} className="shrink-0" />
+                                <span className="truncate text-sm font-medium text-foreground">
+                                    {agent.agentName}
+                                </span>
                             </span>
                             <Button
                                 variant="ghost"

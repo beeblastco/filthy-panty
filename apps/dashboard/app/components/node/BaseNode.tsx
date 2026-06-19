@@ -1,5 +1,6 @@
 "use client";
 
+import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import { JavaScript } from "@/app/components/icons/JavaScript";
 import { Python } from "@/app/components/icons/Python";
 import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
@@ -280,7 +281,9 @@ export function BaseNode({
                     style={{ transform: `scale(${scale})` }}
                 >
                     <div className="flex items-center gap-1.5 pr-7 min-w-0">
-                    {data.properties?.color ? (
+                    {nodeType === "agent" ? (
+                        <DitherAvatarSVG seed={data.label} size={14} className="shrink-0" />
+                    ) : data.properties?.color ? (
                         <span
                             className="inline-block size-3 rounded-full shrink-0"
                             style={{ backgroundColor: data.properties.color }}
