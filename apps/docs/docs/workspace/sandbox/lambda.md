@@ -172,31 +172,31 @@ a write to a plain S3 object is a two-hop journey, and each hop is asynchronous 
   that export. The **default** read-only path reads through the mount (hop 1), so it — like
   any mounted sandbox — sees committed writes immediately and never waits on hop 2.
 
-### ⚠️ The `bash` tool is not auto-synced
+### `bash` writes are flushed automatically
 
-Only the dedicated `write`/`edit` tools fsync. Files created by raw `bash` redirection
-(`echo > f`, `cmd > out`, `>>`, in-script writes) live only in the page cache and can be
-**lost on the next cold container**. If an agent needs a `bash`-written file to persist,
-it must flush explicitly:
+The sandbox runtime calls `sync(2)` after every persistent run, flushing all dirty
+page-cache writes — including raw `bash` redirection (`echo > f`, `cmd > out`, `>>`,
+in-script writes) — to the S3 Files mount before the Lambda freezes. So `bash`-written
+files are durable across the next cold container without any explicit flush, just like
+the dedicated `write`/`edit` tools (which also `fsync` per file). No `sync report.txt`
+incantation is needed in agent scripts anymore.
 
-```bash
-echo "data" > report.txt && sync report.txt   # fsync this file
-# or, after a batch of writes:
-sync                                           # flush everything
-```
-
-Prefer the `write` tool over `bash` redirection when durability matters — it does this for you.
+> **Note — this is a stopgap.** The per-run `sync(2)` only prevents silent data loss on
+> cold containers. It does not solve cross-provider durability, the hop-2 visibility lag,
+> or multi-agent write conflicts on a shared workspace. The intended final solution is a
+> unified shared-data layer (an Archil-style elastic POSIX filesystem mountable across
+> sandboxes) that owns durability and conflict resolution in one place, replacing the
+> per-provider mount/flush mechanics. Tracked in
+> [#64](https://github.com/beeblastco/filthy-panty/issues/64).
 
 ### Known limitations
 
 - **S3-direct opt-out visibility lag.** Because of hop 2, a write is not immediately visible
   to a reader using the `sandbox: null` opt-out. Expect a delay (≥60s) and verify the bucket
   has versioning on. The default read-only mount and any mounted sandbox are unaffected.
-- **Unflushed `bash` writes can vanish.** See the warning above — this is a correctness
-  footgun for agents that script their own file writes instead of using the `write` tool.
-  Tracked in [#46](https://github.com/beeblastco/filthy-panty/issues/46) for a future fix.
 - **No mount-level `sync` option.** Lambda's managed `fileSystemConfig` mount does not expose
-  NFS mount options, so durability is enforced per-write in the tools rather than globally.
+  NFS mount options, so durability is enforced by the runtime (`sync(2)` after each persistent
+  run) and per-write in the dedicated tools, rather than globally at mount time.
 
 ## Security
 
