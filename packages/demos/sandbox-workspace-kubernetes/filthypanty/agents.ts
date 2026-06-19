@@ -54,6 +54,7 @@ export const analysisAgent = defineAgent({
     },
     sandbox: k8sSandbox,
     workspaces: [notesWorkspace],
+    publicAccess: true,
   },
 });
 
@@ -82,5 +83,6 @@ export const visualizationAgent = defineAgent({
     },
     sandbox: k8sSandbox,
     workspaces: [notesWorkspace],
+    publicAccess: true,
   },
 });
