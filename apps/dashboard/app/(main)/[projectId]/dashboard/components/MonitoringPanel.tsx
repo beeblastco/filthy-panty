@@ -192,10 +192,7 @@ export function MonitoringPanel({ projectId, environmentId }: Props) {
 
   return (
     <div className="grid gap-8">
-      <Section
-        title="Error Logs"
-        description="Live ERROR-level log stream queried directly from AWS CloudWatch."
-      >
+      <Section description="Live ERROR-level log stream queried directly from AWS CloudWatch.">
         {/* Toolbar */}
         <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
           <div className="flex items-center gap-2 flex-1 min-w-[240px]">

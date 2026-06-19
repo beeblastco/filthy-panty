@@ -8,10 +8,7 @@ import { Section } from "@/app/components/Section";
 
 export function TracingPanel() {
     return (
-        <Section
-            title="Execution Traces"
-            description="Trace data is now queried directly from CloudWatch Logs."
-        >
+        <Section description="Trace data is now queried directly from CloudWatch Logs.">
             <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
                 <p className="text-sm text-muted-foreground">
                     Execution traces are no longer stored in the application database.

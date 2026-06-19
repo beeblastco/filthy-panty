@@ -42,17 +42,14 @@ export function WebhooksPanel({ projectId, environmentId }: Props) {
 
     if (!environmentId) {
         return (
-            <Section title="Webhooks" description="Outbound event webhooks delivered to your services.">
+            <Section description="Outbound event webhooks delivered to your services.">
                 <p className="text-sm text-muted-foreground">Select an environment to view its webhooks.</p>
             </Section>
         );
     }
 
     return (
-        <Section
-            title="Webhooks"
-            description="Outbound event webhooks delivered to your services. Configure them per agent via the SDK (config.hooks.webhook) or the agent Config tab; secret/URL values resolve from environment variables."
-        >
+        <Section description="Outbound event webhooks delivered to your services. Configure them per agent via the SDK (config.hooks.webhook) or the agent Config tab; secret/URL values resolve from environment variables.">
             {webhooks && webhooks.length === 0 && (
                 <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
                     <Globe className="mx-auto mb-2 size-8 text-muted-foreground" />

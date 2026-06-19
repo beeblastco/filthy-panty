@@ -254,10 +254,13 @@ export function BaseNode({
 
             {(nodeType === "agent" || nodeType === "sandbox") && (() => {
                 // Agent: lit when public access is on (secure-by-default → off). Sandbox: lit
-                // when internet egress is on. Both fall back to a muted, slashed globe when off.
+                // when network egress is allowed — core models this as `network.mode`
+                // (allow-all/restricted = on, deny-all/unset = off), not a flat boolean. Both
+                // fall back to a muted, slashed globe when off.
+                const networkMode = (data.config?.network as { mode?: string } | undefined)?.mode;
                 const isOn =
                     nodeType === "sandbox"
-                        ? data.config?.internet === true
+                        ? networkMode === "allow-all" || networkMode === "restricted"
                         : data.config?.publicAccess === true;
 
                 return (

@@ -62,14 +62,14 @@ export function DeployKeysPanel({ projectId, environmentId }: Props) {
 
     if (!environmentId) {
         return (
-            <Section title="Deploy keys" description="Scoped CLI tokens that deploy only to this environment.">
+            <Section description="Scoped CLI tokens that deploy only to this environment.">
                 <p className="text-sm text-muted-foreground">Select an environment to manage its deploy keys.</p>
             </Section>
         );
     }
 
     return (
-        <Section title="Deploy keys" description="Scoped CLI tokens that deploy only to this environment.">
+        <Section description="Scoped CLI tokens that deploy only to this environment.">
             {revealed && (
                 <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3">
                     <p className="mb-1 text-xs font-medium text-foreground">

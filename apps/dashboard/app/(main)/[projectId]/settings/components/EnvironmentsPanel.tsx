@@ -91,14 +91,14 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
 
     if (!environmentId) {
         return (
-            <Section title="Variables" description="Runtime variables for this environment.">
+            <Section description="Runtime variables for this environment.">
                 <p className="text-sm text-muted-foreground">Select an environment to manage its variables.</p>
             </Section>
         );
     }
 
     return (
-        <Section title="Variables" description="Runtime variables for this environment.">
+        <Section description="Runtime variables for this environment.">
             {variables && variables.length === 0 && (
                 <p className="text-sm text-muted-foreground">No variables yet.</p>
             )}
