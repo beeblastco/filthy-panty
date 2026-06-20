@@ -26,6 +26,7 @@ COPY --from=deps /app/apps/dashboard/node_modules ./apps/dashboard/node_modules
 COPY --from=deps /app/packages/convex/node_modules ./packages/convex/node_modules
 COPY package.json bun.lock ./
 COPY packages/convex/ ./packages/convex/
+COPY packages/filthy-panty/ ./packages/filthy-panty/
 COPY apps/dashboard/ ./apps/dashboard/
 # Convex is deployed separately by .github/workflows/deploy-convex.yaml; this
 # build only compiles the Next app against the committed _generated/ types and
