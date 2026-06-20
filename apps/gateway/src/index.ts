@@ -68,8 +68,7 @@ type ObservabilitySocketState = {
 };
 
 type GatewayServerOptions = {
-  coreBaseUrl?: string;
-  coreBaseUrls?: string[];
+  coreBaseUrls: string[];
   port?: number;
   host?: string;
   limits?: GatewayLimits;
@@ -99,7 +98,7 @@ const maxBunIdleTimeoutSeconds = 255;
 const LOG_LEVEL_ORDER: Record<LogLevel, number> = { INFO: 0, WARN: 1, ERROR: 2 };
 
 export function createGatewayServer(options: GatewayServerOptions): Bun.Server<GatewayData> {
-  const coreBaseUrls = normalizedCoreBaseUrls(options.coreBaseUrls ?? [options.coreBaseUrl ?? ""]);
+  const coreBaseUrls = normalizedCoreBaseUrls(options.coreBaseUrls);
   const limits = options.limits ?? gatewayLimitsFromEnv();
 
   return Bun.serve<GatewayData>({
@@ -506,7 +505,7 @@ function json(payload: Record<string, unknown>, init: ResponseInit = {}): Respon
 function normalizeBaseUrl(value: string): string {
   const trimmed = value.trim().replace(/\/+$/, "");
   if (!trimmed) {
-    throw new Error("Gateway requires FILTHY_PANTY_CORE_URL");
+    throw new Error("Gateway requires FILTHY_PANTY_CORE_URLS");
   }
 
   return /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`;
@@ -515,7 +514,7 @@ function normalizeBaseUrl(value: string): string {
 /** Normalize, de-duplicate, and require at least one core upstream URL. */
 export function normalizedCoreBaseUrls(values: string[]): string[] {
   const urls = [...new Set(values.map((value) => value.trim()).filter(Boolean).map(normalizeBaseUrl))];
-  if (urls.length === 0) throw new Error("Gateway requires FILTHY_PANTY_CORE_URLS or FILTHY_PANTY_CORE_URL");
+  if (urls.length === 0) throw new Error("Gateway requires FILTHY_PANTY_CORE_URLS");
 
   return urls;
 }
@@ -971,9 +970,7 @@ function positiveInt(value: string | undefined, fallback: number): number {
 }
 
 if (import.meta.main) {
-  const configuredCoreUrls = process.env.FILTHY_PANTY_CORE_URLS?.split(",") ?? [
-    process.env.FILTHY_PANTY_CORE_URL ?? process.env.FILTHY_PANTY_BASE_URL ?? "",
-  ];
+  const configuredCoreUrls = process.env.FILTHY_PANTY_CORE_URLS?.split(",") ?? [];
   const server = createGatewayServer({ coreBaseUrls: configuredCoreUrls });
   process.stdout.write(`gateway listening on ${server.hostname}:${server.port}\n`);
 }
