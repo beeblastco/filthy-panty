@@ -7,7 +7,7 @@
 
 import { emitOtelLog, getObservabilityContext } from "./otel.ts";
 import type { ObservabilityLogEntry } from "../../../../packages/filthy-panty/src/observability-contracts.ts";
-import { logsSubject, getObservabilityNatsConn } from "./nats.ts";
+import { logsSubject, getObservabilityNatsConn, ensureObservabilityStream } from "./nats.ts";
 
 // Keys are matched after normalizing to lowercase with hyphens/underscores
 // stripped, against three lists: exact, prefix, and suffix.
@@ -205,7 +205,10 @@ function publishNats(
   const subject = logsSubject(ctx.accountId, ctx.project, ctx.environment, ctx.endpointId);
 
   connPromise
-    .then((conn) => {
+    .then(async (conn) => {
+      // Ensure the durable stream captures this line for dashboard replay;
+      // memoized, so ~free after the first call. Live publish proceeds regardless.
+      await ensureObservabilityStream(conn).catch(() => {});
       conn.publish(subject, ENCODER.encode(JSON.stringify(entry)));
     })
     .catch(() => {

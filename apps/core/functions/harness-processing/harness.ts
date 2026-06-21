@@ -35,7 +35,7 @@ import {
   getObservabilityContext,
 } from "../_shared/otel.ts";
 import type { ObservabilitySpanRow } from "../../../../packages/filthy-panty/src/observability-contracts.ts";
-import { tracesSubject, getObservabilityNatsConn } from "../_shared/nats.ts";
+import { tracesSubject, getObservabilityNatsConn, ensureObservabilityStream, flushObservabilityNats } from "../_shared/nats.ts";
 import { consumeColdStart } from "../_shared/cold-start.ts";
 import {
   modelOutputFromModelConfig,
@@ -53,7 +53,12 @@ import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 
 // Default max agent iterations to prevent looping or too long execution.
 const MAX_AGENT_ITERATIONS = 30;
-const MAX_TRACE_ATTRIBUTE_CHARS = 12_000;
+// Per-attribute cap on serialized trace payloads. Generous so reasoning / tool
+// I/O show in full on the dashboard (delivered full-fidelity over the live
+// JetStream path); still well under the NATS 1MB max-payload ceiling. Tempo may
+// truncate further on its side, but that only affects history older than the
+// JetStream replay window.
+const MAX_TRACE_ATTRIBUTE_CHARS = 32_000;
 
 const SPAN_ENCODER = new TextEncoder();
 
@@ -80,7 +85,11 @@ function publishSpan(row: ObservabilitySpanRow): void {
 
   const subject = tracesSubject(ctx.accountId, ctx.project, ctx.environment, ctx.endpointId);
   connPromise
-    .then((conn) => {
+    .then(async (conn) => {
+      // Ensure the durable stream exists so even the first span of a cold
+      // container is captured for replay; memoized, so this is ~free after the
+      // first call. If it fails the live publish still reaches subscribers.
+      await ensureObservabilityStream(conn).catch(() => {});
       conn.publish(subject, SPAN_ENCODER.encode(JSON.stringify(row)));
     })
     .catch(() => {
@@ -340,9 +349,24 @@ export async function runAgentLoop(
   // Log context
   const stepStartedAt = new Map<number, number>();
   // Time-to-first-token per step. onChunk has no step number, so the first chunk
-  // after each step start is attributed to the active step to split a model.step
-  // into "invoke" (wait, step start -> first token) and "stream" (first token -> end).
+  // after each step start is attributed to the active step. A step decomposes into
+  // three non-overlapping segments that sum to its duration:
+  //   ttft      = step start      -> first model chunk   (queue/prefill wait)
+  //   streaming = first model chunk -> last model chunk   (pure token generation)
+  //   tool wait = last model chunk  -> step finish         (tool execution; shown
+  //               as the child tool.call spans, so streaming must NOT include it)
+  // The last model chunk is the last generation delta (text / reasoning / tool-input
+  // / tool-call); the post-execution `tool-result` chunk is deliberately excluded so
+  // a slow tool never inflates the streaming number and misleads optimization.
   const firstChunkAt = new Map<number, number>();
+  const lastModelChunkAt = new Map<number, number>();
+  // Per-part streaming windows (first/last delta per kind) so the dashboard can show
+  // how long the model spent streaming reasoning vs text vs tool-call input. Windows
+  // are first->last per kind and may overlap slightly for models that interleave.
+  type StreamWindow = { first: number; last: number };
+  const reasoningWindow = new Map<number, StreamWindow>();
+  const textWindow = new Map<number, StreamWindow>();
+  const toolInputWindow = new Map<number, StreamWindow>();
   // First text / reasoning chunk per step, for DEBUG lifecycle logs (Loki only;
   // DEBUG is excluded from the live INFO stream so it never spams the dashboard).
   const textStartedSteps = new Set<number>();
@@ -497,7 +521,10 @@ export async function runAgentLoop(
         stepCount,
         toolCallCount,
       });
-      await forceFlushOtel();
+      // Flush the OTLP exporters (Tempo/Loki) AND the live NATS connection so the
+      // durable OBSERVABILITY stream captures every span/log before the container
+      // freezes — otherwise a fire-and-forget publish in flight at return is lost.
+      await Promise.allSettled([forceFlushOtel(), flushObservabilityNats()]);
     } finally {
       // Lambda execution environments are reused, so never retain one task's
       // tenant, trace, or secret values after its exporters have flushed.
@@ -545,16 +572,33 @@ export async function runAgentLoop(
     onChunk: ({ chunk }) => {
       // First chunk of the active step marks the model's time-to-first-token.
       // Synchronous and cheap; onChunk pauses the stream until it returns.
-      if (chunk.type === "raw") return;
+      if (chunk.type === "raw" || chunk.type === "source") return;
       const step = activeStepNumber;
       if (step === undefined) return;
-      if (!firstChunkAt.has(step)) firstChunkAt.set(step, Date.now());
-      if (chunk.type === "text-delta" && !textStartedSteps.has(step)) {
-        textStartedSteps.add(step);
-        logDebug("Model text started", { eventType: "model.text.started", ...logContext, stepNumber: step });
-      } else if (chunk.type === "reasoning-delta" && !reasoningStartedSteps.has(step)) {
-        reasoningStartedSteps.add(step);
-        logDebug("Model thinking started", { eventType: "model.thinking.started", ...logContext, stepNumber: step });
+      const now = Date.now();
+      if (!firstChunkAt.has(step)) firstChunkAt.set(step, now);
+      // `tool-result` arrives AFTER tool execution; exclude it so streaming time
+      // ends at the last generated token, not after the tool ran.
+      if (chunk.type !== "tool-result") lastModelChunkAt.set(step, now);
+      const bump = (windows: Map<number, StreamWindow>) => {
+        const existing = windows.get(step);
+        if (existing) existing.last = now;
+        else windows.set(step, { first: now, last: now });
+      };
+      if (chunk.type === "text-delta") {
+        bump(textWindow);
+        if (!textStartedSteps.has(step)) {
+          textStartedSteps.add(step);
+          logDebug("Model text started", { eventType: "model.text.started", ...logContext, stepNumber: step });
+        }
+      } else if (chunk.type === "reasoning-delta") {
+        bump(reasoningWindow);
+        if (!reasoningStartedSteps.has(step)) {
+          reasoningStartedSteps.add(step);
+          logDebug("Model thinking started", { eventType: "model.thinking.started", ...logContext, stepNumber: step });
+        }
+      } else if (chunk.type === "tool-input-start" || chunk.type === "tool-input-delta" || chunk.type === "tool-call") {
+        bump(toolInputWindow);
       }
     },
     experimental_onStepStart: async ({ stepNumber, messages }) => {
@@ -791,12 +835,29 @@ export async function runAgentLoop(
       const tracked = stepSpans.get(stepNumber);
       if (tracked) {
         const stepEndMs = Date.now();
-        // Split the step into invoke-wait (model.ttft_ms) and streaming
-        // (model.stream_ms) so a slow step shows whether the model was slow to
-        // start or slow to stream. Absent when no chunk was observed.
+        // Decompose the step so a slow step shows where the time went, without
+        // conflating model streaming with tool execution:
+        //   ttft      = step start      -> first token
+        //   stream    = first token     -> last generated token (pure streaming)
+        //   tool wait = last token      -> step finish (tool execution; also the
+        //               child tool.call spans). Absent when no chunk was observed.
         const firstTokenMs = firstChunkAt.get(stepNumber);
+        const lastTokenMs = lastModelChunkAt.get(stepNumber) ?? firstTokenMs;
         const ttftMs = firstTokenMs !== undefined ? Math.max(0, firstTokenMs - tracked.startTimeMs) : undefined;
-        const streamMs = firstTokenMs !== undefined ? Math.max(0, stepEndMs - firstTokenMs) : undefined;
+        const streamMs = firstTokenMs !== undefined && lastTokenMs !== undefined
+          ? Math.max(0, lastTokenMs - firstTokenMs)
+          : undefined;
+        const toolWaitMs = lastTokenMs !== undefined ? Math.max(0, stepEndMs - lastTokenMs) : undefined;
+        const windowMs = (window: StreamWindow | undefined): number | undefined =>
+          window ? Math.max(0, window.last - window.first) : undefined;
+        const reasoningMs = windowMs(reasoningWindow.get(stepNumber));
+        const textMs = windowMs(textWindow.get(stepNumber));
+        const toolInputMs = windowMs(toolInputWindow.get(stepNumber));
+        firstChunkAt.delete(stepNumber);
+        lastModelChunkAt.delete(stepNumber);
+        reasoningWindow.delete(stepNumber);
+        textWindow.delete(stepNumber);
+        toolInputWindow.delete(stepNumber);
         // Per-step token usage on the span so the dashboard can accumulate live
         // usage straight off the trace stream (no separate usage channel).
         const attributes = {
@@ -807,6 +868,10 @@ export async function runAgentLoop(
           "agent.tool_call_count": toolCalls.length,
           ...(ttftMs !== undefined ? { "model.ttft_ms": ttftMs } : {}),
           ...(streamMs !== undefined ? { "model.stream_ms": streamMs } : {}),
+          ...(toolWaitMs !== undefined ? { "model.tool_wait_ms": toolWaitMs } : {}),
+          ...(reasoningMs !== undefined ? { "model.reasoning_stream_ms": reasoningMs } : {}),
+          ...(textMs !== undefined ? { "model.text_stream_ms": textMs } : {}),
+          ...(toolInputMs !== undefined ? { "model.tool_input_stream_ms": toolInputMs } : {}),
           "model.input_tokens": usage.inputTokens ?? 0,
           "model.output_tokens": usage.outputTokens ?? 0,
           "model.reasoning_tokens": usage.reasoningTokens ?? 0,

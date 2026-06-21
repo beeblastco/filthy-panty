@@ -90,6 +90,22 @@ const RESPONSE_STREAM_MAX_MSGS_PER_SUBJECT = 2_000;
 // Dedup window for Nats-Msg-Id-tagged publishes (retries within it collapse).
 const RESPONSE_STREAM_DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
 
+// Durable observability stream — captures every logs/traces publish so the
+// dashboard sees recent activity on (re)connect with FULL fidelity, even for a
+// run that happened while no tab was watching. Unlike WS_RESPONSES this is not
+// purged on persist: it IS the recent-history buffer. Tempo/Loki remain the
+// long-term store for anything older than max_age. A span is published several
+// times (running -> ok); those are distinct messages, not duplicates, so there
+// is no Nats-Msg-Id / duplicate_window here.
+const OBSERVABILITY_STREAM_NAME = "OBSERVABILITY";
+const OBSERVABILITY_SUBJECT_WILDCARDS = ["v1.*.*.*.logs.>", "v1.*.*.*.traces.>"];
+const OBSERVABILITY_STREAM_STORAGE = StorageType.File;
+// Recent-history window the gateway can replay on connect. Kept modest because
+// it is only the live/recent buffer; Tempo/Loki own the long tail.
+const OBSERVABILITY_STREAM_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const OBSERVABILITY_STREAM_MAX_BYTES = 512 * 1024 * 1024;
+const OBSERVABILITY_STREAM_MAX_MSGS_PER_SUBJECT = 20_000;
+
 // Shared so token publishing does not allocate an encoder per chunk.
 const ENCODER = new TextEncoder();
 
@@ -268,6 +284,91 @@ export async function ensureResponseStream(connection: NatsConnection): Promise<
     });
   }
   return ensureStreamPromise;
+}
+
+// Create the observability stream once per process; idempotent across concurrent
+// invocations and across core + gateway (whoever runs first wins the race).
+let ensureObservabilityStreamPromise: Promise<void> | undefined;
+
+export async function ensureObservabilityStream(connection: NatsConnection): Promise<void> {
+  if (!ensureObservabilityStreamPromise) {
+    ensureObservabilityStreamPromise = (async () => {
+      const jsm = await connection.jetstreamManager();
+      // retention/storage/name are immutable after creation; the limit knobs are
+      // mutable, so apply them on update too (how a retuned window reaches an
+      // existing stream without a destructive recreate).
+      const config = {
+        name: OBSERVABILITY_STREAM_NAME,
+        subjects: OBSERVABILITY_SUBJECT_WILDCARDS,
+        retention: RetentionPolicy.Limits,
+        storage: OBSERVABILITY_STREAM_STORAGE,
+        discard: DiscardPolicy.Old,
+        max_age: OBSERVABILITY_STREAM_MAX_AGE_MS * NANOS_PER_MS,
+        max_bytes: OBSERVABILITY_STREAM_MAX_BYTES,
+        max_msgs_per_subject: OBSERVABILITY_STREAM_MAX_MSGS_PER_SUBJECT,
+      };
+      try {
+        await jsm.streams.info(OBSERVABILITY_STREAM_NAME);
+        await jsm.streams.update(OBSERVABILITY_STREAM_NAME, config).catch(() => {});
+        return;
+      } catch {
+        // Not found: create it below.
+      }
+      try {
+        await jsm.streams.add(config);
+      } catch (err) {
+        if (!/already in use|already exists/i.test(err instanceof Error ? err.message : String(err))) {
+          throw err;
+        }
+      }
+    })().catch((err) => {
+      ensureObservabilityStreamPromise = undefined;
+      throw err;
+    });
+  }
+  return ensureObservabilityStreamPromise;
+}
+
+/**
+ * Gateway read path: a JetStream consumer over the observability stream filtered
+ * to one project/environment scope. `startTime` (ISO) replays recent history from
+ * that point; the ordered consumer then keeps delivering live messages, so this
+ * single consumer both backfills the recent window (full fidelity, no Tempo
+ * truncation) and tails live. Returns an async-iterable of JsMsg; decode
+ * `msg.data` as an ObservabilityLogEntry (logs) or ObservabilitySpanRow (traces).
+ */
+export async function readObservabilityStream(options: {
+  connection: NatsConnection;
+  stream: "logs" | "traces";
+  accountId: string;
+  project: string;
+  env: string;
+  startTime?: string;
+}): Promise<ConsumerMessages> {
+  await ensureObservabilityStream(options.connection);
+  const js = options.connection.jetstream();
+  const subject = options.stream === "logs"
+    ? logsSubjectWildcard(options.accountId, options.project, options.env)
+    : tracesSubjectWildcard(options.accountId, options.project, options.env);
+  const consumer = await js.consumers.get(OBSERVABILITY_STREAM_NAME, {
+    filterSubjects: subject,
+    ...consumerStartPolicy(undefined, options.startTime),
+  });
+  return consumer.consume();
+}
+
+/**
+ * Flush the shared observability connection so fire-and-forget log/span publishes
+ * reach the server (where the OBSERVABILITY stream stores them) before Lambda
+ * freezes the process. Best-effort; a flush failure never affects the run.
+ */
+export async function flushObservabilityNats(): Promise<void> {
+  if (!_obsNatsConn) return;
+  try {
+    await _obsNatsConn.flush();
+  } catch {
+    // Best-effort: a NATS hiccup must never affect the run.
+  }
 }
 
 /**

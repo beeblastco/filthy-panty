@@ -24,8 +24,7 @@ import {
 import {
   connectNats,
   readConversationStream,
-  logsSubjectWildcard,
-  tracesSubjectWildcard,
+  readObservabilityStream,
   type NatsConnection,
   type NatsStreamEvent,
 } from "../../core/functions/_shared/nats.ts";
@@ -903,7 +902,17 @@ export function tempoTraceRowsFromResponse(payload: unknown, fallbackTraceId = "
   return rows;
 }
 
-/** Start a core NATS subscribe (NOT JetStream) for logs or traces. */
+// On connect, replay the recent window from the durable stream so a reload (or a
+// run that happened while no tab was watching) shows full-fidelity history, not a
+// blank or a Tempo-truncated copy. Tempo/Loki backfill still covers older history.
+const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
+
+/**
+ * Start a JetStream consumer for logs or traces: it replays the recent window
+ * from the durable OBSERVABILITY stream and then keeps delivering live messages,
+ * so a single consumer both backfills (full fidelity) and tails. Replaces the old
+ * core `subscribe`, which dropped anything published while no tab was watching.
+ */
 async function startLiveSubscription(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   scope: ObservabilityScope,
@@ -912,12 +921,15 @@ async function startLiveSubscription(
 ): Promise<boolean> {
   try {
     const connection = await getNatsConnection();
-    const subject = stream === "logs"
-      ? logsSubjectWildcard(scope.accountId, scope.projectSlug, scope.environmentSlug)
-      : tracesSubjectWildcard(scope.accountId, scope.projectSlug, scope.environmentSlug);
-
-    const sub = connection.subscribe(subject);
-    const natsSub: NatsSubscription = { unsubscribe: () => sub.unsubscribe() };
+    const messages = await readObservabilityStream({
+      connection: connection,
+      stream: stream,
+      accountId: scope.accountId,
+      project: scope.projectSlug,
+      env: scope.environmentSlug,
+      startTime: new Date(Date.now() - OBS_REPLAY_WINDOW_MS).toISOString(),
+    });
+    const natsSub: NatsSubscription = { unsubscribe: () => messages.stop() };
 
     if (stream === "logs") {
       state.logsSub = natsSub;
@@ -925,8 +937,8 @@ async function startLiveSubscription(
       state.tracesSub = natsSub;
     }
 
-    // Relay NATS messages in the background — non-blocking.
-    void relayNatsMessages(socket, sub, stream, state);
+    // Relay messages in the background — non-blocking.
+    void relayNatsMessages(socket, messages, stream, state);
     return true;
   } catch {
     return false;

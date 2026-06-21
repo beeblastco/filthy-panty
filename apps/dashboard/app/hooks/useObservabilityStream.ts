@@ -184,7 +184,11 @@ export function useObservabilityStream(
         setEntries((prev) => {
           const incoming = msg.entries as (ObservabilityLogEntry | ObservabilitySpanRow)[];
           const merged = new Map(prev.map((entry) => [entryKey(entry), entry]));
-          for (const entry of incoming) merged.set(entryKey(entry), entry);
+          for (const entry of incoming) {
+            const key = entryKey(entry);
+            const existing = merged.get(key);
+            merged.set(key, existing ? preferEntry(existing, entry) : entry);
+          }
           const combined = [...merged.values()].sort((a, b) => entryTime(b) - entryTime(a));
 
           return combined.length > MAX_ENTRIES
@@ -202,7 +206,7 @@ export function useObservabilityStream(
           const existingIndex = prev.findIndex((candidate) => entryKey(candidate) === key);
           const next = existingIndex === -1
             ? [entry, ...prev]
-            : prev.map((candidate, index) => index === existingIndex ? entry : candidate);
+            : prev.map((candidate, index) => index === existingIndex ? preferEntry(candidate, entry) : candidate);
           next.sort((a, b) => entryTime(b) - entryTime(a));
 
           return next.length > MAX_ENTRIES ? next.slice(0, MAX_ENTRIES) : next;
@@ -304,4 +308,22 @@ function entryKey(entry: ObservabilityLogEntry | ObservabilitySpanRow): string {
 
 function entryTime(entry: ObservabilityLogEntry | ObservabilitySpanRow): number {
   return "spanId" in entry ? entry.startTimeMs : entry.ts;
+}
+
+// The same span arrives more than once: as it progresses (running -> ok/error) and
+// from two sources (full-fidelity JetStream replay vs a Tempo backfill that
+// truncates large attributes). Keep the better copy so a reload never downgrades a
+// span: a terminal status beats "running", and among equals the richer payload
+// wins. Logs have no such progression — the incoming copy wins.
+function preferEntry<T extends ObservabilityLogEntry | ObservabilitySpanRow>(existing: T, incoming: T): T {
+  if (!("spanId" in existing) || !("spanId" in incoming)) return incoming;
+  const a = existing as ObservabilitySpanRow;
+  const b = incoming as ObservabilitySpanRow;
+  const rank = (status: ObservabilitySpanRow["status"]): number => (status === "running" ? 0 : 1);
+  if (rank(b.status) !== rank(a.status)) {
+    return rank(b.status) > rank(a.status) ? incoming : existing;
+  }
+  const size = (span: ObservabilitySpanRow): number => JSON.stringify(span.attributes ?? {}).length;
+
+  return size(b) >= size(a) ? incoming : existing;
 }

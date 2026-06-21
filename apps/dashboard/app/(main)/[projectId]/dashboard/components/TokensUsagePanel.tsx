@@ -3,6 +3,7 @@
 /** Usage panel: live Convex usage rollups — tokens, activity, and compute — as charts and tables. */
 import { Section } from "@/app/components/Section";
 import { cn } from "@/app/lib/utils";
+import { useObservabilityStream, type ObservabilitySpanRow } from "@/app/hooks/useObservabilityStream";
 import { api } from "@filthy-panty/convex/_generated/api";
 import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import { estimateModelTokenCost } from "@filthy-panty/convex/modelPricing";
@@ -39,6 +40,54 @@ interface Props {
   projectId: Id<"projects">;
   /** Active environment to scope usage to, or null for the whole project. */
   environmentId: Id<"environments"> | null;
+  /** Scope + key for the live trace overlay. Omitted = Convex-only (no overlay). */
+  projectSlug?: string | undefined;
+  environmentSlug?: string | undefined;
+  apiKey?: string | undefined;
+}
+
+interface LiveTokens {
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cachedInputTokens: number;
+}
+
+const EMPTY_LIVE_TOKENS: LiveTokens = {
+  inputTokens: 0,
+  outputTokens: 0,
+  reasoningTokens: 0,
+  cachedInputTokens: 0,
+};
+
+function numericAttribute(span: ObservabilitySpanRow, key: string): number {
+  const value = span.attributes?.[key];
+
+  return typeof value === "number" ? value : 0;
+}
+
+/**
+ * In-progress token totals taken straight off the live trace stream: Convex usage
+ * is only written when a task finalizes, so a long run would otherwise show
+ * nothing until it ends. We sum the per-step tokens on model.step spans whose root
+ * task is still "running" — once the task finalizes it leaves this set and Convex
+ * carries it, so the live overlay hands off cleanly without double counting.
+ */
+function liveTokensFromTraces(spans: ObservabilitySpanRow[]): LiveTokens {
+  const runningTraces = new Set(
+    spans.filter((span) => span.kind === "task" && span.status === "running").map((span) => span.traceId),
+  );
+  if (runningTraces.size === 0) return EMPTY_LIVE_TOKENS;
+  const totals = { ...EMPTY_LIVE_TOKENS };
+  for (const span of spans) {
+    if (span.kind !== "model.step" || !runningTraces.has(span.traceId)) continue;
+    totals.inputTokens += numericAttribute(span, "model.input_tokens");
+    totals.outputTokens += numericAttribute(span, "model.output_tokens");
+    totals.reasoningTokens += numericAttribute(span, "model.reasoning_tokens");
+    totals.cachedInputTokens += numericAttribute(span, "model.cached_input_tokens");
+  }
+
+  return totals;
 }
 
 const RANGE_OPTIONS: Array<{ id: Range; label: string }> = [
@@ -566,7 +615,7 @@ function ComputeTile({ label, value, color }: { label: string; value: string; co
   );
 }
 
-export function TokensUsagePanel({ projectId, environmentId }: Props) {
+export function TokensUsagePanel({ projectId, environmentId, projectSlug, environmentSlug, apiKey }: Props) {
   const [range, setRange] = useState<Range>("1h");
 
   // Reactive subscription: usage totals update live as the harness meters tokens.
@@ -578,13 +627,41 @@ export function TokensUsagePanel({ projectId, environmentId }: Props) {
   const stats: UsageStats | null = data ?? null;
   const isFetching = data === undefined;
 
+  // Live trace overlay: Convex only records usage at task finalize, so without
+  // this a run in flight shows nothing until it ends. We fold the in-progress
+  // tokens into the latest bin + totals so the existing chart grows live.
+  const { entries: liveSpans } = useObservabilityStream({
+    stream: "traces",
+    projectSlug: projectSlug,
+    environmentSlug: environmentSlug,
+    apiKey: apiKey,
+    backfill: 30,
+  });
+  const liveTokens = useMemo(() => liveTokensFromTraces(liveSpans), [liveSpans]);
+  const isStreamingLive =
+    liveTokens.inputTokens + liveTokens.outputTokens + liveTokens.reasoningTokens > 0;
+
   // Always span the window with zero-filled bins — even before the first query
   // resolves — so the user sees a live, empty grid rather than a "no data" card.
   const binSeconds = stats?.binSeconds ?? RANGE_BIN_SECONDS[range];
   const bins = useMemo(() => {
     const merged = stats ? mergeByBucket(stats.buckets) : [];
-    return fillBucketsAcrossRange(merged, binSeconds, RANGE_SECONDS[range]);
-  }, [stats, binSeconds, range]);
+    const filled = fillBucketsAcrossRange(merged, binSeconds, RANGE_SECONDS[range]);
+    // Fold in-progress tokens into the most recent bin so its bar grows live.
+    if (filled.length > 0 && (liveTokens.inputTokens + liveTokens.outputTokens + liveTokens.reasoningTokens + liveTokens.cachedInputTokens) > 0) {
+      const last = filled[filled.length - 1];
+      filled[filled.length - 1] = {
+        ...last,
+        inputTokens: last.inputTokens + liveTokens.inputTokens,
+        outputTokens: last.outputTokens + liveTokens.outputTokens,
+        reasoningTokens: last.reasoningTokens + liveTokens.reasoningTokens,
+        cachedInputTokens: last.cachedInputTokens + liveTokens.cachedInputTokens,
+        totalTokens: last.totalTokens + liveTokens.inputTokens + liveTokens.outputTokens + liveTokens.reasoningTokens,
+      };
+    }
+
+    return filled;
+  }, [stats, binSeconds, range, liveTokens]);
   const byModel = useMemo(() => (stats ? aggregateByModel(stats.buckets) : []), [stats]);
   const pricedByModel = useMemo(
     () =>
@@ -622,13 +699,17 @@ export function TokensUsagePanel({ projectId, environmentId }: Props) {
             ))}
           </div>
           <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            <RefreshCw className={`size-3.5 ${isFetching ? "animate-spin" : ""}`} />
-            {isFetching ? "Connecting…" : "Live"}
+            <RefreshCw className={`size-3.5 ${isFetching || isStreamingLive ? "animate-spin" : ""}`} />
+            {isFetching ? "Connecting…" : isStreamingLive ? "Streaming" : "Live"}
           </span>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
           <ComputeTile label="Estimated token cost" value={formatUsd(estimatedCost)} color="#34d399" />
-          <ComputeTile label="Cache read" value={formatNumber(stats?.totals.cachedInputTokens ?? 0)} color="#fbbf24" />
+          <ComputeTile
+            label="Cache read"
+            value={formatNumber((stats?.totals.cachedInputTokens ?? 0) + liveTokens.cachedInputTokens)}
+            color="#fbbf24"
+          />
           <ComputeTile label="Cache write" value={formatNumber(stats?.totals.cacheWriteTokens ?? 0)} color="#fb7185" />
         </div>
         {unpricedModels > 0 && (
