@@ -1725,13 +1725,36 @@ function channelStreamMode(
 }
 
 function formatToolProgress(toolName: string, input: unknown): string {
-  if (input === undefined) return toolName;
-  try {
-    const serialized = JSON.stringify(input);
-    if (!serialized || serialized === "{}") return toolName;
-    const maxLength = 240;
-    return `${toolName} ${serialized.length > maxLength ? `${serialized.slice(0, maxLength - 1)}…` : serialized}`;
-  } catch {
-    return toolName;
+  const hint = toolProgressHint(input);
+
+  return hint ? `🛠 ${toolName}: ${hint}` : `🛠 ${toolName}`;
+}
+
+// A short, human-readable descriptor for a tool call — prefer a meaningful field
+// (query/prompt/command/path/url) over dumping the raw arguments JSON.
+function toolProgressHint(input: unknown): string | undefined {
+  const maxLength = 80;
+  const clip = (text: string): string => {
+    const oneLine = text.replace(/\s+/g, " ").trim();
+
+    return oneLine.length > maxLength ? `${oneLine.slice(0, maxLength - 1)}…` : oneLine;
+  };
+  if (typeof input === "string") return input ? clip(input) : undefined;
+  if (input === null || typeof input !== "object") return undefined;
+  const record = input as Record<string, unknown>;
+  // run_subagent: summarize the dispatched tasks.
+  const tasks = record["tasks"];
+  if (Array.isArray(tasks)) {
+    const first = tasks[0] as Record<string, unknown> | undefined;
+    const prompt = first && typeof first["prompt"] === "string" ? first["prompt"] : undefined;
+    const count = tasks.length > 1 ? ` (+${tasks.length - 1} more)` : "";
+
+    return prompt ? `${clip(prompt)}${count}` : `${tasks.length} task${tasks.length === 1 ? "" : "s"}`;
   }
+  for (const key of ["query", "prompt", "command", "path", "url", "name", "pattern"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return clip(value);
+  }
+
+  return undefined;
 }

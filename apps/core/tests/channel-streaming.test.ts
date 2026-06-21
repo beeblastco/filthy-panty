@@ -71,50 +71,79 @@ describe("createChannelStreamWriter", () => {
     ]);
   });
 
-  it("progress mode streams tool activity AND the answer text, then swaps in the final answer", async () => {
+  it("progress mode sends the work block and the text block as separate messages", async () => {
     const { actions, calls } = recordingActions(true);
     const writer = createChannelStreamWriter(actions, "progress", 0);
 
-    await writer.progress!("search");
-    await writer.push("Here is "); // assistant text streams into the preview below the status
+    await writer.reasoning!("thinking about it");
+    await writer.progress!("search");           // work block: reasoning + tool
+    await writer.push("Here is ");               // switches to text -> seals work, opens text block
     await writer.push("the answer.");
+    await writer.stepFinish!();                  // seals the text block as its own message
     await writer.finish("Here is the answer.");
 
-    const first = calls[0]!;
-    expect(first[0]).toBe("beginMessage");
-    expect(first[2]).toContain("⏳ Working…");
-    expect(calls.some((call) => call[2]?.includes("• search"))).toBe(true);
-    // The streamed answer text shows in the preview while the status header is still present.
-    expect(calls.some((call) => call[2]?.includes("⏳ Working…") && call[2]?.includes("Here is the answer."))).toBe(true);
+    const beginIds = calls.filter(([op]) => op === "beginMessage").map((c) => c[1]);
+    expect(beginIds).toEqual(["m1", "m2"]);      // two distinct messages: work, then text
+    // The work message carries reasoning + tool activity and never the answer text.
+    const work = calls.filter((c) => c[1] === "m1").map((c) => c[2]);
+    expect(work.some((t) => t?.includes("⏳ Working…") && t?.includes("💭 thinking about it") && t?.includes("• search"))).toBe(true);
+    expect(work.every((t) => !t?.includes("Here is"))).toBe(true);
+    // The text message is clean: no header, no tool lines.
+    const text = calls.filter((c) => c[1] === "m2").map((c) => c[2]);
+    expect(text.every((t) => !t?.includes("⏳ Working…") && !t?.includes("•"))).toBe(true);
+    expect(calls.at(-1)).toEqual(["editMessage", "m2", "Here is the answer."]);
     expect(calls.some(([op]) => op === "sendText")).toBe(false);
-    expect(calls.at(-1)).toEqual(["editMessage", "m1", "Here is the answer."]); // final swap in place
   });
 
-  it("progress mode streams reasoning as one compact, replaceable line", async () => {
+  it("progress mode freezes pre-tool text as its own message (subagent dispatch case)", async () => {
+    const { actions, calls } = recordingActions(true);
+    const writer = createChannelStreamWriter(actions, "progress", 0);
+
+    // Pass 1: reason, dispatch a tool, then a short text — text lands as its own message.
+    await writer.reasoning!("delegating research");
+    await writer.progress!("run_subagent: Research ZeroFS");
+    await writer.push("I'll dispatch a research task.");
+    await writer.stepFinish!();
+    // Pass 2 (after the subagent): the final answer is a separate clean message.
+    await writer.push("ZeroFS is a filesystem.");
+    await writer.stepFinish!();
+    await writer.finish("ZeroFS is a filesystem.");
+
+    const begins = calls.filter(([op]) => op === "beginMessage").map((c) => c[1]);
+    expect(begins).toEqual(["m1", "m2", "m3"]); // work, pass-1 text, pass-2 text
+    expect(calls.filter((c) => c[1] === "m2").at(-1)?.[2]).toBe("I'll dispatch a research task.");
+    expect(calls.filter((c) => c[1] === "m3").at(-1)?.[2]).toBe("ZeroFS is a filesystem.");
+    // The work message holds the tool, never the answer text.
+    expect(calls.filter((c) => c[1] === "m1").every((c) => !c[2]?.includes("dispatch"))).toBe(true);
+  });
+
+  it("progress mode reasoning collapses to one compact line in the work block", async () => {
     const { actions, calls } = recordingActions(true);
     const writer = createChannelStreamWriter(actions, "progress", 0);
 
     await writer.reasoning!("Thinking about");
     await writer.reasoning!(" the labs\nand dates"); // newlines collapse to one line
     await writer.push("Answer text");
-    await writer.finish("Final answer");
+    await writer.stepFinish!();
+    await writer.finish("Answer text");
 
-    // Reasoning renders on a single 💭 line (newlines collapsed) above the streamed answer.
     expect(calls.some((call) => call[2]?.includes("💭 Thinking about the labs and dates"))).toBe(true);
-    expect(calls.at(-1)).toEqual(["editMessage", "m1", "Final answer"]);
+    expect(calls.filter((c) => c[1] === "m2").at(-1)?.[2]).toBe("Answer text");
   });
 
-  it("progress mode streams the answer text in place on turns without tool calls", async () => {
+  it("progress mode streams a plain text answer as one clean message, reconciled on finish", async () => {
     const { actions, calls } = recordingActions(true);
     const writer = createChannelStreamWriter(actions, "progress", 0);
 
     await writer.push("first token");
     await writer.push(" more tokens");
-    await writer.finish("Complete answer");
+    // No stepFinish: the text block is still open, so finish() reconciles it to the
+    // authoritative final text in place.
+    await writer.finish("first token more tokens.");
 
-    expect(calls[0]).toEqual(["beginMessage", "m1", "⏳ Working…\n\nfirst token"]);
-    expect(calls.some((call) => call[2] === "⏳ Working…\n\nfirst token more tokens")).toBe(true);
-    expect(calls.at(-1)).toEqual(["editMessage", "m1", "Complete answer"]);
+    expect(calls[0]).toEqual(["beginMessage", "m1", "first token"]); // no work header for a text-only turn
+    expect(calls.at(-1)).toEqual(["editMessage", "m1", "first token more tokens."]);
+    expect(calls.filter(([op]) => op === "beginMessage").length).toBe(1); // single message
   });
 
   it("chunk mode flushes unfinished text at each model step", async () => {

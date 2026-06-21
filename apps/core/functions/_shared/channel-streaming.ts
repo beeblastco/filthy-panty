@@ -136,6 +136,16 @@ function messageEditor(actions: ChannelActions, throttleMs: number, maxChars: nu
       }
       await flush();
     },
+    // Freeze the current message and reset so the next update/finalize opens a
+    // fresh one. Used for block-by-block streaming, so a text block and a
+    // tool/reasoning block never share a message.
+    seal: (): void => {
+      accumulated = "";
+      committed = 0;
+      messageId = undefined;
+      lastSent = "";
+      lastFlushAt = 0;
+    },
   };
 }
 
@@ -155,18 +165,25 @@ function editWriter(actions: ChannelActions, throttleMs: number, maxChars: numbe
   };
 }
 
-// Show a live preview that streams reasoning, tool activity, AND the answer text as
-// the model works, then swap the same message for the final answer in place. Layout
-// (openclaw's progress draft): header, one replaceable reasoning line, the latest
-// tool-activity lines, then a blank line and the streamed answer so far.
+// Stream block by block: a turn is a sequence of homogeneous blocks — a "work"
+// block (💭 reasoning + 🛠 tool activity, openclaw's progress draft) or a "text"
+// block (the model's answer text) — each its own message, sent in emission order.
+// Both stream live (edit-in-place); when the block kind switches, the current
+// message is frozen and a new one opens, so a message never mixes text with
+// tool/reasoning. A text block is also frozen at each step boundary, so the text
+// that precedes a tool call (e.g. "I'll dispatch a research task…") lands as its
+// own clean message before the work continues.
 function progressWriter(actions: ChannelActions, throttleMs: number, maxChars: number): ChannelStreamWriter {
   const editor = messageEditor(actions, throttleMs, maxChars);
-  const toolLines: string[] = [];
+  let activeKind: "work" | "text" | null = null;
+  let sentText = false;
+  // Work-block state (reset per block).
   let reasoningText = "";
+  let toolLines: string[] = [];
+  // Text-block state (reset per block).
   let answerText = "";
-  let started = false;
 
-  const render = (): string => {
+  const renderWork = (): string => {
     const head: string[] = [PROGRESS_HEADER];
     if (reasoningText.trim()) {
       const compact = reasoningText.replace(/\s+/g, " ").trim();
@@ -176,36 +193,70 @@ function progressWriter(actions: ChannelActions, throttleMs: number, maxChars: n
       head.push(`💭 ${slice}`);
     }
     head.push(...toolLines.slice(-PROGRESS_MAX_LINES));
-    const preview = head.join("\n");
-    const answer = answerText.trim();
 
-    return answer ? `${preview}\n\n${answer}` : preview;
+    return head.join("\n");
+  };
+
+  // Freeze the active block into its own message; the next write opens a fresh one.
+  const sealActive = async (): Promise<void> => {
+    if (activeKind === "text") {
+      const text = answerText.trim();
+      await editor.finalize(text || undefined);
+      if (text) sentText = true;
+      answerText = "";
+    } else if (activeKind === "work") {
+      await editor.finalize(renderWork());
+      reasoningText = "";
+      toolLines = [];
+    }
+    editor.seal();
+    activeKind = null;
+  };
+
+  // Switch to a block kind, sealing a different open block first.
+  const enter = async (kind: "work" | "text"): Promise<void> => {
+    if (activeKind !== null && activeKind !== kind) await sealActive();
+    activeKind = kind;
   };
 
   return {
     push: async (delta) => {
-      started = true;
+      await enter("text");
       answerText += delta;
-      await editor.update(render());
+      await editor.update(answerText.trim());
     },
     reasoning: async (delta) => {
-      started = true;
+      await enter("work");
       reasoningText += delta;
-      await editor.update(render());
+      await editor.update(renderWork());
     },
     progress: async (label) => {
-      started = true;
+      await enter("work");
       toolLines.push(`• ${label}`);
-      await editor.update(render());
+      await editor.update(renderWork());
+    },
+    stepFinish: async () => {
+      // A completed text block becomes its own clean message. A work block stays
+      // open so the next step's tool activity appends to the same status message.
+      if (activeKind === "text") await sealActive();
     },
     finish: async (finalText) => {
-      // Replace the whole preview with the final answer in place. Prefer the
-      // authoritative final text, else the streamed answer; if the turn produced no
-      // text at all, leave the last preview visible.
-      const answer = typeof finalText === "string" && finalText.trim()
-        ? finalText
-        : answerText.trim() || undefined;
-      await editor.finalize(answer ?? (started ? render() : undefined));
+      const answer = typeof finalText === "string" && finalText.trim() ? finalText : undefined;
+      if (activeKind === "text") {
+        // Text still open: finalize it (authoritative text wins over coalesced deltas).
+        const text = answer ?? (answerText.trim() || undefined);
+        await editor.finalize(text);
+        if (text) sentText = true;
+        editor.seal();
+        activeKind = null;
+      } else if (activeKind === "work") {
+        // Turn ended on tool/reasoning activity — leave it as the work block.
+        await sealActive();
+      } else if (answer !== undefined && !sentText) {
+        // Final answer arrived but no text streamed (non-streamed final) — post it.
+        await editor.finalize(answer);
+        editor.seal();
+      }
     },
   };
 }
