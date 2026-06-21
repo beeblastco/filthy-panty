@@ -38,5 +38,6 @@ export const sandboxAgent = defineAgent({
     },
     sandbox: sandbox,
     workspaces: [workspace],
+    publicAccess: true,
   },
 });

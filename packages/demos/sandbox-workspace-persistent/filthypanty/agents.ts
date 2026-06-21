@@ -51,5 +51,6 @@ export const reservedAgent = defineAgent({
     },
     sandbox: k8sReservedSandbox,
     workspaces: [projectWorkspace],
+    publicAccess: true,
   },
 });

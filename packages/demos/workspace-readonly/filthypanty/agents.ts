@@ -30,6 +30,7 @@ export const writer = defineAgent({
     },
     sandbox: writerSandbox,
     workspaces: [sharedWorkspace],
+    publicAccess: true,
   },
 });
 
@@ -46,6 +47,7 @@ export const readerMount = defineAgent({
       modelId: "MiniMax-M3",
     },
     workspaces: [sharedWorkspace],
+    publicAccess: true,
   },
 });
 
@@ -62,5 +64,6 @@ export const readerS3 = defineAgent({
       modelId: "MiniMax-M3",
     },
     workspaces: [{ workspace: sharedWorkspace, sandbox: null }],
+    publicAccess: true,
   },
 });

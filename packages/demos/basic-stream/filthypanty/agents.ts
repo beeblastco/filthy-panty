@@ -31,5 +31,6 @@ export const search = defineAgent({
         topic: "news",
       },
     },
+    publicAccess: true,
   },
 });

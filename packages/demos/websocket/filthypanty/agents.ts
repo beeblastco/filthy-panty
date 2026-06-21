@@ -13,5 +13,6 @@ export const chat = defineAgent({
     agent: {
       system: "You are a helpful assistant that can answer questions and provide information.",
     },
+    publicAccess: true,
   },
 });

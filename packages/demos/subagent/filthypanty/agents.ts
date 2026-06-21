@@ -26,6 +26,7 @@ export const subagent = defineAgent({
         maxResults: 3,
       },
     },
+    publicAccess: true,
   },
 });
 
@@ -49,5 +50,6 @@ export const parent = defineAgent({
       allowed: [subagent],
       context: "new",
     },
+    publicAccess: true,
   },
 });

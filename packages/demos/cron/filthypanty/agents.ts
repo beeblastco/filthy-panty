@@ -13,6 +13,7 @@ export const cron = defineAgent({
     agent: {
       system: "You are a concise scheduled maintenance assistant.",
     },
+    publicAccess: true,
   },
 });
 

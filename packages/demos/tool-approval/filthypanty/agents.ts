@@ -23,5 +23,6 @@ export const approvalAgent = defineAgent({
         maxResults: 3,
       },
     },
+    publicAccess: true,
   },
 });

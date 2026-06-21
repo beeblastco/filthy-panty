@@ -39,5 +39,6 @@ export const webhookAgent = defineAgent({
         ],
       }],
     },
+    publicAccess: true,
   },
 });

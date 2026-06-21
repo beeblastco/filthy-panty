@@ -71,5 +71,6 @@ export const overrideAgent = defineAgent({
       { workspace: secureWorkspace, sandbox: secureSandbox },
       { workspace: referenceWorkspace, sandbox: null },
     ],
+    publicAccess: true,
   },
 });

@@ -37,5 +37,6 @@ export const vercelAgent = defineAgent({
       system: "You are a helpful assistant that can call tools and provide information to the user.",
     },
     sandbox: vercelSandbox,
+    publicAccess: true,
   },
 });

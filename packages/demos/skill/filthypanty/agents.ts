@@ -24,5 +24,6 @@ export const skillAgent = defineAgent({
       enabled: true,
       allowed: [greetingSkill],
     },
+    publicAccess: true,
   },
 });

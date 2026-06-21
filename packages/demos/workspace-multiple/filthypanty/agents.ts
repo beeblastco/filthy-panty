@@ -52,5 +52,6 @@ export const multiWorkspaceAgent = defineAgent({
       { workspace: personalWorkspace, sandbox: lambdaSandbox },
       { workspace: teamWorkspace, sandbox: null },
     ],
+    publicAccess: true,
   },
 });

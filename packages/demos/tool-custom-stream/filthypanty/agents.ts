@@ -35,5 +35,6 @@ export const streamingToolAgent = defineAgent({
         enabled: true,
       },
     },
+    publicAccess: true,
   },
 });

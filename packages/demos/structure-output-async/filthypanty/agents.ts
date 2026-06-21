@@ -32,5 +32,6 @@ export const structuredAssistant = defineAgent({
     agent: {
       system: "You are a helpful assistant that returns structured output.",
     },
+    publicAccess: true,
   },
 });

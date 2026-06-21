@@ -33,5 +33,6 @@ export const asyncToolAgent = defineAgent({
         async: true,
       },
     },
+    publicAccess: true,
   },
 });
