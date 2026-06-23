@@ -1,0 +1,97 @@
+name: Publish npm Package
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/broods/**'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/publish-npm.yaml'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Expected packages/broods version to publish
+        required: true
+        default: "0.1.0"
+        type: string
+
+concurrency:
+  group: publish-npm-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Setup Node for npm publish
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Update npm
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Validate release version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PACKAGE_VERSION="$(node -p "require('./packages/broods/package.json').version")"
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            EXPECTED_VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            EXPECTED_VERSION="$PACKAGE_VERSION"
+          else
+            EXPECTED_VERSION="${{ inputs.version }}"
+          fi
+
+          if [[ "$PACKAGE_VERSION" != "$EXPECTED_VERSION" ]]; then
+            echo "packages/broods version $PACKAGE_VERSION does not match release/input version $EXPECTED_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Typecheck SDK
+        run: bun run --filter broods check
+
+      - name: Test SDK
+        run: bun run --filter broods test
+
+      - name: Pack check
+        working-directory: packages/broods
+        run: bun run pack:check
+
+      - name: Check npm version availability
+        id: npm-version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PACKAGE_VERSION="$(node -p "require('./packages/broods/package.json').version")"
+          if npm view "broods@$PACKAGE_VERSION" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "broods@$PACKAGE_VERSION is already published; skipping npm publish."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm
+        if: steps.npm-version.outputs.exists == 'false'
+        working-directory: packages/broods
+        run: npm publish

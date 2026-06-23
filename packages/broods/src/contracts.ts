@@ -3,7 +3,6 @@
  * Keep this file type-only so the public SDK does not bundle backend code.
  */
 
-import type { Doc, Id } from "../../convex/_generated/dataModel";
 import type {
   AgentConfig,
   AgentChannelsConfig,
@@ -14,13 +13,22 @@ import type {
   AgentTelegramChannelConfig,
   AgentZaloChannelConfig,
   AgentWorkspaceRef,
+} from "../../../apps/core/functions/_shared/storage/agent-config.ts";
+import type {
   CreateCronInput,
   CronLastStatus,
   CronStatus,
-  SandboxConfig,
   UpdateCronInput,
+} from "../../../apps/core/functions/_shared/storage/cron.ts";
+import type {
+  SandboxConfig,
+} from "../../../apps/core/functions/_shared/storage/sandbox-config.ts";
+import type {
   WorkspaceConfig,
-} from "../../../apps/core/functions/_shared/storage/index.ts";
+} from "../../../apps/core/functions/_shared/storage/workspace-config.ts";
+
+export type Id<TableName extends string = string> = string & { readonly __tableName?: TableName };
+export type Doc<TableName extends string = string> = Record<string, unknown> & { readonly _id: Id<TableName> };
 
 export type {
   AgentConfig,
@@ -35,8 +43,6 @@ export type {
   CreateCronInput,
   CronLastStatus,
   CronStatus,
-  Doc,
-  Id,
   SandboxConfig,
   UpdateCronInput,
   WorkspaceConfig,

@@ -4,25 +4,50 @@
   "description": "CLI + TypeScript SDK for the broods agent platform.",
   "type": "module",
   "license": "FSL-1.1-Apache-2.0",
+  "homepage": "https://github.com/beeblastco/broods#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beeblastco/broods.git",
+    "directory": "packages/broods"
+  },
+  "bugs": {
+    "url": "https://github.com/beeblastco/broods/issues"
+  },
+  "keywords": [
+    "agents",
+    "ai",
+    "sdk",
+    "cli",
+    "broods"
+  ],
   "bin": {
-    "broods": "./src/cli/index.ts"
+    "broods": "dist/cli/index.js"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE.md"
+  ],
   "scripts": {
+    "build": "bun scripts/build.ts && rollup -c rollup.dts.config.mjs && bun scripts/clean-dts-side-effects.ts && rm -rf .dts-temp",
     "check": "tsc --noEmit",
+    "pack:check": "bun run build && npm pack --dry-run",
     "test": "bun test"
   },
   "dependencies": {
     "ai": "^6.0.195"
   },
   "devDependencies": {
-    "@types/bun": "^1.3.14"
-  },
-  "peerDependencies": {
-    "typescript": "^6.0.3"
+    "@types/bun": "^1.3.14",
+    "rollup": "^4.53.3",
+    "rollup-plugin-dts": "^6.3.0"
   }
 }
