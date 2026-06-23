@@ -1,9 +1,7 @@
 "use client";
 
 /** Reveals an environment's runtime API key (fp_agent_…) with copy controls, a .env snippet, and a WebSocket streaming example. */
-import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/app/components/ui/card";
 import {
     Dialog,
     DialogContent,
@@ -12,7 +10,8 @@ import {
     DialogTitle,
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
-import { Check, Copy, Eye, EyeOff, FileCode2, KeyRound, Radio, ShieldCheck } from "lucide-react";
+import { Label } from "@/app/components/ui/label";
+import { Check, Copy, Eye, EyeOff, KeyRound } from "lucide-react";
 import { useState } from "react";
 
 interface DialogProps {
@@ -65,96 +64,66 @@ export function RuntimeKeyView({ apiKey }: { apiKey: string }) {
     const envLine = `BROODS_API_KEY="${apiKey}"`;
 
     return (
-        <div className="grid gap-4">
-            {/* The secret itself */}
-            <Card className="gap-3 py-4">
-                <CardHeader className="px-4">
-                    <CardTitle className="flex items-center gap-2 text-sm">
-                        <KeyRound className="size-4 text-muted-foreground" />
-                        Secret key
-                    </CardTitle>
-                    <CardAction>
-                        <Badge variant="warning" className="gap-1">
-                            <ShieldCheck className="size-3" />
-                            Encrypted at rest
-                        </Badge>
-                    </CardAction>
-                </CardHeader>
-                <CardContent className="px-4">
-                    <div className="flex items-center gap-2">
-                        <Input
-                            readOnly
-                            value={showKey ? apiKey : "•".repeat(Math.min(apiKey.length, 44))}
-                            className="h-9 font-mono text-xs"
-                        />
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-9 shrink-0 cursor-pointer"
-                            onClick={() => setShowKey((v) => !v)}
-                            title={showKey ? "Hide key" : "Reveal key"}
-                        >
-                            {showKey ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-                        </Button>
-                        <CopyButton text={apiKey} label="Copy" className="h-9" />
-                    </div>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                        Treat it like a password. Reopen it here anytime, or rotate it to invalidate the old one.
-                    </p>
-                </CardContent>
-            </Card>
+        <div className="grid gap-5">
+            {/* The key itself */}
+            <div className="grid gap-1.5">
+                <Label className="text-xs text-muted-foreground">API key</Label>
+                <div className="flex items-center gap-2">
+                    <Input
+                        readOnly
+                        value={showKey ? apiKey : "•".repeat(Math.min(apiKey.length, 44))}
+                        className="h-9 font-mono text-xs"
+                    />
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-9 shrink-0 cursor-pointer"
+                        onClick={() => setShowKey((v) => !v)}
+                        title={showKey ? "Hide key" : "Reveal key"}
+                    >
+                        {showKey ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                    </Button>
+                    <CopyButton text={apiKey} label="Copy" className="h-9" />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                    Stored encrypted at rest — treat it like a password. Reopen it here anytime, or rotate it to
+                    invalidate the old one.
+                </p>
+            </div>
 
             {/* Drop it into the environment */}
-            <Card className="gap-3 py-4">
-                <CardHeader className="px-4">
-                    <CardTitle className="flex items-center gap-2 text-sm">
-                        <FileCode2 className="size-4 text-muted-foreground" />
-                        Add it to your environment
-                    </CardTitle>
-                    <CardDescription className="text-xs">
-                        The SDK reads <code className="font-mono">BROODS_API_KEY</code> by default — copy this line
-                        into your <code className="font-mono">.env.local</code> or{" "}
-                        <code className="font-mono">.env</code> file.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="px-4">
-                    <div className="flex items-center gap-2">
-                        <code className="flex-1 truncate rounded-md border bg-muted/50 px-3 py-2 font-mono text-[11px]">
-                            {envLine}
-                        </code>
-                        <CopyButton text={envLine} className="h-9" />
-                    </div>
-                </CardContent>
-            </Card>
+            <div className="grid gap-1.5">
+                <Label className="text-xs text-muted-foreground">Add it to your environment</Label>
+                <p className="text-xs text-muted-foreground">
+                    The SDK reads <code className="font-mono">BROODS_API_KEY</code> by default — copy this into your{" "}
+                    <code className="font-mono">.env.local</code> or <code className="font-mono">.env</code> file.
+                </p>
+                <div className="flex items-center gap-2">
+                    <code className="flex-1 truncate rounded-md border bg-muted/50 px-3 py-2 font-mono text-[11px]">
+                        {envLine}
+                    </code>
+                    <CopyButton text={envLine} className="h-9" />
+                </div>
+            </div>
 
             {/* Stream over WebSocket */}
-            <Card className="gap-3 py-4">
-                <CardHeader className="px-4">
-                    <CardTitle className="flex items-center gap-2 text-sm">
-                        <Radio className="size-4 text-muted-foreground" />
-                        Stream over WebSocket
-                    </CardTitle>
-                    <CardAction>
-                        <Badge variant="success">Recommended</Badge>
-                    </CardAction>
-                    <CardDescription className="text-xs">
-                        WebSocket streaming gives the lowest latency and a fully bidirectional connection — the best
-                        experience for live agent runs.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="px-4">
-                    <div className="relative">
-                        <pre className="overflow-x-auto rounded-md border bg-muted/50 px-3 py-3 font-mono text-[11px] leading-relaxed text-foreground">
-                            {WS_SNIPPET}
-                        </pre>
-                        <CopyButton text={WS_SNIPPET} className="absolute right-2 top-2 h-7" />
-                    </div>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                        Calls go to <code className="font-mono">gateway.broods.app</code> by default; override with{" "}
-                        <code className="font-mono">BROODS_BASE_URL</code> for a self-hosted core.
-                    </p>
-                </CardContent>
-            </Card>
+            <div className="grid gap-1.5">
+                <Label className="text-xs text-muted-foreground">Stream over WebSocket</Label>
+                <p className="text-xs text-muted-foreground">
+                    WebSocket streaming gives the lowest latency and a bidirectional connection — the best experience
+                    for live agent runs.
+                </p>
+                <div className="relative">
+                    <pre className="overflow-x-auto rounded-md border bg-muted/50 px-3 py-3 font-mono text-[11px] leading-relaxed text-foreground">
+                        {WS_SNIPPET}
+                    </pre>
+                    <CopyButton text={WS_SNIPPET} className="absolute right-2 top-2 h-7" />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                    Calls go to <code className="font-mono">gateway.broods.app</code> by default; override with{" "}
+                    <code className="font-mono">BROODS_BASE_URL</code> for a self-hosted core.
+                </p>
+            </div>
         </div>
     );
 }
