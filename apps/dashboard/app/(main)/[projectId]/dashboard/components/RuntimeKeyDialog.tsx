@@ -81,12 +81,12 @@ function highlight(code: string, lang: "ts" | "bash"): ReactNode[] {
     return out;
 }
 
-/** A compact, syntax-highlighted code block with a corner copy button. */
-function CodeBlock({ code, lang }: { code: string; lang: "ts" | "bash" }) {
+/** A compact, syntax-highlighted code block with a corner copy button. `copyText` overrides what is copied (e.g. the real key behind a masked display). */
+function CodeBlock({ code, lang, copyText }: { code: string; lang: "ts" | "bash"; copyText?: string }) {
     const [copied, setCopied] = useState(false);
 
     function copy() {
-        navigator.clipboard.writeText(code);
+        navigator.clipboard.writeText(copyText ?? code);
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
     }
@@ -119,7 +119,11 @@ function Mono({ children }: { children: ReactNode }) {
 export function RuntimeKeyView({ apiKey }: { apiKey: string }) {
     const [showKey, setShowKey] = useState(false);
     const [copied, setCopied] = useState(false);
-    const envLine = `BROODS_API_KEY="${apiKey}"`;
+    const maskedKey = "•".repeat(Math.min(apiKey.length, 44));
+    // The .env block mirrors the reveal toggle so the secret is never shown by
+    // default, but Copy always yields the real line.
+    const envDisplay = `BROODS_API_KEY="${showKey ? apiKey : maskedKey}"`;
+    const envReal = `BROODS_API_KEY="${apiKey}"`;
 
     function copyKey() {
         navigator.clipboard.writeText(apiKey);
@@ -135,7 +139,7 @@ export function RuntimeKeyView({ apiKey }: { apiKey: string }) {
                 <div className="flex items-center gap-2">
                     <Input
                         readOnly
-                        value={showKey ? apiKey : "•".repeat(Math.min(apiKey.length, 44))}
+                        value={showKey ? apiKey : maskedKey}
                         className="h-9 font-mono text-xs text-foreground"
                     />
                     <Button
@@ -170,7 +174,7 @@ export function RuntimeKeyView({ apiKey }: { apiKey: string }) {
                     The SDK reads <Mono>BROODS_API_KEY</Mono> by default — copy this into your{" "}
                     <Mono>.env.local</Mono> or <Mono>.env</Mono> file.
                 </p>
-                <CodeBlock code={envLine} lang="bash" />
+                <CodeBlock code={envDisplay} copyText={envReal} lang="bash" />
             </section>
 
             {/* Stream over WebSocket */}
