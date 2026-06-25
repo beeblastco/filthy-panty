@@ -2,7 +2,7 @@
 
 /** Safe core service endpoint resolution for dashboard invoke/test URLs. */
 
-const DEFAULT_CORE_BASE_URL = "https://gateway.broods.app";
+const DEFAULT_CORE_BASE_URL = "https://app.beeblast.co";
 
 export type CoreEndpoint =
     | { ok: true; httpBaseUrl: string; websocketBaseUrl: string }
@@ -11,7 +11,8 @@ export type CoreEndpoint =
 /** Resolve the configured core HTTP/WebSocket base URLs without throwing during render. */
 export function resolveCoreEndpoint(): CoreEndpoint {
     const candidates = [
-        process.env.NEXT_PUBLIC_BROODS_BASE_URL,
+        process.env.NEXT_PUBLIC_FILTHY_PANTY_BASE_URL,
+        process.env.NEXT_PUBLIC_AGENT_GATEWAY_URL,
         DEFAULT_CORE_BASE_URL,
     ];
 

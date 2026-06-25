@@ -5,12 +5,10 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
-import { dynamo } from "../functions/_shared/storage/dynamo/client.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
 const originalFetch = globalThis.fetch;
-const originalDynamoSend = dynamo.send;
 const googleModelMock = mock((modelId: string) => ({ provider: "google", modelId }));
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
 const openAIModelMock = mock((modelId: string) => ({ provider: "openai", modelId }));
@@ -23,7 +21,7 @@ const gatewayModelMock = mock((modelId: string) => ({ provider: "gateway", model
 const createGatewayMock = mock((_options: unknown) => gatewayModelMock);
 const minimaxModelMock = mock((modelId: string) => ({ provider: "minimax", modelId }));
 const createMinimaxMock = mock((_options: unknown) => minimaxModelMock);
-let streamTextScenario: "empty" | "error-then-empty" | "error-no-finish" | "hard-throw" | "approval-request" | "structured-output" | "tool-run" = "empty";
+let streamTextScenario: "empty" | "error-then-empty" | "approval-request" | "structured-output" | "tool-run" = "empty";
 
 const streamTextMock = mock((options: {
   experimental_onStepStart?: (args: {
@@ -100,24 +98,9 @@ const streamTextMock = mock((options: {
   let consumed = false;
   const fullStream = new ReadableStream({
     async start(controller) {
-      if (streamTextScenario === "hard-throw") {
-        controller.error(new Error("stream transport failed"));
-        return;
-      }
-
       if (streamTextScenario === "error-then-empty") {
         await options.onError({ error: new Error("provider failed") });
         controller.enqueue({ type: "error", error: new Error("provider failed") });
-      }
-
-      if (streamTextScenario === "error-no-finish") {
-        // Mimic the real AI SDK: a run that errors before any step completes (a
-        // usage-limit error on the first model call) fires onError but SKIPS
-        // onFinish, so a fullStream-draining caller never finalizes on its own.
-        await options.onError({ error: new Error("provider failed") });
-        controller.enqueue({ type: "error", error: new Error("provider failed") });
-        controller.close();
-        return;
       }
 
       if (streamTextScenario === "approval-request") {
@@ -343,7 +326,6 @@ afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
   process.stdout.write = ORIGINAL_STDOUT_WRITE;
   globalThis.fetch = originalFetch;
-  dynamo.send = originalDynamoSend;
   streamTextScenario = "empty";
   streamTextMock.mockClear();
   googleModelMock.mockClear();
@@ -408,7 +390,7 @@ describe("runAgentLoop", () => {
     expect(onErrorText).toHaveBeenCalledWith("Model returned empty response (finishReason: stop, steps: 0, toolCalls: 0)");
     expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("tools");
     expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("providerOptions");
-    expect(typeof streamTextMock.mock.calls[0]?.[0].onChunk).toBe("function");
+    expect(streamTextMock.mock.calls[0]?.[0]).not.toHaveProperty("onChunk");
     expect(typeof streamTextMock.mock.calls[0]?.[0].experimental_onToolCallStart).toBe("function");
     expect(typeof streamTextMock.mock.calls[0]?.[0].experimental_onToolCallFinish).toBe("function");
   });
@@ -451,12 +433,12 @@ describe("runAgentLoop", () => {
         modelId: "gemini-test",
       },
       hooks: {
-        webhooks: [{
+        webhook: {
           enabled: true,
           url: "https://hooks.example/agent-events",
           secret: "hook-secret",
           events: ["agent.started", "agent.failed"],
-        }],
+        },
       },
     });
 
@@ -529,115 +511,6 @@ describe("runAgentLoop", () => {
     expect(stream.failureText()).toBe("provider failed");
     expect(onErrorText).toHaveBeenCalledTimes(1);
     expect(onErrorText).toHaveBeenCalledWith("provider failed");
-  });
-
-  it("marks a hard stream termination as failed when no completion hook runs", async () => {
-    streamTextScenario = "hard-throw";
-    installHarnessEnv();
-    process.env.USAGE_TABLE_NAME = "usage-test";
-    const usageWrites: Array<{
-      input?: { TransactItems?: Array<{ Put?: { Item?: Record<string, { S?: string }> } }> };
-    }> = [];
-    dynamo.send = mock(async (command: {
-      input?: { TransactItems?: Array<{ Put?: { Item?: Record<string, { S?: string }> } }> };
-    }) => {
-      usageWrites.push(command);
-      return {};
-    }) as never;
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
-    const stream = await runAgentLoop({
-      conversationKey: "direct:conversation",
-      eventId: "direct-event",
-      filesystemNamespace: () => "fs-test",
-      resolvedWorkspaces: () => [],
-      statelessSandbox: () => undefined,
-      statelessPermissionMode: () => "ask",
-      persistModelMessages: async () => [],
-      loadRefreshedSystemPromptParts: async () => ({
-        systemContextSnapshot: { cursor: null, messages: [] },
-        system: [],
-      }),
-    } as never, {
-      messages: [{ role: "user", content: "hello" }],
-      system: [],
-      ephemeralSystem: [],
-      systemContextSnapshot: { cursor: null, messages: [] },
-    }, {
-      provider: { google: { apiKey: "google-key" } },
-      model: { provider: "google", modelId: "gemini-test" },
-    });
-
-    await expect(stream.consumeStream()).rejects.toThrow("stream transport failed");
-    expect(stream.didFail()).toBe(true);
-    expect(stream.failureText()).toBe("stream transport failed");
-    expect(usageWrites[0]?.input?.TransactItems?.[0]?.Put?.Item?.status?.S).toBe("failed");
-  });
-
-  it("finalizes via ensureFinalized when a caller drains fullStream and onFinish never fires", async () => {
-    // The channel progress streamer reads fullStream directly instead of calling
-    // consumeStream. When the model errors before any step completes (a usage-limit
-    // error on the first call), the AI SDK fires onError but skips onFinish, so the
-    // task would never finalize and its trace span would spin "running" forever.
-    // ensureFinalized() is the safety net that path must call.
-    streamTextScenario = "error-no-finish";
-    installHarnessEnv();
-    process.env.USAGE_TABLE_NAME = "usage-test";
-    const usageWrites: Array<{
-      input?: { TransactItems?: Array<{ Put?: { Item?: Record<string, { S?: string }> } }> };
-    }> = [];
-    dynamo.send = mock(async (command: {
-      input?: { TransactItems?: Array<{ Put?: { Item?: Record<string, { S?: string }> } }> };
-    }) => {
-      usageWrites.push(command);
-      return {};
-    }) as never;
-    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
-    const onErrorText = mock(async () => { });
-
-    const stream = await runAgentLoop({
-      conversationKey: "direct:conversation",
-      eventId: "direct-event",
-      filesystemNamespace: () => "fs-test",
-      resolvedWorkspaces: () => [],
-      statelessSandbox: () => undefined,
-      statelessPermissionMode: () => "ask",
-      persistModelMessages: async () => [],
-      loadRefreshedSystemPromptParts: async () => ({
-        systemContextSnapshot: { cursor: null, messages: [] },
-        system: [],
-      }),
-    } as never, {
-      messages: [{ role: "user", content: "hello" }],
-      system: [],
-      ephemeralSystem: [],
-      systemContextSnapshot: { cursor: null, messages: [] },
-    }, {
-      provider: { google: { apiKey: "google-key" } },
-      model: { provider: "google", modelId: "gemini-test" },
-    }, {
-      onFinalText: async () => { },
-      onErrorText,
-    });
-
-    // Drain fullStream the way the channel streamer does (no consumeStream call).
-    const reader = stream.fullStream.getReader();
-    while (true) {
-      const { done } = await reader.read();
-      if (done) break;
-    }
-
-    // onError ran during the drain, but nothing has finalized the task yet.
-    expect(onErrorText).toHaveBeenCalledWith("provider failed");
-    expect(usageWrites).toHaveLength(0);
-
-    await stream.ensureFinalized();
-
-    expect(stream.didFail()).toBe(true);
-    expect(usageWrites[0]?.input?.TransactItems?.[0]?.Put?.Item?.status?.S).toBe("failed");
-
-    // Idempotent: a second call (and any later consumeStream) writes nothing more.
-    await stream.ensureFinalized();
-    expect(usageWrites).toHaveLength(1);
   });
 
   it("treats tool approval requests as pending work instead of empty responses", async () => {
@@ -1049,9 +922,6 @@ describe("runAgentLoop", () => {
     const stream = await runAgentLoop({
       accountId: "acct_test",
       agentId: "agent_test",
-      endpointId: "env-1234",
-      projectSlug: "project-one",
-      environmentSlug: "development",
       conversationKey: "direct:conversation",
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
@@ -1085,7 +955,6 @@ describe("runAgentLoop", () => {
     const logs = lines.map((line) => JSON.parse(line));
     expect(logs.map((log) => log.eventType).filter(Boolean)).toEqual([
       "model.invocation.started",
-      "model.step.started",
       "model.step.finished",
       "model.invocation.finished",
     ]);
@@ -1121,11 +990,7 @@ describe("runAgentLoop", () => {
     expect(typeof logs.find((log) => log.eventType === "model.step.finished").durationMs).toBe("number");
     expect(logs.find((log) => log.eventType === "model.invocation.finished")).toMatchObject({
       usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
-      accountId: "acct_test",
-      endpointId: "env-1234",
     });
-    const startedTraceId = logs.find((log) => log.eventType === "model.invocation.started").traceId;
-    expect(logs.find((log) => log.eventType === "model.invocation.finished").traceId).toBe(startedTraceId);
     expect(logs.find((log) => log.eventType === "model.step.finished").responseMetadata).not.toHaveProperty("headers");
   });
 

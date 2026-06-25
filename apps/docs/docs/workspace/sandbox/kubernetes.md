@@ -1,7 +1,7 @@
 # Kubernetes
 
 Runs the agent's bash/node/python inside an [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox)
-`Sandbox` pod on the Broods **k3s cluster** — a VM-like runtime (`bash`, `node`, `python3`, `curl`
+`Sandbox` pod on the Beeblast **k3s cluster** — a VM-like runtime (`bash`, `node`, `python3`, `curl`
 on PATH). Egress follows `config.network` via a per-Sandbox NetworkPolicy: `allow-all` removes the
 policy, `deny-all` (the default when `network` is omitted) blocks all egress, and `restricted`
 allows the listed CIDRs with DNS (port 53) kept open. The workspace is the same shared S3 bucket the
@@ -116,7 +116,7 @@ for private runtime state, not cross-user file sharing. For read-only or multi-u
 access, write artifacts to the S3 workspace and enforce access there.
 
 > The kubeconfig (CA + token) is ~2.7 KB — over Lambda's 4 KB env-var limit. So `sst.config.ts`
-> stores it in an SSM SecureString parameter (`/broods/<stage>/kubernetes-sandbox-kubeconfig`,
+> stores it in an SSM SecureString parameter (`/filthy-panty/<stage>/kubernetes-sandbox-kubeconfig`,
 > value from the `KubernetesSandboxKubeconfig` secret) and passes only the parameter **name** as
 > `KUBERNETES_SANDBOX_KUBECONFIG_SSM`; the executor fetches + caches it at runtime. Set the GitHub
 > secret `KUBERNETES_SANDBOX_KUBECONFIG` (base64 kubeconfig) and deploy — no env-size juggling.
@@ -141,11 +141,10 @@ runs privileged + `runAsUser: 0` (FUSE needs the device + root) and mounts with
   S3 RW on the workspace bucket, and the runtime image must be in GHCR with a pull secret
   in the namespace. Without the mount, stateless runs still work but workspace-backed tools
   fail fast because files would not persist across calls.
-- **TLS on the deployed harness.** The harness Lambda is a bun-compiled binary whose `fetch` ignores
-  the kubeconfig CA / `insecure-skip-tls-verify`, and k3s serves a self-signed cert. So `sst.config.ts`
-  sets `NODE_TLS_REJECT_UNAUTHORIZED=0` on the harness for **non-production** stages only; production
-  keeps full verification and needs a trusted API cert before using this provider. See the infra
-  `docs/agent-sandbox.md`.
+- **TLS on the deployed harness.** The harness never disables TLS verification process-wide. The
+  cluster API must present a certificate trusted by the Lambda runtime, or the Kubernetes client
+  must be changed to honor the kubeconfig CA before that cluster can be used. A self-signed k3s
+  certificate without either trust path is intentionally rejected. See the infra `docs/agent-sandbox.md`.
 
 ## Execution Notes
 
@@ -178,9 +177,9 @@ KUBERNETES_SANDBOX_DEBUG_STREAM=1 \
 bun run packages/demos/sandbox-kubernetes-direct.ts
 ```
 
-`KUBERNETES_SANDBOX_DEBUG_STREAM=1` tees the exec stream to your terminal. (Under `bun`, set
-`NODE_TLS_REJECT_UNAUTHORIZED=0` if your kubeconfig CA isn't honored — a bun TLS quirk; real Node
-Lambda honors it.)
+`KUBERNETES_SANDBOX_DEBUG_STREAM=1` tees the exec stream to your terminal. Do not use
+`NODE_TLS_REJECT_UNAUTHORIZED=0` to work around a kubeconfig CA problem; it disables TLS
+verification for unrelated provider and artifact traffic in the same process.
 
 The full agent flow example is `packages/demos/sandbox-workspace-kubernetes.ts`.
 

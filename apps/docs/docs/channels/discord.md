@@ -4,31 +4,26 @@ Discord integration allows your agent to interact with users via Discord bots.
 
 ## Configuration
 
-Define a Discord channel with `defineDiscordChannel` and attach it to an agent:
+To enable Discord, include the following in your agent configuration:
 
-```ts title="broods/index.ts"
-import {
-  defineAgent,
-  defineDiscordChannel,
-  env,
-} from "broods";
-
-export const discord = defineDiscordChannel({
-  botToken: env.DISCORD_BOT_TOKEN,
-  publicKey: env.DISCORD_PUBLIC_KEY,
-  allowedGuildIds: ["guild-id-1"],
-  streaming: { mode: "edit" },
-});
-
-export const myAgent = defineAgent({
-  name: "my-agent",
-  config: {
-    channels: [discord],
-  },
-});
+```json
+{
+  "channels": {
+    "discord": {
+      "botToken": "your-bot-token",
+      "publicKey": "your-public-key",
+      "allowedGuildIds": ["guild-id-1"],
+      "streaming": { "mode": "edit" },
+      "actions": { "attachments": true }
+    }
+  }
+}
 ```
 
 - `botToken`: Discord Bot Token.
 - `publicKey`: Discord Application Public Key.
 - `allowedGuildIds` (optional): An array of strings representing allowed guild IDs.
 - `streaming` (optional): Live reply streaming over the interaction webhook (edits the deferred reply, rotating into follow-ups past the 2000-char limit). Supports `edit`, `progress`, `chunk`, or `off` (default). See [Reply Streaming](index.md#reply-streaming).
+- `actions.attachments` (optional): Enables model-initiated interaction follow-up uploads from an attached workspace.
+
+The current Discord adapter handles interactions rather than Gateway message events, so inbound message attachments are not supported. Discord reactions are not exposed as a model action.

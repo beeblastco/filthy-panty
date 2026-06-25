@@ -2,8 +2,8 @@
 
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
 import { useAgentHealth } from "@/app/hooks/useAgentHealth";
-import { api } from "@broods/convex/_generated/api";
-import type { Id } from "@broods/convex/_generated/dataModel";
+import { api } from "@filthy-panty/convex/_generated/api";
+import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
 import type { NodeProps } from "@xyflow/react";
 import { useMemo } from "react";
@@ -43,13 +43,8 @@ export function AgentNode({ id, data }: NodeProps) {
 
         return [{ key: "structured-output", label: "structured output" }];
     }, [agentConfig?.outputFormat]);
-    // Surface the secure-by-default public-access opt-in so the node's globe can
-    // reflect it (green only when the agent is actually reachable publicly).
-    const publicAccess =
-        ((agentConfig?.extraConfig as Record<string, unknown> | undefined)?.publicAccess) === true;
     const withColor: BaseNodeData = {
         ...nodeData,
-        config: { ...nodeData.config, publicAccess },
         properties: nodeData.properties ?? { color: DEFAULT_AGENT_COLOR },
     };
 

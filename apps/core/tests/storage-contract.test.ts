@@ -29,6 +29,7 @@ describe("StorageProvider", () => {
     expect(typeof dynamoStorageProvider.crons.list).toBe("function");
     expect(typeof dynamoStorageProvider.sandboxConfigs.list).toBe("function");
     expect(typeof dynamoStorageProvider.workspaceConfigs.list).toBe("function");
+    expect(typeof dynamoStorageProvider.artifacts.getById).toBe("function");
   });
 
   it("factory respects STORAGE_PROVIDER env", async () => {
@@ -69,6 +70,7 @@ describe("StorageProvider", () => {
         expect(storage.crons).toBeDefined();
         expect(storage.sandboxConfigs).toBeDefined();
         expect(storage.workspaceConfigs).toBeDefined();
+        expect(storage.artifacts).toBeDefined();
       });
 
       // Live CRUD only runs if the surrounding env has provisioned tables /

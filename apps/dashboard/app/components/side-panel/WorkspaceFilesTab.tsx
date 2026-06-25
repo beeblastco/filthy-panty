@@ -1,13 +1,12 @@
 "use client";
 
 /** VSCode-style file explorer for a workspace canvas node with drag-and-drop upload. */
-import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { cn } from "@/app/lib/utils";
-import { api } from "@broods/convex/_generated/api";
-import type { Id } from "@broods/convex/_generated/dataModel";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { api } from "@filthy-panty/convex/_generated/api";
+import type { Id } from "@filthy-panty/convex/_generated/dataModel";
+import { useMutation, useQuery } from "convex/react";
 import {
   ChevronDown,
   ChevronRight,
@@ -16,7 +15,6 @@ import {
   FolderUp,
   Loader2,
   Pencil,
-  RefreshCw,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -29,27 +27,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // ---------------------------------------------------------------------------
 
 type FileRecord = {
-  _id?: Id<"workspaceFiles">;
+  _id: Id<"workspaceFiles">;
   path: string;
   name: string;
   isFolder: boolean;
   storageId?: Id<"_storage">;
   mimeType?: string;
   sizeBytes?: number;
-  updatedAt?: string | number;
 };
 
 type FileNode = FileRecord & {
   children?: FileNode[];
 };
-
-type RuntimeFileCacheEntry = {
-  files: FileRecord[];
-  cachedAt: number;
-};
-
-const RUNTIME_FILE_CACHE_PREFIX = "broods.workspace-files.v1";
-const runtimeFileCache = new Map<string, RuntimeFileCacheEntry>();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -89,56 +78,6 @@ function buildTree(files: FileRecord[]): FileNode[] {
   sort(roots);
 
   return roots;
-}
-
-function withoutPath(files: FileRecord[], path: string): FileRecord[] {
-  return files.filter((file) => file.path !== path && !file.path.startsWith(`${path}/`));
-}
-
-function withRenamedPath(files: FileRecord[], path: string, newPath: string): FileRecord[] {
-  return files.map((file) => {
-    if (file.path !== path && !file.path.startsWith(`${path}/`)) return file;
-    const nextPath = `${newPath}${file.path.slice(path.length)}`;
-
-    return {
-      ...file,
-      path: nextPath,
-      ...(file.path === path ? { name: newPath.split("/").at(-1)! } : {}),
-    };
-  });
-}
-
-function runtimeFileCacheKey(projectId: string | undefined, workspaceId: string | undefined): string | undefined {
-  return projectId && workspaceId ? `${projectId}:${workspaceId}` : undefined;
-}
-
-function readRuntimeFileCache(key: string | undefined): RuntimeFileCacheEntry | undefined {
-  if (!key) return undefined;
-  const memory = runtimeFileCache.get(key);
-  if (memory) return memory;
-  if (typeof window === "undefined") return undefined;
-  try {
-    const raw = window.sessionStorage.getItem(`${RUNTIME_FILE_CACHE_PREFIX}:${key}`);
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as RuntimeFileCacheEntry;
-    if (!Array.isArray(parsed.files) || typeof parsed.cachedAt !== "number") return undefined;
-    runtimeFileCache.set(key, parsed);
-    return parsed;
-  } catch {
-    return undefined;
-  }
-}
-
-function writeRuntimeFileCache(key: string | undefined, files: FileRecord[]): void {
-  if (!key) return;
-  const entry = { files: files, cachedAt: Date.now() };
-  runtimeFileCache.set(key, entry);
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.setItem(`${RUNTIME_FILE_CACHE_PREFIX}:${key}`, JSON.stringify(entry));
-  } catch {
-    // Cache failures must never block workspace access.
-  }
 }
 
 function formatBytes(bytes: number): string {
@@ -182,19 +121,6 @@ async function collectEntries(
       await collectEntries(child, currentPath, files, folders);
     }
   }
-}
-
-async function fileToBase64(file: File): Promise<string> {
-  if (file.size > 512 * 1024) {
-    throw new Error(`${file.name} exceeds the 512 KiB dashboard upload limit.`);
-  }
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = "";
-  const chunkSize = 32 * 1024;
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
-  }
-  return btoa(binary);
 }
 
 /** Renders a colored file type icon via react-file-icon. */
@@ -444,15 +370,13 @@ function TreeRow({
 export function WorkspaceFilesTab({
   projectId,
   nodeId,
-  workspaceId,
 }: {
   projectId: Id<"projects"> | undefined;
   nodeId: string;
-  workspaceId?: string;
 }) {
-  const convexFiles = useQuery(
+  const files = useQuery(
     api.workspaceFiles.list,
-    projectId && !workspaceId ? { projectId: projectId, nodeId: nodeId } : "skip",
+    projectId ? { projectId: projectId, nodeId: nodeId } : "skip",
   );
 
   const generateUploadUrl = useMutation(api.workspaceFiles.generateUploadUrl);
@@ -460,109 +384,17 @@ export function WorkspaceFilesTab({
   const removeFile = useMutation(api.workspaceFiles.remove);
   const removeFolderMut = useMutation(api.workspaceFiles.removeFolder);
   const renameMut = useMutation(api.workspaceFiles.rename);
-  const listRuntimeFiles = useAction(api.workspaceFilesPublic.list);
-  const migrateLegacyFiles = useAction(api.workspaceFilesPublic.migrateLegacy);
-  const uploadRuntimeFile = useAction(api.workspaceFilesPublic.upload);
-  const removeRuntimePath = useAction(api.workspaceFilesPublic.remove);
-  const renameRuntimePath = useAction(api.workspaceFilesPublic.rename);
 
-  const cacheKey = runtimeFileCacheKey(projectId, workspaceId);
-  const [runtimeFiles, setRuntimeFiles] = useState<FileRecord[] | undefined>(
-    () => runtimeFileCache.get(cacheKey ?? "")?.files,
-  );
-  const [syncedWorkspaceId, setSyncedWorkspaceId] = useState(workspaceId);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [uploading, setUploading] = useState<Set<string>>(new Set());
   const [isDragOver, setIsDragOver] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Node pending delete confirmation.
-  const [pendingDeleteNode, setPendingDeleteNode] = useState<FileNode | null>(null);
-  const [isDeletingNode, setIsDeletingNode] = useState(false);
-  const refreshRequestRef = useRef(0);
-  const refreshPromiseRef = useRef<Promise<FileRecord[]> | undefined>(undefined);
   const dragCounter = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-
-  if (workspaceId !== syncedWorkspaceId) {
-    setSyncedWorkspaceId(workspaceId);
-    setRuntimeFiles(readRuntimeFileCache(cacheKey)?.files);
-  }
-
-  const applyRuntimeFiles = useCallback((next: FileRecord[]) => {
-    writeRuntimeFileCache(cacheKey, next);
-    setRuntimeFiles(next);
-  }, [cacheKey]);
-
-  const refreshRuntimeFiles = useCallback(async (showIndicator = false, force = false) => {
-    if (!projectId || !workspaceId) return;
-    if (refreshPromiseRef.current && !force) return refreshPromiseRef.current;
-    const request = ++refreshRequestRef.current;
-    if (showIndicator) setIsRefreshing(true);
-    const pending = listRuntimeFiles({ projectId: projectId, workspaceId: workspaceId });
-    refreshPromiseRef.current = pending;
-    try {
-      const next = await pending;
-      if (request === refreshRequestRef.current) applyRuntimeFiles(next);
-      return next;
-    } finally {
-      if (refreshPromiseRef.current === pending) refreshPromiseRef.current = undefined;
-      if (showIndicator) setIsRefreshing(false);
-    }
-  }, [applyRuntimeFiles, listRuntimeFiles, projectId, workspaceId]);
-
-  useEffect(() => {
-    if (!projectId || !workspaceId) return;
-    let cancelled = false;
-    const cached = readRuntimeFileCache(cacheKey);
-    if (cached) {
-      void Promise.resolve().then(() => {
-        if (!cancelled) setRuntimeFiles(cached.files);
-      });
-    }
-    const request = ++refreshRequestRef.current;
-    const pending = migrateLegacyFiles({ projectId: projectId, nodeId: nodeId, workspaceId: workspaceId });
-    refreshPromiseRef.current = pending;
-    void pending
-      .then((next) => {
-        if (!cancelled && request === refreshRequestRef.current) applyRuntimeFiles(next);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Failed to load workspace files.");
-        if (!cached) setRuntimeFiles([]);
-      })
-      .finally(() => {
-        if (refreshPromiseRef.current === pending) refreshPromiseRef.current = undefined;
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [applyRuntimeFiles, cacheKey, migrateLegacyFiles, nodeId, projectId, workspaceId]);
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") {
-        void refreshRuntimeFiles().catch(() => {});
-      }
-    };
-    const interval = window.setInterval(refreshWhenVisible, 5000);
-    window.addEventListener("focus", refreshWhenVisible);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
-
-    return () => {
-      window.clearInterval(interval);
-      window.removeEventListener("focus", refreshWhenVisible);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
-    };
-  }, [refreshRuntimeFiles, workspaceId]);
-
-  const files = workspaceId ? runtimeFiles : convexFiles;
 
   // Deselect when clicking the blank area of the panel
   const handleContainerClick = useCallback(() => {
@@ -570,23 +402,10 @@ export function WorkspaceFilesTab({
     setRenamingPath(null);
   }, []);
 
-  const executeDelete = useCallback(
+  const handleDelete = useCallback(
     async (node: FileNode) => {
       if (!projectId) return;
       setSelected(null);
-      if (workspaceId) {
-        refreshRequestRef.current += 1;
-        const optimistic = runtimeFiles ? withoutPath(runtimeFiles, node.path) : undefined;
-        if (optimistic) applyRuntimeFiles(optimistic);
-        try {
-          await removeRuntimePath({ projectId: projectId, workspaceId: workspaceId, path: node.path });
-          await refreshRuntimeFiles(false, true);
-        } catch (err) {
-          setError(err instanceof Error ? err.message : "Failed to delete workspace path.");
-          await refreshRuntimeFiles(false, true);
-        }
-        return;
-      }
       if (node.isFolder) {
         await removeFolderMut({
           projectId: projectId,
@@ -594,18 +413,13 @@ export function WorkspaceFilesTab({
           folderPath: node.path,
         });
       } else {
-        await removeFile({ fileId: node._id! });
+        await removeFile({ fileId: node._id });
       }
     },
-    [applyRuntimeFiles, projectId, workspaceId, nodeId, removeFile, removeFolderMut, removeRuntimePath, refreshRuntimeFiles, runtimeFiles],
+    [projectId, nodeId, removeFile, removeFolderMut],
   );
 
-  // Opens the delete confirmation dialog for a node (click or keyboard Delete).
-  const handleDelete = useCallback((node: FileNode) => {
-    setPendingDeleteNode(node);
-  }, []);
-
-  // Keyboard: Delete/Backspace = open delete dialog for selected, F2 = rename selected
+  // Keyboard: Delete = delete selected, F2 = rename selected
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (renamingPath) return;
@@ -615,7 +429,7 @@ export function WorkspaceFilesTab({
         document.activeElement?.tagName !== "INPUT"
       ) {
         const match = files?.find((f: FileRecord) => f.path === selected);
-        if (match) setPendingDeleteNode(match as FileNode);
+        if (match) void handleDelete(match as FileNode);
       }
       if (e.key === "F2" && selected) {
         setRenamingPath(selected);
@@ -623,7 +437,7 @@ export function WorkspaceFilesTab({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selected, renamingPath, files]);
+  }, [selected, renamingPath, files, handleDelete]);
 
   const toggleFolder = useCallback((path: string) => {
     setExpanded((prev) => {
@@ -657,31 +471,19 @@ export function WorkspaceFilesTab({
       }
 
       try {
-        if (!workspaceId) {
-          for (const folderPath of folders) {
-            const parts = folderPath.split("/");
-            await createFile({
-              projectId: projectId,
-              nodeId: nodeId,
-              path: folderPath,
-              name: parts[parts.length - 1],
-              isFolder: true,
-            });
-          }
+        for (const folderPath of folders) {
+          const parts = folderPath.split("/");
+          await createFile({
+            projectId: projectId,
+            nodeId: nodeId,
+            path: folderPath,
+            name: parts[parts.length - 1],
+            isFolder: true,
+          });
         }
 
         for (const { file, path } of entries) {
           try {
-            if (workspaceId) {
-              await uploadRuntimeFile({
-                projectId: projectId,
-                workspaceId: workspaceId,
-                path: path,
-                contentBase64: await fileToBase64(file),
-                contentType: file.type || undefined,
-              });
-              continue;
-            }
             const uploadUrl = await generateUploadUrl();
             const res = await fetch(uploadUrl, {
               method: "POST",
@@ -713,12 +515,11 @@ export function WorkspaceFilesTab({
             });
           }
         }
-        if (workspaceId) await refreshRuntimeFiles(false, true);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Upload failed.");
       }
     },
-    [projectId, workspaceId, nodeId, generateUploadUrl, createFile, uploadRuntimeFile, refreshRuntimeFiles],
+    [projectId, nodeId, generateUploadUrl, createFile],
   );
 
   const handleDrop = useCallback(
@@ -791,29 +592,9 @@ export function WorkspaceFilesTab({
   const handleRenameCommit = useCallback(
     async (node: FileNode, newName: string) => {
       setRenamingPath(null);
-      if (workspaceId && projectId) {
-        const slash = node.path.lastIndexOf("/");
-        const newPath = slash === -1 ? newName : `${node.path.slice(0, slash)}/${newName}`;
-        refreshRequestRef.current += 1;
-        const optimistic = runtimeFiles ? withRenamedPath(runtimeFiles, node.path, newPath) : undefined;
-        if (optimistic) applyRuntimeFiles(optimistic);
-        try {
-          await renameRuntimePath({
-            projectId: projectId,
-            workspaceId: workspaceId,
-            path: node.path,
-            newPath: newPath,
-          });
-          await refreshRuntimeFiles(false, true);
-        } catch (err) {
-          setError(err instanceof Error ? err.message : "Failed to rename workspace path.");
-          await refreshRuntimeFiles(false, true);
-        }
-        return;
-      }
-      await renameMut({ fileId: node._id!, newName: newName });
+      await renameMut({ fileId: node._id, newName: newName });
     },
-    [applyRuntimeFiles, workspaceId, projectId, renameRuntimePath, refreshRuntimeFiles, renameMut, runtimeFiles],
+    [renameMut],
   );
 
   const tree = files ? buildTree(files as FileRecord[]) : [];
@@ -833,23 +614,6 @@ export function WorkspaceFilesTab({
     >
       {/* Toolbar */}
       <div className="flex shrink-0 items-center justify-end gap-0.5 px-3 py-2">
-        {workspaceId && (
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            className="cursor-pointer disabled:cursor-not-allowed"
-            title="Refresh workspace files"
-            disabled={isRefreshing}
-            onClick={(e) => {
-              e.stopPropagation();
-              void refreshRuntimeFiles(true, true).catch((err) => {
-                setError(err instanceof Error ? err.message : "Failed to refresh workspace files.");
-              });
-            }}
-          >
-            <RefreshCw className={cn("size-3.5", isRefreshing && "animate-spin")} />
-          </Button>
-        )}
         <Button
           size="icon-xs"
           variant="ghost"
@@ -979,28 +743,6 @@ export function WorkspaceFilesTab({
             Drop to upload
           </p>
         </div>
-      )}
-
-      {pendingDeleteNode && (
-        <DeleteConfirmDialog
-          open={pendingDeleteNode !== null}
-          onOpenChange={(open) => {
-            if (!open) setPendingDeleteNode(null);
-          }}
-          resourceName={pendingDeleteNode.name}
-          resourceType={pendingDeleteNode.isFolder ? "folder" : "file"}
-          critical={false}
-          onConfirm={async () => {
-            setIsDeletingNode(true);
-            try {
-              await executeDelete(pendingDeleteNode);
-              setPendingDeleteNode(null);
-            } finally {
-              setIsDeletingNode(false);
-            }
-          }}
-          isDeleting={isDeletingNode}
-        />
       )}
     </div>
   );

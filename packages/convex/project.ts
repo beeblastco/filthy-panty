@@ -8,7 +8,7 @@ import type { DataModel } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { uniqueProjectSlug } from "./lib/slug";
-import { purgeProject } from "./model/cascade";
+import { deleteEnvironmentContents } from "./environment";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import { getOwnedProject, getProjectForRole } from "./model/ownership/project";
 import { projectsFields } from "./schema";
@@ -69,33 +69,30 @@ async function getCallerActiveOrgId(ctx: Ctx, authId: string) {
 }
 
 /**
- * Lists the projects visible to the caller, scoped to their active org. When
- * the caller has no active org (legacy / first-load), falls back to their
- * orgId-less projects owned by authId so older accounts keep working.
+ * Lists every project visible to the caller in their active org. Legacy
+ * projects without an orgId fall back to authId ownership for backwards compat.
  */
 async function listProjects(ctx: Ctx, authId: string) {
     const orgId = await getCallerActiveOrgId(ctx, authId);
-
-    // No active org: surface only the caller's legacy, orgId-less projects.
-    if (orgId === null) {
-        const ownedByAuth = await ctx.db
-            .query("projects")
-            .withIndex("by_authId", (q) => q.eq("authId", authId))
-            .collect();
-
-        return ownedByAuth
-            .filter((p) => !p.orgId)
-            .sort((a, b) => b.updatedAt - a.updatedAt);
-    }
-
-    // Active org set: return only that org's projects, never another org's
-    // or another caller's orgId-less projects.
-    const orgProjects = await ctx.db
+    const ownedByAuth = await ctx.db
         .query("projects")
-        .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+        .withIndex("by_authId", (q) => q.eq("authId", authId))
         .collect();
 
-    return orgProjects.sort((a, b) => b.updatedAt - a.updatedAt);
+    const orgProjects = orgId
+        ? await ctx.db
+            .query("projects")
+            .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+            .collect()
+        : [];
+
+    const merged = new Map<string, (typeof ownedByAuth)[number]>();
+    for (const p of orgProjects) merged.set(p._id, p);
+    for (const p of ownedByAuth) {
+        if (!p.orgId) merged.set(p._id, p);
+    }
+
+    return [...merged.values()].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 /**
@@ -163,27 +160,15 @@ export const getOrCreateDefault = mutation({
     },
 });
 
-/**
- * Lists the caller's projects. Soft-auth: returns [] (instead of throwing) when
- * no auth user is resolved yet, so the first-login WorkOS-webhook gap renders an
- * empty list rather than tripping the dashboard's React error boundary.
- */
 export const list = query({
     args: {},
     returns: v.array(projectDoc),
     handler: async (ctx) => {
-        const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) return [];
-
+        const authUser = await requireAuth(ctx);
         return listProjects(ctx, authUser.id);
     },
 });
 
-/**
- * Lists the caller's projects with lightweight preview fields. Soft-auth like
- * `list`: returns [] when no auth user is resolved yet so the first-login gap
- * does not crash the gallery.
- */
 export const listWithPreview = query({
     args: {},
     returns: v.array(v.object({
@@ -193,11 +178,8 @@ export const listWithPreview = query({
         deployedAgentCount: v.number(),
     })),
     handler: async (ctx) => {
-        const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) return [];
-
+        const authUser = await requireAuth(ctx);
         const projects = await listProjects(ctx, authUser.id);
-
         return projects.map((p) => ({
             _id: p._id,
             name: p.name,
@@ -218,7 +200,7 @@ export const getById = query({
 
 /**
  * Resolves a CLI-style project name/slug (and optional environment name) to the
- * caller's real project and environment ids, so a `broods` deep link can
+ * caller's real project and environment ids, so a `filthy-panty` deep link can
  * land directly on that project's architecture view.
  * @param project name or slug as printed by the CLI
  * @param environment optional environment name (e.g. "development"); matched case-insensitively
@@ -329,7 +311,28 @@ export const remove = mutation({
         const project = await getProjectForRole(ctx, authUser.id, projectId, "admin");
         if (!project) throw new Error("Project not found.");
 
-        await purgeProject(ctx, projectId);
+        const environments = await ctx.db
+            .query("environments")
+            .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+            .collect();
+
+        for (const env of environments) {
+            await deleteEnvironmentContents(ctx, env);
+            await ctx.db.delete(env._id);
+        }
+
+        const workspaceFiles = await ctx.db
+            .query("workspaceFiles")
+            .withIndex("by_projectId_and_nodeId", (q) => q.eq("projectId", projectId))
+            .collect();
+        for (const file of workspaceFiles) {
+            if (file.storageId) {
+                await ctx.storage.delete(file.storageId);
+            }
+            await ctx.db.delete(file._id);
+        }
+
+        await ctx.db.delete(projectId);
 
         return projectId;
     },

@@ -1,6 +1,6 @@
 # Deploy pipeline.
 # `main` = SaaS production: PR CI already validated, skip re-validation and
-#   deploy directly to the active production region (Convex storage provider).
+#   deploy directly (Convex storage provider).
 # `dev` = OSS / community staging: re-validates (typecheck + test + build)
 #   before deploying. Uses Convex storage when the development environment
 #   provides CONVEX_URL + CONVEX_DEPLOY_KEY, otherwise DynamoDB.
@@ -36,7 +36,7 @@ jobs:
     permissions:
       contents: read
     env:
-      AWS_REGION: ${{ vars.DEV_AWS_REGION || 'eu-west-1' }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
       CI: "true"
       # sst.config.ts reads these at runtime (no in-source defaults); postinstall
       # `sst install` fails without them.
@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-24.04
     # Resolves CONVEX_URL/CONVEX_DEPLOY_KEY from the matching environment:
     # production (prod Convex) on main, development (dev Convex) otherwise.
-    environment: ${{ (github.ref == 'refs/heads/main' || startsWith(github.event.inputs.stage || '', 'production')) && 'production' || 'development' }}
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
     concurrency:
       group: ${{ github.workflow }}-deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || github.ref_name }}
       cancel-in-progress: false
@@ -81,7 +81,8 @@ jobs:
       id-token: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      DEFAULT_AWS_REGION: ${{ vars.DEV_AWS_REGION || 'eu-west-1' }}
+      DEFAULT_AWS_REGION: ${{ vars.AWS_REGION }}
+      PRODUCTION_AWS_REGION: ${{ vars.PRODUCTION_AWS_REGION }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
       # Account/project identity for resource names, IAM ARNs, and tags. sst.config.ts
       # falls back to placeholders when unset, so set these repo vars for deploys to
@@ -104,31 +105,24 @@ jobs:
       ACCOUNT_OPENAI_ORGANIZATION: ${{ vars.ACCOUNT_OPENAI_ORGANIZATION }}
       ACCOUNT_OPENAI_PROJECT: ${{ vars.ACCOUNT_OPENAI_PROJECT }}
       ACCOUNT_BEDROCK_API_KEY: ${{ secrets.ACCOUNT_BEDROCK_API_KEY }}
-      ACCOUNT_BEDROCK_REGION: ${{ vars.ACCOUNT_BEDROCK_REGION || vars.DEV_AWS_REGION || 'eu-west-1' }}
+      ACCOUNT_BEDROCK_REGION: ${{ vars.ACCOUNT_BEDROCK_REGION || vars.AWS_REGION }}
       ACCOUNT_BEDROCK_ACCESS_KEY_ID: ${{ secrets.ACCOUNT_BEDROCK_ACCESS_KEY_ID }}
       ACCOUNT_BEDROCK_SECRET_ACCESS_KEY: ${{ secrets.ACCOUNT_BEDROCK_SECRET_ACCESS_KEY }}
       ACCOUNT_BEDROCK_SESSION_TOKEN: ${{ secrets.ACCOUNT_BEDROCK_SESSION_TOKEN }}
       ACCOUNT_GATEWAY_API_KEY: ${{ secrets.ACCOUNT_GATEWAY_API_KEY }}
       ENABLE_DIRECT_API: ${{ vars.ENABLE_DIRECT_API || 'false' }}
       ENABLE_WEBSOCKET: ${{ vars.ENABLE_WEBSOCKET || 'false' }}
-      # Create the image-based sandbox Lambdas only after the arm64 image is in a target's
-      # regional ECR repo. When a target's flag is true but the image is missing, this
-      # workflow bootstraps the region by running one repo-only SST deploy, mirroring the
-      # source image, then running the final deploy with sandbox functions enabled.
-      # Dev falls back to the legacy repo-wide SANDBOX_IMAGE_READY for backward compatibility.
+      # Create the image-based sandbox Lambdas only after the arm64 image is in THIS stage's
+      # region ECR repo. The flag is per-stage because dev and production deploy to different
+      # regions that bootstrap independently: leave a stage's flag unset for its region's first
+      # deploy (creates the empty repo, functions skipped), then set it to 'true' once
+      # lambda-sanbdox CI has mirrored the image. Resolved per-stage in the step below.
+      # dev falls back to the legacy repo-wide SANDBOX_IMAGE_READY for backward compatibility.
       # See docs/workspace/sandbox/lambda.md.
       SANDBOX_IMAGE_READY_DEV: ${{ vars.SANDBOX_IMAGE_READY_DEV || vars.SANDBOX_IMAGE_READY || 'false' }}
       SANDBOX_IMAGE_READY_PRODUCTION: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
-      SANDBOX_IMAGE_READY_PRODUCTION_US_EAST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_US_EAST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
-      SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
-      SANDBOX_IMAGE_READY_PRODUCTION_AP_SOUTHEAST_1: ${{ vars.SANDBOX_IMAGE_READY_PRODUCTION_AP_SOUTHEAST_1 || vars.SANDBOX_IMAGE_READY_PRODUCTION || 'false' }}
-      SANDBOX_IMAGE_SOURCE_REGION: ${{ vars.SANDBOX_IMAGE_SOURCE_REGION || 'eu-west-1' }}
       NATS_URL: ${{ secrets.NATS_URL }}
       NATS_TOKEN: ${{ secrets.NATS_TOKEN }}
-      # Durable Lambda logs/traces. The endpoint is non-secret; the Basic auth
-      # header must remain an environment/repository secret.
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT || 'https://otel.beeblast.co' }}
-      OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       DAYTONA_ORGANIZATION_ID: ${{ vars.DAYTONA_ORGANIZATION_ID }}
       DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
@@ -144,51 +138,34 @@ jobs:
       # development otherwise). A stage uses Convex when both are set, else DynamoDB.
       CONVEX_URL: ${{ secrets.CONVEX_URL }}
       CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+      # This is for testing purposes only.
+      MOCK_WEBHOOK_SECRET: ${{ secrets.MOCK_WEBHOOK_SECRET }}
     steps:
       - name: Resolve deploy configuration
         shell: bash
         run: |
           set -euo pipefail
 
-          sandbox_ready_for_region() {
-            case "$1" in
-              us-east-1) echo "${SANDBOX_IMAGE_READY_PRODUCTION_US_EAST_1:-false}" ;;
-              eu-west-1) echo "${SANDBOX_IMAGE_READY_PRODUCTION_EU_WEST_1:-false}" ;;
-              ap-southeast-1) echo "${SANDBOX_IMAGE_READY_PRODUCTION_AP_SOUTHEAST_1:-false}" ;;
-              *) echo "${SANDBOX_IMAGE_READY_PRODUCTION:-false}" ;;
-            esac
-          }
-
-          production_targets() {
-            for region in eu-west-1; do
-              echo "production-${region}|${region}|$(sandbox_ready_for_region "$region")"
-            done
-          }
-
           if [[ -n "${INPUT_STAGE:-}" ]]; then
-            if [[ "$INPUT_STAGE" == "production" ]]; then
-              DEPLOY_TARGETS="$(production_targets)"
-            elif [[ "$INPUT_STAGE" == production-* ]]; then
-              TARGET_REGION="${INPUT_STAGE#production-}"
-              DEPLOY_TARGETS="${INPUT_STAGE}|${TARGET_REGION}|$(sandbox_ready_for_region "$TARGET_REGION")"
-            else
-              DEPLOY_TARGETS="${INPUT_STAGE}|${DEFAULT_AWS_REGION:-}|${SANDBOX_IMAGE_READY_DEV:-false}"
-            fi
+            STAGE="$INPUT_STAGE"
           elif [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
-            DEPLOY_TARGETS="$(production_targets)"
+            STAGE="production"
           else
-            DEPLOY_TARGETS="dev|${DEFAULT_AWS_REGION:-}|${SANDBOX_IMAGE_READY_DEV:-false}"
+            STAGE="dev"
           fi
 
-          while IFS='|' read -r target_stage target_region target_sandbox_ready; do
-            if [[ -z "${target_stage:-}" ]]; then
-              continue
-            fi
-            if [[ -z "${target_region:-}" ]]; then
-              echo "Missing AWS region for stage: $target_stage" >&2
-              exit 1
-            fi
-          done <<< "$DEPLOY_TARGETS"
+          if [[ "$STAGE" == "production" ]]; then
+            AWS_REGION="${PRODUCTION_AWS_REGION:-}"
+            SANDBOX_IMAGE_READY="${SANDBOX_IMAGE_READY_PRODUCTION:-false}"
+          else
+            AWS_REGION="${DEFAULT_AWS_REGION:-}"
+            SANDBOX_IMAGE_READY="${SANDBOX_IMAGE_READY_DEV:-false}"
+          fi
+
+          if [[ -z "${AWS_REGION:-}" ]]; then
+            echo "Missing AWS region for stage: $STAGE" >&2
+            exit 1
+          fi
 
           if [[ -z "${AWS_ROLE_ARN:-}" ]]; then
             echo "Missing required repository variable: AWS_ROLE_ARN" >&2
@@ -200,17 +177,9 @@ jobs:
             exit 1
           fi
 
-          if [[ -z "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" || -z "${OTEL_EXPORTER_OTLP_HEADERS:-}" ]]; then
-            echo "OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_EXPORTER_OTLP_HEADERS are required for durable observability" >&2
-            exit 1
-          fi
-
-          {
-            echo "DEPLOY_TARGETS<<EOF"
-            echo "$DEPLOY_TARGETS"
-            echo "EOF"
-            echo "AWS_REGION=${DEFAULT_AWS_REGION:-eu-west-1}"
-          } >> "$GITHUB_ENV"
+          echo "SST_STAGE=$STAGE" >> "$GITHUB_ENV"
+          echo "AWS_REGION=$AWS_REGION" >> "$GITHUB_ENV"
+          echo "SANDBOX_IMAGE_READY=$SANDBOX_IMAGE_READY" >> "$GITHUB_ENV"
 
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -230,123 +199,50 @@ jobs:
       - name: Build Lambda binaries
         run: bun run build
 
-      - name: Setup crane
-        uses: imjasonh/setup-crane@v0.4
-
       - name: Clear stale SST deploy lock
         shell: bash
         working-directory: apps/core
         run: |
           set -euo pipefail
-          while IFS='|' read -r target_stage target_region target_sandbox_ready; do
-            if [[ -z "${target_stage:-}" ]]; then
-              continue
-            fi
-            echo "Clearing stale SST lock for $target_stage in $target_region"
-            AWS_REGION="$target_region" AWS_DEFAULT_REGION="$target_region" bunx sst unlock --stage "$target_stage" || true
-          done <<< "$DEPLOY_TARGETS"
+          bunx sst unlock --stage "$SST_STAGE" || true
 
       - name: Deploy SST app
         working-directory: apps/core
         env:
-          # Plain env vars read directly by sst.config.ts (no SST secret store).
-          # The `|| secrets.SST_SECRET_*` fallback preserves the existing secret
-          # values so encrypted Convex data (account config / sandbox creds) stays
-          # decryptable whether or not the clean-named secrets have been created.
-          ADMIN_ACCOUNT_SECRET: ${{ secrets.ADMIN_ACCOUNT_SECRET || secrets.SST_SECRET_ADMINACCOUNTSECRET }}
-          ACCOUNT_CONFIG_ENCRYPTION_SECRET: ${{ secrets.ACCOUNT_CONFIG_ENCRYPTION_SECRET || secrets.SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET }}
-          # Optional trusted server-side caller token; empty default keeps deploys working.
-          SERVICE_AUTH_SECRET: ${{ secrets.SERVICE_AUTH_SECRET }}
-          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-          # Optional: base64 kubeconfig for the kubernetes sandbox provider.
-          KUBERNETES_SANDBOX_KUBECONFIG: ${{ secrets.KUBERNETES_SANDBOX_KUBECONFIG }}
+          SST_SECRET_GoogleApiKey: ${{ secrets.SST_SECRET_GOOGLEAPIKEY }}
+          SST_SECRET_TavilyApiKey: ${{ secrets.SST_SECRET_TAVILYAPIKEY }}
+          SST_SECRET_AdminAccountSecret: ${{ secrets.SST_SECRET_ADMINACCOUNTSECRET }}
+          SST_SECRET_AccountConfigEncryptionSecret: ${{ secrets.SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET }}
+          SST_SECRET_DaytonaApiKey: ${{ secrets.DAYTONA_API_KEY }}
+          # Optional: base64 kubeconfig for the kubernetes sandbox provider. Not in the
+          # required-secrets loop below, so stages that don't use it still deploy.
+          SST_SECRET_KubernetesSandboxKubeconfig: ${{ secrets.KUBERNETES_SANDBOX_KUBECONFIG }}
+          MOCK_WEBHOOK_SECRET: ${{ secrets.MOCK_WEBHOOK_SECRET }}
         shell: bash
         run: |
           set -euo pipefail
 
-          deploy_target() {
-            local target_stage="$1"
-            local target_region="$2"
-            local sandbox_ready="$3"
-
-            for attempt in 1 2 3; do
-              echo "Deploy $target_stage in $target_region attempt $attempt/3 (SANDBOX_IMAGE_READY=$sandbox_ready)"
-              if AWS_REGION="$target_region" \
-                AWS_DEFAULT_REGION="$target_region" \
-                SST_STAGE="$target_stage" \
-                SANDBOX_IMAGE_READY="$sandbox_ready" \
-                bunx sst deploy --stage "$target_stage" --print-logs; then
-                return 0
-              fi
-              if [[ "$attempt" == "3" ]]; then
-                echo "Deploy failed for $target_stage in $target_region" >&2
-                return 1
-              fi
-              echo "Deploy failed, retrying in 15s..."
-              sleep 15
-            done
-          }
-
-          ecr_login() {
-            local region="$1"
-            aws ecr get-login-password --region "$region" \
-              | crane auth login "${AWS_ACCOUNT_ID}.dkr.ecr.${region}.amazonaws.com" -u AWS --password-stdin
-          }
-
-          ensure_sandbox_image() {
-            local target_stage="$1"
-            local target_region="$2"
-            local target_repo="beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${target_region}"
-            local source_region="${SANDBOX_IMAGE_SOURCE_REGION:-eu-west-1}"
-            local source_repo="beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${source_region}"
-            local source_image="${AWS_ACCOUNT_ID}.dkr.ecr.${source_region}.amazonaws.com/${source_repo}:latest-arm64"
-            local target_image="${AWS_ACCOUNT_ID}.dkr.ecr.${target_region}.amazonaws.com/${target_repo}:latest-arm64"
-
-            if aws ecr describe-images \
-              --region "$target_region" \
-              --repository-name "$target_repo" \
-              --image-ids imageTag=latest-arm64 >/dev/null 2>&1; then
-              echo "Sandbox image already exists for $target_stage in $target_region"
-              return 0
-            fi
-
-            echo "Sandbox image missing for $target_stage in $target_region; bootstrapping ECR repo through SST"
-            deploy_target "$target_stage" "$target_region" "false"
-
-            if ! aws ecr describe-images \
-              --region "$source_region" \
-              --repository-name "$source_repo" \
-              --image-ids imageTag=latest-arm64 >/dev/null; then
-              echo "Source sandbox image is missing: $source_image" >&2
-              exit 1
-            fi
-
-            ecr_login "$source_region"
-            if [[ "$target_region" != "$source_region" ]]; then
-              ecr_login "$target_region"
-            fi
-            echo "Mirroring sandbox image from $source_region to $target_region"
-            crane copy "$source_image" "$target_image"
-          }
-
           for name in \
-            ADMIN_ACCOUNT_SECRET \
-            ACCOUNT_CONFIG_ENCRYPTION_SECRET
+            SST_SECRET_GoogleApiKey \
+            SST_SECRET_TavilyApiKey \
+            SST_SECRET_AdminAccountSecret \
+            SST_SECRET_AccountConfigEncryptionSecret \
+            SST_SECRET_DaytonaApiKey \
+            MOCK_WEBHOOK_SECRET
           do
             if [[ -z "${!name:-}" ]]; then
-              echo "Missing required environment value: $name" >&2
+              echo "Missing required repository secret: $name" >&2
               exit 1
             fi
           done
 
-          while IFS='|' read -r target_stage target_region target_sandbox_ready; do
-            if [[ -z "${target_stage:-}" ]]; then
-              continue
+          for attempt in 1 2 3; do
+            echo "Deploy attempt $attempt/3"
+            if bunx sst deploy --stage "$SST_STAGE" --print-logs; then
+              exit 0
             fi
-
-            if [[ "${target_sandbox_ready,,}" == "true" ]]; then
-              ensure_sandbox_image "$target_stage" "$target_region"
-            fi
-
-            deploy_target "$target_stage" "$target_region" "$target_sandbox_ready"
-          done <<< "$DEPLOY_TARGETS"
+            echo "Deploy failed, retrying in 15s..."
+            sleep 15
+          done
+          echo "All deploy attempts failed" >&2
+          exit 1

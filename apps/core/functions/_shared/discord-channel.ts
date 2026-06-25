@@ -6,8 +6,9 @@
 import type {
   ChannelActions,
   ChannelAdapter,
-  ChannelParseResult
+  ChannelParseResult,
 } from "./channels.ts";
+import { assertOutboundArtifactLimits } from "./channels.ts";
 import { formatDiscordMessage } from "./channel-format.ts";
 import { resolveDiscordCommand } from "./commands.ts";
 import { verifyDiscordSignature } from "./discord-signature.ts";
@@ -148,7 +149,6 @@ export function createDiscordChannel(
       if (!resolvedCommand) {
         return unsupportedInteractionResponse();
       }
-
       return {
         kind: "message",
         ack: {
@@ -191,10 +191,12 @@ function createDiscordActions(
   // Edit streaming reuses the deferred "@original" message for the first message,
   // then posts follow-ups for any rotation past the 2000-char limit.
   let usedOriginal = false;
+  const artifactLimits = { maxCount: 10 } as const;
 
   return {
     // Discord caps a message at 2000 chars; rotate the streaming edit well under it.
     editMaxChars: 1900,
+    artifactLimits,
 
     async sendText(text) {
       const chunks = splitDiscordMessage(formatDiscordMessage(text));
@@ -238,6 +240,20 @@ function createDiscordActions(
 
     async reactToMessage() {
       return;
+    },
+
+    async sendArtifacts(artifacts, text) {
+      assertOutboundArtifactLimits(artifacts, artifactLimits);
+      const form = new FormData();
+      form.set("payload_json", JSON.stringify({ content: text ?? "", allowed_mentions: { parse: [] } }));
+      artifacts.forEach((artifact, index) => {
+        form.set(`files[${index}]`, new Blob([artifact.bytes], { type: artifact.mediaType }), artifact.filename);
+      });
+      const response = await fetch(
+        `https://discord.com/api/v10/webhooks/${source.applicationId}/${source.interactionToken}`,
+        { method: "POST", body: form },
+      );
+      if (!response.ok) throw new Error(`Discord attachment reply failed (${response.status}): ${await response.text()}`);
     },
 
     // Edit-in-place streaming over the interaction webhook. The first message edits

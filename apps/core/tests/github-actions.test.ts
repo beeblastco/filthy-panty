@@ -25,6 +25,14 @@ MZJDcwOX3RDeTA==
 -----END PRIVATE KEY-----`;
 
 describe("github outbound actions", () => {
+  it("rejects reactions outside GitHub's fixed enum before making a request", async () => {
+    const calls: FetchCall[] = [];
+    globalThis.fetch = createFetchMock(calls, []);
+    const actions = createGitHubActions("app-id", TEST_PRIVATE_KEY, createSource({ issueNumber: 7, target: "issue" }));
+
+    await expect(actions.addReaction!("thumbsup")).rejects.toThrow("GitHub reaction is not supported");
+    expect(calls).toHaveLength(0);
+  });
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {

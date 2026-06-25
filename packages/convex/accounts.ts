@@ -1,11 +1,10 @@
 /**
- * Account CRUD + secret-hash lookup. Called by broods's
+ * Account CRUD + secret-hash lookup. Called by filthy-panty's
  * ConvexStorageProvider (via deploy key) and by the dashboard's org lifecycle.
  */
 
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
-import { deleteAccountContents } from "./model/cascade";
 import { accountsFields } from "./schema";
 
 const accountDoc = v.object({
@@ -128,7 +127,28 @@ export const remove = internalMutation({
             return null;
         }
 
-        await deleteAccountContents(ctx, accountId);
+        const tables = [
+            "agents",
+            "sandboxConfigs",
+            "workspaceConfigs",
+            "conversations",
+            "messages",
+            "skills",
+            "asyncResults",
+            "crons",
+            "artifacts",
+        ] as const;
+        for (const table of tables) {
+            const docs = await ctx.db
+                .query(table)
+                .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+                .collect();
+            for (const doc of docs) {
+                await ctx.db.delete(doc._id);
+            }
+        }
+
+        await ctx.db.delete(accountId);
 
         return null;
     },

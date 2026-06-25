@@ -91,7 +91,7 @@ Override defaults with:
 ```json
 {
   "workspaceBucketName": "my-workspace-bucket",
-  "awsRegion": "eu-west-1"
+  "awsRegion": "eu-central-1"
 }
 ```
 

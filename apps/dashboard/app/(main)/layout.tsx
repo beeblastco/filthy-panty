@@ -2,17 +2,11 @@
 
 /** Protected layout that redirects unauthenticated users to /login. */
 import { Header } from "@/app/components/Header";
-import { OnboardingSecretBanner } from "@/app/components/OnboardingSecretBanner";
-import {
-    clearOnboardingSecret,
-    readOnboardingSecret,
-    subscribeOnboardingSecret,
-} from "@/app/lib/onboardingSecret";
-import { api } from "@broods/convex/_generated/api";
+import { api } from "@filthy-panty/convex/_generated/api";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 export default function MainLayout({
     children,
@@ -25,16 +19,6 @@ export default function MainLayout({
     const syncProfile = useMutation(api.user.syncProfile);
     const currentUser = useQuery(api.user.getCurrent, isAuthenticated ? {} : "skip");
     const profileSynced = useRef(false);
-    const [onboardingSecret, setOnboardingSecret] = useState<string | null>(null);
-
-    // Surface the one-time account secret produced by first-login auto-provision,
-    // even after the home route redirects to a project.
-    useEffect(() => {
-        const sync = () => setOnboardingSecret(readOnboardingSecret());
-        sync();
-
-        return subscribeOnboardingSecret(sync);
-    }, []);
 
     useEffect(() => {
         if (!isLoading && !isAuthenticated) {
@@ -68,12 +52,6 @@ export default function MainLayout({
     return (
         <div className="flex h-screen w-screen flex-col bg-background">
             <Header />
-            {onboardingSecret && (
-                <OnboardingSecretBanner
-                    secret={onboardingSecret}
-                    onDismiss={clearOnboardingSecret}
-                />
-            )}
             <div className="flex-1 overflow-hidden">{children}</div>
         </div>
     );

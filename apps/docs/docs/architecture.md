@@ -15,7 +15,7 @@ flowchart LR
   end
   subgraph packages
     Cvx["packages/convex<br/>shared Convex backend"]
-    Sdk["packages/broods<br/>CLI + SDK"]
+    Sdk["packages/filthy-panty<br/>CLI + SDK"]
     Demos["packages/demos<br/>runnable scripts"]
   end
 
@@ -424,6 +424,7 @@ Agents control model selection, channel credentials, optional skills, subagents,
 - `AgentConfig`: account-owned encrypted runtime config payloads.
 - `SandboxConfig` / `WorkspaceConfig`: account-scoped sandbox and workspace records referenced from agent config by id.
 - `AccountTool`: uploaded custom tool records (bundles live in the ToolBundles S3 bucket).
+- `Artifact`: tenant- and conversation-scoped attachment metadata plus an opaque developer-driver reference; never provider URLs or file bytes. Supported bytes can be rehydrated request-locally, and optional non-executable working copies live under a routed workspace's `.artifacts/` directory.
 - `Crons`: scheduled agent runs managed by `account-manage`.
 - `Conversations`: normalized model messages by account-scoped `conversationKey`.
 - `ProcessedEvents`: dedup markers and short-lived conversation lease records.
@@ -434,7 +435,8 @@ Agents control model selection, channel credentials, optional skills, subagents,
 - S3 workspace bucket: workspace files (namespaced by `accountId:workspaceId`) and staged skill bundles.
 - S3 skills bucket: account-scoped skill bundles under `<accountId>/<skill-name>`.
 - S3 tool-bundles bucket: uploaded custom tool bundles.
+- S3 artifact-staging bucket: private, non-versioned, short-lived transfer objects with one-day lifecycle eligibility.
 
-On the production stage the config domains (accounts, agents, sandboxes, workspaces, tools, cron jobs) are stored in Convex instead of DynamoDB; runtime tables (conversations, dedup, async results) stay in DynamoDB on every stage.
+On the production stage the config/control domains (accounts, agents, sandboxes, workspaces, tools, cron jobs, artifacts) are stored in Convex instead of DynamoDB; runtime tables (conversations, dedup, async results) stay in DynamoDB on every stage.
 
 Built-in tool execution is inline in `harness-processing`. Uploaded custom tools execute in Kubernetes. `async: true` only changes the lifecycle: built-in async stays in the current Lambda, uploaded async waits on SSE, and uploaded async detaches automatically on `/async`, channel, and NATS turns. Subagents are in-process child agent loops; they do not require child Lambda workers.

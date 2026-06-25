@@ -12,6 +12,8 @@ mount/read contract.
 - staged skill bundles under `.claude/skills/<skill-name>` and `.agents/skills/<skill-name>`
 - mounted workspace paths used by the Lambda (S3 Files), Daytona, and Kubernetes (mount-s3) sandbox providers
 
+Channel artifacts use the separate artifact pipeline described below. Artifact storage remains authoritative; a writable workspace may receive an optional working copy.
+
 ## Current Architecture
 
 > **!WARNING**
@@ -35,8 +37,6 @@ Sandbox paths map to S3 keys through that prefix: the bucket holds `sandbox/<nam
 flowchart TD
   Namespace["Session.filesystemNamespace()"] --> Prefix["workspaceNamespacePrefix()<br/>sandbox/&lt;namespace&gt;"]
   Prefix --> S3["S3 workspace bucket<br/>FILESYSTEM_BUCKET_NAME"]
-  Dashboard["Dashboard workspace Files tab"] --> AccountApi["account-manage workspace file API"]
-  AccountApi --> Prefix
   S3 --> Memory["sandbox/<namespace>/MEMORY.md"]
   S3 --> Tasks["sandbox/<namespace>/TASKS.md"]
   S3 --> Skills["sandbox/<namespace>/.claude/skills/<name><br/>+ mirror .agents/skills/<name>"]
@@ -50,40 +50,6 @@ flowchart TD
 
 The Lambda sandbox provider uses AWS S3 Files at `/mnt/workspaces`, backed by the same workspace bucket through an access point rooted at `/sandbox`. The uniform Lambda sandbox image writes directly through that mount. Daytona and Kubernetes mount only the selected `sandbox/<namespace>/` prefix at the workspace directory for the run (`mountAwsS3Buckets: true`). E2B and Vercel do not currently support S3 workspaces in this harness; attaching an S3 workspace to those sandboxes fails fast instead of silently using provider-native filesystem state.
 
-The dashboard workspace **Files** tab lists and mutates this same S3 namespace through
-the authenticated account-management API. Uploads, renames, and deletes therefore
-operate on the files the agent mounts; Convex file storage is used only for editable
-skill-node bundles.
-
-The panel uses a reactive, server-reconciled UX:
-
-- the last confirmed file tree is cached in memory and browser `sessionStorage`, so
-  reopening the workspace or reloading the page paints cached metadata immediately
-- cached metadata is stale-while-revalidate: S3 remains authoritative and refreshes in
-  the background; file contents and signed download URLs are never cached
-- uploads appear immediately as pending rows, then become authoritative after S3 confirms them
-- rename and delete update the tree optimistically, then reload S3; failures show an error and restore the server state
-- while the workspace panel is visible, it lists S3 every five seconds
-- returning focus to the window, restoring a hidden tab, or pressing **Refresh** triggers another listing
-- overlapping list requests are deduplicated and older responses cannot overwrite newer optimistic changes
-
-This polling detects direct S3 changes and files exported by an agent without requiring
-the panel or page to be reopened. It cannot display an agent write before S3 Files has
-exported that mount change to S3. Dashboard uploads are currently limited to 512 KiB
-per file because their base64 payload crosses a Convex action; agents can create larger
-files directly through the mounted workspace.
-When a workspace panel first loads after this storage path was introduced, any
-legacy canvas-node files are copied from Convex storage into S3 and the old records
-are removed. Existing S3 paths win, preventing stale legacy content from overwriting
-newer agent files or reappearing after deletion.
-
-The `sandbox/` folder is the only active application workspace root in the current
-deployment. A top-level `sandbox-workspaces/` folder is legacy data and is not read by
-the current runtime. Top-level `fs-<40 hex>/` folders also match this application's
-hashed workspace namespace format and are legacy pre-`sandbox/` workspace data, not
-AWS-owned internal objects. Inspect or back them up before deletion; the current runtime
-only reads the corresponding active keys under `sandbox/fs-<40 hex>/`.
-
 Model-facing tools hide the provider path: `bash` starts in the selected workspace
 directory, and file tools use workspace-relative paths. Prefer prompts like
 `python3 script.py` or `read analysis.json`, not provider mount paths.
@@ -94,7 +60,7 @@ Skills are staged from the account skill bucket into `<namespace>/.claude/skills
 
 There are two ways to reach the same workspace bytes, and they are **not** interchangeable because the mount syncs to the bucket asymmetrically:
 
-- **bucket → mount** (a file the harness wrote with S3 `PutObject`/`CopyObject`): S3 Files detects and imports the object without remounting; allow for propagation delay.
+- **bucket → mount** (a file the harness wrote with S3 `PutObject`/`CopyObject`): visible through the mount **immediately**.
 - **mount → bucket** (a file the agent wrote through `bash`/NFS): visible through the mount immediately, but the S3 API does **not** list/return it for **~1–2 minutes** (AWS S3 Files writes back to the bucket asynchronously — measured: not visible at +0s/+45s, visible at +120s).
 
 So pick the door by **who last wrote the file**, not by how much time has passed. There is no timer or "switch to the mount after writing" — each read site is wired to the correct door:
@@ -111,25 +77,35 @@ Concretely, the model-facing workspace tools read sandbox-backed workspaces thro
 
 > **Known exception:** `Session.loadMemoryFile` reads `MEMORY.md` through the **S3 API** at the start of each turn. If the agent edited `MEMORY.md` less than ~2 min earlier in the same session, that read can be stale. This is accepted today because memory converges across turns and a sandbox round-trip on every turn is costly; route prompt-time memory reads through a sandbox-backed `read` call if freshness ever becomes a hard requirement.
 
-## Code-First Configuration
+## Artifact Storage Is Separate
 
-```ts
-import { defineWorkspace } from "broods";
+Core validates each provider download once, writes a short-lived transfer object, and commits it through the agent's artifact driver. It never redownloads a provider URL. After storage is ready, `materialize: "complex"` copies unsupported files and archives from artifact storage into `.artifacts/<artifactId>/<filename>` when exactly one writable workspace exists. With multiple writable workspaces, configure `artifacts.workspace.name`; read-only workspaces are never destinations. `all` copies every eligible artifact and `never` disables working copies. Materialization rechecks stored size and SHA-256 and writes non-executable files without extracting them.
 
-export const notes = defineWorkspace({
-  name: "notes",
-  config: {
-    storage: { provider: "s3" },
-    harness: { enabled: true },
-  },
-});
+The platform stores a tenant- and conversation-scoped artifact control record: artifact ID, normalized metadata, checksum, state, driver ID, and an opaque driver reference. Conversation history never stores file bytes, signed URLs, provider URLs, or staging keys. A successful working copy adds its workspace name and relative path to the persisted descriptor. The workspace copy follows workspace retention and is never used as the rehydration source of truth.
+
+Current-turn native projection and later-turn `artifact.rehydrate` require explicit `model.inputCapabilities`. Rehydration resolves artifact storage again, verifies exact size and SHA-256, and supplies each requested artifact at most once within the shared invocation byte budget. AI SDK multimodal tool results remain experimental, so the selected provider/model must actually accept the declared MIME. ZIP extraction, OCR, conversion, and transcription are not automatic; future processors must enforce traversal, nesting, file-count, expanded-size, CPU, and output limits.
+
+The code-first SDK supports `defineRemoteArtifactDriver()` for developer-hosted HTTPS lifecycle handlers. Remote `store` is wired for channel ingestion. Uploaded driver code is a future roadmap item and is rejected by the current config surface because the required hardened runner does not exist. An agent without a driver uses managed ephemeral staging; a configured driver falls back to it only when explicitly requested. Neither path is durable workspace storage.
+
+Remote bytes are customer-owned data. Deleting a filthy-panty account removes core artifact metadata and managed staging objects, but does not call the remote driver to erase developer storage. Driver owners must implement their own end-customer retention and erasure flow. Keep a driver's name, endpoint, and reference interpretation compatible while historical artifacts should remain readable; changing or removing that binding makes those historical artifacts unavailable to the scoped read tool.
+
+## Configuration
+
+```json
+{
+  "name": "notes",
+  "config": {
+    "storage": { "provider": "s3" },
+    "harness": { "enabled": true }
+  }
+}
 ```
 
 If `storage` is omitted, workspace config normalization fills in `{ "provider": "s3" }`.
 
 ## Future External Storage
 
-Additional work can add external storage providers such as Google Drive, Google Cloud Storage, Cloudflare R2, or other mounted object stores. Those providers should still connect through the sandbox mount model:
+Additional work can add external workspace providers such as Google Drive, Google Cloud Storage, Cloudflare R2, or other mounted object stores. Those providers should still connect through the sandbox mount model:
 
 - keep one logical workspace namespace for memory notes, task notes, staged skills, and files
 - mount or sync that namespace into `options.workspaceRoot`

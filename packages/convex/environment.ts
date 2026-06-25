@@ -12,7 +12,7 @@ import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject, getProjectForRole } from "./model/ownership/project";
 import { environmentsFields } from "./schema";
 
-const deploymentRegion = v.union(v.literal("ap-southeast-1"), v.literal("eu-west-1"), v.literal("us-east-1"));
+const deploymentRegion = v.union(v.literal("ap-southeast-1"), v.literal("eu-central-1"), v.literal("us-east-1"));
 
 const environmentDoc = v.object({
     ...environmentsFields,
@@ -58,7 +58,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 /**
  * Deep-copies every resource scoped to `sourceEnvironmentId` into `targetEnvironmentId`:
- * agent configs (each with a fresh broods `agents` row), the canvas layout
+ * agent configs (each with a fresh filthy-panty `agents` row), the canvas layout
  * (remapping node references to the cloned configs), tool services, and env vars.
  * Subagent allow-lists are remapped onto the cloned agents so agent→agent calls stay
  * within the new environment.
@@ -171,11 +171,29 @@ async function duplicateEnvironmentContents(
             updatedAt: now,
         });
     }
+
+    // 6. Clone webhooks (each gets a fresh signing secret rather than copying it).
+    const sourceWebhooks = await ctx.db
+        .query("webhooks")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+            q.eq("projectId", projectId).eq("environmentId", sourceEnvironmentId),
+        )
+        .collect();
+    for (const webhook of sourceWebhooks) {
+        const bytes = crypto.getRandomValues(new Uint8Array(32));
+        await ctx.db.insert("webhooks", {
+            ...stripSystemFields(webhook),
+            environmentId: targetEnvironmentId,
+            secret: `whsec_${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`,
+            createdAt: now,
+            updatedAt: now,
+        });
+    }
 }
 
 /**
  * Cascade-deletes every resource scoped to an environment: agent configs (plus their
- * deployments and linked broods `agents` rows), the canvas layout, tool
+ * deployments and linked filthy-panty `agents` rows), the canvas layout, tool
  * services, env vars, and deploy keys.
  */
 export async function deleteEnvironmentContents(
@@ -198,14 +216,6 @@ export async function deleteEnvironmentContents(
                 if (agent) await ctx.db.delete(normalized);
             }
         }
-
-        // Runtime secrets are keyed to the agent config, so they orphan unless
-        // deleted alongside it.
-        const runtimeSecrets = await ctx.db
-            .query("agentRuntimeSecrets")
-            .withIndex("by_agentConfigId", (q) => q.eq("agentConfigId", config._id))
-            .collect();
-        for (const secret of runtimeSecrets) await ctx.db.delete(secret._id);
 
         await ctx.db.delete(config._id);
     }
@@ -253,12 +263,13 @@ export async function deleteEnvironmentContents(
         .collect();
     for (const deployKey of deployKeys) await ctx.db.delete(deployKey._id);
 
-    // Audit rows for env-var reveals are scoped to the environment.
-    const reveals = await ctx.db
-        .query("environmentVariableReveals")
-        .withIndex("by_environmentId", (q) => q.eq("environmentId", environmentId))
+    const webhooks = await ctx.db
+        .query("webhooks")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+            q.eq("projectId", projectId).eq("environmentId", environmentId),
+        )
         .collect();
-    for (const reveal of reveals) await ctx.db.delete(reveal._id);
+    for (const webhook of webhooks) await ctx.db.delete(webhook._id);
 }
 
 /** Returns true when an environment already has user/configuration content. */
@@ -297,8 +308,16 @@ async function hasEnvironmentContents(
             q.eq("projectId", projectId).eq("environmentId", environmentId),
         )
         .first();
+    if (variable) return true;
 
-    return Boolean(variable);
+    const webhook = await ctx.db
+        .query("webhooks")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+            q.eq("projectId", projectId).eq("environmentId", environmentId),
+        )
+        .first();
+
+    return Boolean(webhook);
 }
 
 export const list = query({

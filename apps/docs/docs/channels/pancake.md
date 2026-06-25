@@ -4,29 +4,24 @@ Pancake is an omni-channel customer service and inbox management platform. The P
 
 ## Configuration
 
-Define a Pancake channel with `definePancakeChannel` and attach it to an agent:
+To enable the Pancake channel, configure your agent's settings as shown below:
 
-```ts title="broods/index.ts"
-import {
-  defineAgent,
-  definePancakeChannel,
-  env,
-} from "broods";
-
-export const pancake = definePancakeChannel({
-  pageId: env.PANCAKE_PAGE_ID,
-  pageAccessToken: env.PANCAKE_PAGE_ACCESS_TOKEN,
-  webhookSecret: env.PANCAKE_WEBHOOK_SECRET,
-  senderId: env.PANCAKE_SENDER_ID,
-  ignoreTagIds: ["123"],
-});
-
-export const myAgent = defineAgent({
-  name: "my-agent",
-  config: {
-    channels: [pancake],
-  },
-});
+```json
+{
+  "channels": {
+    "pancake": {
+      "pageId": "your-page-id",
+      "pageAccessToken": "your-page-access-token",
+      "webhookSecret": "a-long-random-value",
+      "senderId": "optional-staff-user-id",
+      "actions": { "attachments": true },
+      "mediaMaxMb": 20,
+      "options": {
+        "ignoreTagIds": ["123"]
+      }
+    }
+  }
+}
 ```
 
 ### Configuration Fields
@@ -35,6 +30,8 @@ export const myAgent = defineAgent({
 - `pageAccessToken` (Required): The access token generated within Pancake to authorize API calls.
 - `webhookSecret` (Required): A random value you generate. Pancake does not sign its webhooks, so the secret rides on the webhook URL instead and every request is checked against it.
 - `senderId` (Optional): The ID of the staff/user in Pancake who sends the replies. If set, responses sent by the agent will appear as sent by this user.
+- `actions.attachments` (Optional): Allows the model to send a validated photo or video from an attached workspace in Pancake inbox conversations. It does not affect inbound media.
+- `mediaMaxMb` (Optional): Per-item and aggregate inbound download budget from 1 to 20 MiB; defaults to 20 MiB. This is a filthy-panty resource bound, not a Pancake API limit.
 - `options` (Optional):
   - `ignoreTagIds` (Optional): Array of Pancake conversation tag IDs that mark a conversation as human handoff. When any of these tags is present, the webhook event is ignored.
 
@@ -43,6 +40,12 @@ Register the webhook URL in Pancake with the secret as a query parameter — req
 ```text
 https://<agent-service-url>/webhooks/<accountId>/<agentId>/pancake?secret=<webhookSecret>
 ```
+
+Inbound photo and video attachments are extracted automatically from authenticated messaging webhooks, including media-only messages. Photos use `attachments[].url`; videos use the playable `attachments[].video_data.url`, not the thumbnail. Downloads use the shared DNS-pinned HTTPS, timeout, byte, redirect, and content-signature guards. Provider URLs are never persisted or passed to the model. Unsupported or failed items degrade to an unavailable artifact descriptor without dropping other message content.
+
+For model-initiated inbox media, the adapter uploads one validated workspace photo or video through `POST /pages/{page_id}/upload_contents`, then sends the returned ID through `content_ids`. A caption is sent as a separate text message because Pancake declares `message` and `content_ids` mutually exclusive. Comment media remains disabled because Pancake's reply-comment schema is contradictory; document/audio and other inbound shapes remain disabled until fixture-backed validation. Reactions are not implemented.
+
+Contracts: [Pancake webhook schema](https://developer.pancake.biz/openapi/webhook.yaml) and [Pancake API schema](https://developer.pancake.biz/openapi/openapi.yaml).
 
 ---
 

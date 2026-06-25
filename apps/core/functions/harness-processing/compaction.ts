@@ -51,7 +51,6 @@ export async function compactSessionContext(input: CompactionInput): Promise<Sys
 
   const configuredModel = resolveConfiguredModel(input.agentConfig);
   const providerOptions = providerOptionsFromModelConfig(input.agentConfig);
-  const startedAt = Date.now();
   const result = await generateText({
     ...modelSettingsFromModelConfig(input.agentConfig),
     model: configuredModel.model,
@@ -63,13 +62,12 @@ export async function compactSessionContext(input: CompactionInput): Promise<Sys
     ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
   });
 
-  const summary = createCompactionSummaryMessage(result.text);
+  const summary = createCompactionSummaryMessage(result.text, collectArtifactReferences(compactableContext));
   logInfo("Session context compacted", {
     conversationKey: input.conversationKey,
     messageCount: messages.length,
     compactedMessageCount: compactableContext.length,
     maxContextLength,
-    durationMs: Date.now() - startedAt,
   });
 
   return summary;
@@ -85,11 +83,41 @@ export function estimateContextLength(system: SystemModelMessage[], messages: Mo
   return JSON.stringify({ system, messages }).length;
 }
 
-function createCompactionSummaryMessage(summary: string): SystemModelMessage {
+function createCompactionSummaryMessage(summary: string, artifactReferences: string[] = []): SystemModelMessage {
+  const artifactContext = artifactReferences.length > 0
+    ? `\n\nArtifact IDs retained for scoped artifact tools:\n${artifactReferences.join("\n")}`
+    : "";
   return {
     role: "system",
-    content: `${COMPACTION_MARKER}\nThe following is a compacted summary of earlier conversation history. Treat it as context for this conversation and prefer newer explicit messages when they conflict.\n\n${summary.trim()}\n${COMPACTION_MARKER_END}`,
+    content: `${COMPACTION_MARKER}\nThe following is a compacted summary of earlier conversation history. Treat it as context for this conversation and prefer newer explicit messages when they conflict.\n\n${summary.trim()}${artifactContext}\n${COMPACTION_MARKER_END}`,
   };
+}
+
+function collectArtifactReferences(messages: ModelMessage[]): string[] {
+  const artifactIds = new Set<string>();
+  for (const message of messages) {
+    const values = typeof message.content === "string"
+      ? [message.content]
+      : message.content.flatMap((part) => part.type === "text" ? [part.text] : []);
+    for (const value of values) {
+      for (const match of value.matchAll(/^\[Artifact reference for artifact tools; untrustedMetadata=(\{.*\})\]$/gm)) {
+        const artifactId = artifactIdFromDescriptor(match[1]!);
+        if (artifactId) artifactIds.add(artifactId);
+      }
+    }
+  }
+  return [...artifactIds].map((artifactId) => `[Artifact retained; artifactId=${artifactId}]`);
+}
+
+function artifactIdFromDescriptor(metadata: string): string | null {
+  try {
+    const value = JSON.parse(metadata) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const artifactId = (value as { artifactId?: unknown }).artifactId;
+    return typeof artifactId === "string" && /^art_[a-f0-9]{64}$/.test(artifactId) ? artifactId : null;
+  } catch {
+    return null;
+  }
 }
 
 function formatMessagesForCompaction(messages: ModelMessage[]): string {

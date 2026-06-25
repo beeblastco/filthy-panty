@@ -110,6 +110,7 @@ function inMemoryStorage(): StorageProvider {
 	    crons: {} as never,
     sandboxConfigs: {} as never,
     workspaceConfigs: {} as never,
+    artifacts: {} as never,
     accountTools: {
       async getById(accountId, toolId) {
         return records.get(`${accountId}:${toolId}`) ?? null;
@@ -163,7 +164,6 @@ function inMemoryStorage(): StorageProvider {
         return tools.length;
       },
     },
-    usage: { async recordTask() {} },
   } as StorageProvider;
 }
 

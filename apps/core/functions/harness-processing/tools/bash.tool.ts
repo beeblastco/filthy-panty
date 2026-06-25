@@ -207,9 +207,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
             return await dispatchBackground(context, ws, sandbox, trimmed, options.toolCallId);
           }
           logInfo("bash tool command", { namespace: ws?.namespace, commandLength: trimmed.length });
-          return toolText(formatRunText(await runSandbox(sandbox, ws?.namespace, trimmed, {
-            onSandboxCpu: context.onSandboxCpu,
-          })));
+          return toolText(formatRunText(await runSandbox(sandbox, ws?.namespace, trimmed)));
         } catch (cause) {
           return toolError(cause instanceof Error ? cause.message : String(cause));
         }

@@ -54,7 +54,7 @@ Workspace-backed skill edits have the same S3 Files consistency caveat as other 
 
 ## Create Skills
 
-Broods skill bundles follow the open [Agent Skills format](https://agentskills.io/home): a skill is a folder with a required `SKILL.md` file, metadata for discovery, and optional supporting resources. For authoring guidance, start with the external [Agent Skills quickstart](https://agentskills.io/skill-creation/quickstart) and check the [Agent Skills specification](https://agentskills.io/specification) before uploading a bundle.
+BeeBlast skill bundles follow the open [Agent Skills format](https://agentskills.io/home): a skill is a folder with a required `SKILL.md` file, metadata for discovery, and optional supporting resources. For authoring guidance, start with the external [Agent Skills quickstart](https://agentskills.io/skill-creation/quickstart) and check the [Agent Skills specification](https://agentskills.io/specification) before uploading a bundle.
 
 ### Bundle Shape
 
@@ -99,57 +99,39 @@ For executable helpers, keep scripts inside the bundle and reference them from `
 
 Enable skills for an agent with `config.skills`:
 
-```ts title="broods/index.ts"
-import { defineAgent, defineSkill } from "broods";
-
-export const supportFlow = defineSkill({
-  name: "support-flow",
-  config: { path: "support-flow" },
-});
-
-export const myAgent = defineAgent({
-  name: "my-agent",
-  config: {
-    skills: {
-      enabled: true,
-      allowed: [supportFlow],
-    },
-  },
-});
+```json
+{
+  "skills": {
+    "enabled": true,
+    "allowed": ["acct_abc123/support-flow"]
+  }
+}
 ```
 
-With the CLI, place your skill bundle under `broods/` and reference it with `defineSkill`:
+The account API accepts three sources:
 
-```text
-broods/
-  support-flow/
-    SKILL.md
-    examples/
-      escalation-policy.md
+| Source | Use when | Required fields |
+| --- | --- | --- |
+| `json` | Creating a single-file skill from API input | `name`, `description`, `content` |
+| `files` | Uploading a bundle with `SKILL.md` and support files | `files[].path`, `files[].contentBase64` |
+| `github` | Importing a skill directory from GitHub | `url` |
+
+Single-file example:
+
+```http
+POST /accounts/me/skills
+Authorization: Bearer <account-secret>
+Content-Type: application/json
 ```
 
-```ts title="broods/index.ts"
-import { defineAgent, defineSkill } from "broods";
-
-export const supportFlow = defineSkill({
-  name: "support-flow",
-  config: { path: "support-flow" },
-});
-
-export const myAgent = defineAgent({
-  name: "my-agent",
-  config: {
-    skills: {
-      enabled: true,
-      allowed: [supportFlow],
-    },
-  },
-});
+```json
+{
+  "source": "json",
+  "name": "support-flow",
+  "description": "Handles support triage and escalation decisions.",
+  "content": "# Support Flow\n\nUse this skill when a customer asks for help with a product issue."
+}
 ```
-
-The CLI bundles the folder, validates that `SKILL.md` exists, and uploads it on sync.
-
-The raw account API also accepts `json`, `files`, and `github` sources. See the [API Reference](/api-reference) `POST /accounts/me/skills` for the raw shape.
 
 :::warning GitHub imports
 
@@ -158,6 +140,8 @@ GitHub imports download a skill directory from a public GitHub tree URL. Use thi
 `https://github.com/{owner}/{repo}/tree/{ref}/{path}`
 
 :::
+
+See [`packages/demos/skills.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/packages/demos/skills.ts) for create, list, get, and delete calls.
 
 ## Enable Skills For An Agent
 
@@ -183,7 +167,7 @@ Runtime behavior:
 4. `load_skill` is registered only for skill-enabled agents with a request session.
 5. The loader rejects paths that are not in `config.skills.allowed`.
 
-Use [`packages/demos/skill-loads.ts`](https://github.com/beeblastco/broods/blob/dev/packages/demos/skill-loads.ts) for an end-to-end streaming request that creates a temporary skill, attaches it to an agent, and asks the agent to load it.
+Use [`packages/demos/skill-loads.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/packages/demos/skill-loads.ts) for an end-to-end streaming request that creates a temporary skill, attaches it to an agent, and asks the agent to load it.
 
 ## Design Rules
 

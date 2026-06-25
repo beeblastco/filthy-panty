@@ -1,6 +1,5 @@
 "use client";
 
-import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import { JavaScript } from "@/app/components/icons/JavaScript";
 import { Python } from "@/app/components/icons/Python";
 import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
@@ -253,26 +252,22 @@ export function BaseNode({
                 </span>
             )}
 
-            {(nodeType === "agent" || nodeType === "sandbox") && (() => {
-                // Agent: lit when public access is on (secure-by-default → off). Sandbox: lit
-                // when network egress is allowed — core models this as `network.mode`
-                // (allow-all/restricted = on, deny-all/unset = off), not a flat boolean. Both
-                // fall back to a muted, slashed globe when off.
-                const networkMode = (data.config?.network as { mode?: string } | undefined)?.mode;
-                const isOn =
-                    nodeType === "sandbox"
-                        ? networkMode === "allow-all" || networkMode === "restricted"
-                        : data.config?.publicAccess === true;
-
-                return (
-                    <span className="absolute top-2 right-2.5 z-10 inline-flex size-5 items-center justify-center rounded-full border border-border/70 bg-background/90">
-                        <Globe className={`size-3.5 ${isOn ? "text-emerald-500" : "text-muted-foreground"}`} />
-                        {!isOn && (
-                            <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground/80" />
-                        )}
-                    </span>
-                );
-            })()}
+            {(nodeType === "agent" || nodeType === "sandbox") && (
+                <span className="absolute top-2 right-2.5 z-10 inline-flex size-5 items-center justify-center rounded-full border border-border/70 bg-background/90">
+                    <Globe
+                        className={`size-3.5 ${
+                            nodeType === "sandbox"
+                                ? data.config?.internet === true
+                                    ? "text-emerald-500"
+                                    : "text-muted-foreground"
+                                : "text-emerald-500"
+                        }`}
+                    />
+                    {nodeType === "sandbox" && data.config?.internet !== true && (
+                        <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground/80" />
+                    )}
+                </span>
+            )}
 
             <div style={{ height: contentHeight != null ? contentHeight * scale : undefined }}>
                 <div
@@ -281,9 +276,7 @@ export function BaseNode({
                     style={{ transform: `scale(${scale})` }}
                 >
                     <div className="flex items-center gap-1.5 pr-7 min-w-0">
-                    {nodeType === "agent" ? (
-                        <DitherAvatarSVG seed={data.label} size={14} className="shrink-0" />
-                    ) : data.properties?.color ? (
+                    {data.properties?.color ? (
                         <span
                             className="inline-block size-3 rounded-full shrink-0"
                             style={{ backgroundColor: data.properties.color }}

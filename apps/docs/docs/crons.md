@@ -27,53 +27,9 @@ Cron jobs store the selected agent and the run payload directly. The payload mir
 
 This keeps the add-on small. Developers who need custom workflow code can deploy their own Lambda, worker, or scheduler and call the existing direct/async API.
 
-## Code-First Configuration
-
-Define cron jobs as resources alongside your agents:
-
-```ts title="broods/index.ts"
-import { defineAgent, defineCron } from "broods";
-
-export const maintainer = defineAgent({
-  name: "maintainer",
-  config: {
-    provider: { openai: { apiKey: env.OPENAI_API_KEY } },
-    model: { provider: "openai", modelId: "gpt-5.5" },
-    agent: { system: "You are a maintenance assistant." },
-  },
-});
-
-export const dailyMaintenance = defineCron({
-  name: "daily-maintenance",
-  config: {
-    agent: maintainer,
-    conversationKey: "cron:daily-maintenance",
-    input: "Run daily maintenance.",
-    scheduleExpression: "cron(0 8 * * ? *)",
-    timezone: "Europe/Amsterdam",
-  },
-});
-```
-
-Use `events` instead of `input` for multimodal or multi-message payloads:
-
-```ts
-export const weeklyDigest = defineCron({
-  name: "weekly-digest",
-  config: {
-    agent: maintainer,
-    events: [
-      { role: "user", content: [{ type: "text", text: "Summarize this week." }] },
-    ],
-    scheduleExpression: "cron(0 9 ? * MON *)",
-    timezone: "Europe/Amsterdam",
-  },
-});
-```
-
 ## Account API
 
-Create a cron job directly via the account API:
+Create:
 
 ```bash
 curl -X POST "$ACCOUNT_SERVICE_URL/accounts/me/crons" \
@@ -119,15 +75,15 @@ curl -X DELETE "$ACCOUNT_SERVICE_URL/accounts/me/crons/$CRON_ID" \
 
 List jobs with `GET /accounts/me/crons` or fetch one with `GET /accounts/me/crons/{cronId}`. Responses include the run state: `status`, `lastInvokedAt`, `lastStatus`, and `lastError`. Paused jobs are skipped at invoke time.
 
-## SDK and Dynamic Creation
+## SDK and dynamic creation
 
-Cron jobs are not limited to declarative `defineCron` resources synced by `broods dev` — clients can create, update, and delete them at runtime through the SDK, which calls the same account API (so EventBridge Scheduler stays in sync):
+Cron jobs are not limited to declarative `defineCron` resources synced by `bun run dev` — clients can create, update, and delete them at runtime through the SDK, which calls the same account API (so EventBridge Scheduler stays in sync):
 
 ```ts
-import { BroodsClient } from "broods";
-import { api } from "./broods/_generated/api";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-const client = new BroodsClient();
+const client = new FilthyPantyClient();
 
 await client.createCron({
   name: "Weekly digest",

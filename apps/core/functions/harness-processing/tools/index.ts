@@ -18,7 +18,7 @@ import {
 import { logWarn } from "../../_shared/log.ts";
 import type { Session } from "../session.ts";
 import type { ResolvedWorkspace } from "../../_shared/workspaces.ts";
-import type { SandboxCpuSample, SandboxExecutorConfig } from "../sandbox/types.ts";
+import type { SandboxExecutorConfig } from "../sandbox/types.ts";
 import type { AsyncToolModeMap, AsyncToolSource, RunAsyncToolDispatch } from "../async-tools.ts";
 import bashTool from "./bash.tool.ts";
 import readTool from "./read.tool.ts";
@@ -38,6 +38,11 @@ import accountTool from "./account-tool.tool.ts";
 import { prewarmAccountTool } from "./custom-tool-executor.ts";
 import { sandboxSupportsBackgroundJobs, sandboxSupportsJobControls } from "./filesystem-utils.ts";
 import { isAccountToolId } from "../../_shared/storage/account-tools.ts";
+import type { ChannelActions } from "../../_shared/channels.ts";
+import type { AgentChannelActionsConfig } from "../../_shared/storage/index.ts";
+import channelMessageTool from "./channel-message.tool.ts";
+import artifactTool from "./artifact.tool.ts";
+import { createArtifactService } from "../artifact-service.ts";
 
 // Runtime dependencies shared by tool factories. Model-facing input schemas
 // stay inside each individual tool file.
@@ -57,9 +62,8 @@ export interface ToolContext {
   session?: Session;
   dispatchSubagents?: RunSubagentDispatch;
   dispatchAsyncTools?: RunAsyncToolDispatch;
-  // Reports each sandbox exec's CPU so the harness attributes usage per sandbox
-  // (agent bash/fs => role "agent"; uploaded custom tools => role "tool").
-  onSandboxCpu?: (sample: SandboxCpuSample) => void;
+  channel?: { actions: ChannelActions; policy: AgentChannelActionsConfig };
+  artifactsAvailable?: boolean;
 }
 
 type ToolFactory = (context: ToolContext) => ToolSet;
@@ -128,7 +132,6 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
           ? { statelessSandbox, statelessPermissionMode: context.statelessPermissionMode ?? "ask" }
           : {}),
         ...(backgroundContext ? { background: backgroundContext } : {}),
-        ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
       }
     ));
   }
@@ -143,16 +146,37 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
   // write/edit/grep: require a sandbox at execution time. Pass the full workspace
   // list to preserve default-workspace semantics; read-only selections fail clearly.
   if (sandboxWorkspaces.length > 0) {
-    const fsContext = { workspaces, ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}) };
     Object.assign(
       sandboxTools,
-      writeTool(fsContext),
-      editTool(fsContext),
-      grepTool(fsContext),
+      writeTool({ workspaces }),
+      editTool({ workspaces }),
+      grepTool({ workspaces }),
     );
   }
   Object.assign(tools, sandboxTools);
   const asyncModes: AsyncToolModeMap = new Map();
+
+  if (context.channel) {
+    Object.assign(tools, channelMessageTool({
+      actions: context.channel.actions,
+      policy: context.channel.policy,
+      workspaces,
+    }));
+  }
+
+  if (context.accountId && context.session && context.artifactsAvailable === true) {
+    Object.assign(tools, artifactTool(
+      createArtifactService({
+        accountId: context.accountId,
+        conversationKey: context.conversationKey,
+        config: agentConfig.artifacts,
+      }),
+      {
+        imageMediaTypes: agentConfig.model?.inputCapabilities?.imageMediaTypes ?? [],
+        fileMediaTypes: agentConfig.model?.inputCapabilities?.fileMediaTypes ?? [],
+      },
+    ));
+  }
 
   // Subagent execution is orchestrated by the handler/coordinator. The registry
   // exposes only the model-facing tool when config and runtime dispatcher agree.

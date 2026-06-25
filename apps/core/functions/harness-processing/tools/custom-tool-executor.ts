@@ -10,7 +10,6 @@ import { getS3ObjectUrl, readS3Bytes } from "../../_shared/s3.ts";
 import { logWarn } from "../../_shared/log.ts";
 import type { AccountToolRecord, AgentToolConfig } from "../../_shared/storage/index.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
-import type { SandboxCpuSample } from "../sandbox/types.ts";
 import { generateJobId } from "../sandbox/jobs.ts";
 import { getHarnessPublicUrl } from "../self-url.ts";
 import { buildWorkerEnsureCommand, buildWorkerInvokeCommand, parseWorkerFrame, type WorkerFrame } from "./custom-tool-worker.ts";
@@ -41,10 +40,6 @@ interface ExecuteAccountToolOptions {
   config: AgentToolConfig;
   options?: unknown;
   createExecutor?: typeof createSandboxExecutor;
-  // Reports the tool sandbox's CPU (role "tool") for usage metering. Only the
-  // one-shot runner path carries a cgroup CPU figure; the resident-worker fast
-  // path does not, so it is not metered.
-  onSandboxCpu?: (sample: SandboxCpuSample) => void;
 }
 
 interface DetachedAsyncToolMetadata {
@@ -105,14 +100,13 @@ export async function* streamAccountToolInSandbox({
   config,
   options,
   createExecutor = createSandboxExecutor,
-  onSandboxCpu,
 }: ExecuteAccountToolOptions): AsyncGenerator<unknown, void, void> {
   const asyncTool = extractAsyncToolMetadata(options);
   if (isDetachedAsyncTool(asyncTool)) {
     yield await startAccountToolInSandboxBackground({ accountId, tool, input, config, asyncTool, createExecutor });
     return;
   }
-  yield* streamAccountToolForeground({ accountId, tool, input, config, asyncTool, createExecutor, onSandboxCpu });
+  yield* streamAccountToolForeground({ accountId, tool, input, config, asyncTool, createExecutor });
 }
 
 async function* streamAccountToolForeground({
@@ -122,7 +116,6 @@ async function* streamAccountToolForeground({
   config,
   asyncTool,
   createExecutor,
-  onSandboxCpu,
 }: ExecuteAccountToolOptions & { asyncTool: unknown; createExecutor: typeof createSandboxExecutor }): AsyncGenerator<unknown, void, void> {
   const bucket = requireEnv("TOOL_BUNDLES_BUCKET_NAME");
   const payload = await createRunnerPayload({ bucket, tool, input, config, asyncTool });
@@ -134,7 +127,7 @@ async function* streamAccountToolForeground({
   // the one-shot runner; an `error` frame is a real tool error surfaced as-is.
   if (executor.execInReservedPod) {
     let sawFrame = false;
-    for await (const frame of streamWorkerInvoke(executor, reservationKey, payload, tool.name, onSandboxCpu)) {
+    for await (const frame of streamWorkerInvoke(executor, reservationKey, payload)) {
       sawFrame = true;
       if (frame.t === "chunk") {
         yield frame.output;
@@ -153,7 +146,7 @@ async function* streamAccountToolForeground({
       return;
     }
   }
-  yield await runOneShotRunner(executor, reservationKey, payload, tool.name, onSandboxCpu);
+  yield await runOneShotRunner(executor, reservationKey, payload);
 }
 
 // Bridge the worker's NDJSON output (delivered live via onStdout, or all at once
@@ -163,8 +156,6 @@ async function* streamWorkerInvoke(
   executor: ReturnType<typeof createSandboxExecutor>,
   reservationKey: string,
   payload: RunnerPayload,
-  toolName: string,
-  onSandboxCpu?: (sample: SandboxCpuSample) => void,
 ): AsyncGenerator<WorkerFrame, void, void> {
   const queue = new FrameQueue();
   let fed = 0;
@@ -177,9 +168,6 @@ async function* streamWorkerInvoke(
       queue.push(chunk);
     },
   }).then((result) => {
-    if (result.cpuUsec !== undefined && result.cpuUsec > 0) {
-      onSandboxCpu?.({ type: "kubernetes", role: "tool", toolName, cpuUsec: result.cpuUsec });
-    }
     // Buffered executors (and the test mock) surface the whole body only here;
     // feed whatever onStdout did not already deliver, then close.
     if (result.stdout.length > fed) queue.push(result.stdout.slice(fed));
@@ -245,8 +233,6 @@ async function runOneShotRunner(
   executor: ReturnType<typeof createSandboxExecutor>,
   reservationKey: string,
   payload: RunnerPayload,
-  toolName: string,
-  onSandboxCpu?: (sample: SandboxCpuSample) => void,
 ): Promise<unknown> {
   const result = await executor.run({
     runtime: "bash",
@@ -255,10 +241,6 @@ async function runOneShotRunner(
     timeoutSeconds: FOREGROUND_TIMEOUT_SECONDS,
     outputLimitBytes: RUNNER_OUTPUT_LIMIT_BYTES,
   });
-
-  if (result.cpuUsec !== undefined && result.cpuUsec > 0) {
-    onSandboxCpu?.({ type: result.provider, role: "tool", toolName: toolName, cpuUsec: result.cpuUsec });
-  }
 
   const parsed = parseRunnerOutput(result.stdout);
   if (!result.ok) {

@@ -1,3 +1,3 @@
-# Broods Dashboard
+# BeeBlast Dashboard
 
-Next.js dashboard frontend for the Broods agent platform.
+Next.js dashboard frontend for the BeeBlast agent platform.

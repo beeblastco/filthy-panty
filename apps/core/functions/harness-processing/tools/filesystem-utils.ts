@@ -16,7 +16,7 @@ import { workspaceNamespacePrefix, workspaceSandboxLimits } from "../../_shared/
 import { isMissingS3Error, listS3Prefix, readS3Text } from "../../_shared/s3.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
 import { isRecordObject } from "../sandbox/utils.ts";
-import type { SandboxCpuSample, SandboxExecutorConfig, SandboxJobCallback, SandboxJobHandle, SandboxRunResult, SandboxRuntime } from "../sandbox/types.ts";
+import type { SandboxExecutorConfig, SandboxJobCallback, SandboxJobHandle, SandboxRunResult, SandboxRuntime } from "../sandbox/types.ts";
 import type { ResolvedWorkspace } from "../../_shared/workspaces.ts";
 import type { SandboxPermissionMode } from "../../_shared/storage/index.ts";
 import type { AsyncToolDelivery } from "../async-tool-result.ts";
@@ -42,9 +42,6 @@ export interface SandboxToolContext {
   // carries the originating channel/WebSocket so a finished job is pushed back
   // there; absent => the result is only retrievable by polling.
   background?: { eventId: string; conversationKey: string; delivery?: AsyncToolDelivery };
-  // Reports each sandbox exec's CPU so the harness can attribute usage per
-  // sandbox type. The agent's bash/fs tools always report role "agent".
-  onSandboxCpu?: (sample: SandboxCpuSample) => void;
 }
 
 export function workspaceRootFor(config: SandboxExecutorConfig): string {
@@ -104,22 +101,17 @@ export async function runSandbox(
   config: SandboxExecutorConfig,
   namespace: string | undefined,
   code: string,
-  options?: { onSandboxCpu?: (sample: SandboxCpuSample) => void },
 ): Promise<SandboxRunResult> {
   const executor = createSandboxExecutor(config);
   const limits = workspaceSandboxLimits(config.provider);
   const reservationKey = !namespace && config.persistent === true ? statelessReservationKeyFor(config) : undefined;
-  const result = await executor.run({
+  return executor.run({
     code,
     ...(namespace ? { namespace, workspaceRoot: workspaceRootFor(config) } : {}),
     ...(reservationKey ? { reservationKey, workspaceRoot: workspaceRootFor(config) } : {}),
     timeoutSeconds: boundedInteger(config.timeout, limits.defaultTimeoutSeconds, limits.maxTimeoutSeconds),
     outputLimitBytes: boundedInteger(config.outputLimitBytes, limits.defaultOutputLimitBytes, limits.maxOutputLimitBytes),
   });
-  if (result.cpuUsec !== undefined && result.cpuUsec > 0) {
-    options?.onSandboxCpu?.({ type: result.provider, role: "agent", cpuUsec: result.cpuUsec });
-  }
-  return result;
 }
 
 /**
@@ -311,9 +303,7 @@ export function outsideWorkspaceCommand(command: string): string | undefined {
     return "Error: parent directory traversal is not allowed";
   }
 
-  // A leading `:` still flags `host:/abs/path`, but a `:` followed by `//` is a
-  // URL scheme separator (https://...), not an absolute path, so it is exempt.
-  const absolutePath = scanned.match(/(?:^|[\s"'={([<>,]|:(?!\/\/))\/(?!dev\/null(?:\s|$)|[>\s]|$)[^\s"'`;&|)]*/);
+  const absolutePath = scanned.match(/(^|[\s"'=:{([<>,])\/(?!dev\/null(?:\s|$)|[>\s]|$)[^\s"'`;&|)]*/);
   if (absolutePath) {
     return `Error: absolute paths are not allowed in workspace bash commands: ${absolutePath[0].trim()}`;
   }

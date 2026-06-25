@@ -15,7 +15,6 @@ import {
   userModelMessageSchema,
 } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
-import { context as otelContextApi } from "@opentelemetry/api";
 import { resolveBearerAuth, type AuthContext } from "../_shared/auth.ts";
 import {
   applyRunOverrides,
@@ -35,6 +34,7 @@ import type {
   ChannelRequest,
   ChannelResponse,
   InboundMessage,
+  InboundAttachmentCandidate,
 } from "../_shared/channels.ts";
 import { extractText, formatChannelErrorText } from "../_shared/channels.ts";
 import { parseCommand } from "../_shared/commands.ts";
@@ -46,12 +46,7 @@ import {
   jsonResponse,
   normalizeHeaders,
 } from "../_shared/http.ts";
-import { collectSecretValues, logError, logInfo, logWarn } from "../_shared/log.ts";
-import {
-  getObservabilityContext,
-  mintTraceId,
-  setObservabilityContext,
-} from "../_shared/otel.ts";
+import { logError, logInfo, logWarn } from "../_shared/log.ts";
 import { createPancakeChannel } from "../_shared/pancake-channel.ts";
 import type { LambdaResponse } from "../_shared/runtime.ts";
 import { createSlackChannel } from "../_shared/slack-channel.ts";
@@ -66,7 +61,6 @@ import {
   scopedDirectEventId,
 } from "../_shared/runtime-keys.ts";
 import type { ConversationIngressEvent } from "./session.ts";
-import type { AgentDeploymentRecord } from "../_shared/storage/types.ts";
 
 type DirectIngressEvent =
   | UserModelMessage
@@ -77,13 +71,6 @@ export interface DirectInboundEvent {
   accountId: string;
   agentId: string;
   agentConfig: AgentConfig;
-  // Per-deployment id from the runtime key, when the request authenticated with a
-  // deployment key. Scopes realtime telemetry to the dashboard's deployment view.
-  endpointId?: string;
-  // Project and environment slugs from the runtime key scope, forwarded to the
-  // harness so it can build NATS observability subjects for live streaming.
-  projectSlug?: string;
-  environmentSlug?: string;
   eventId: string;
   asyncResultEventId?: string;
   publicEventId: string;
@@ -134,12 +121,10 @@ export interface ChannelInboundEvent {
   accountId?: string;
   agentId?: string;
   agentConfig?: AgentConfig;
-  endpointId?: string;
-  projectSlug?: string;
-  environmentSlug?: string;
   eventId: string;
   conversationKey: string;
   content: UserContent;
+  attachments?: InboundAttachmentCandidate[];
   events: ConversationIngressEvent[];
   channelName: string;
   source: Record<string, unknown>;
@@ -164,7 +149,6 @@ export interface IntegrationRoutingOptions {
   authResolver?: (headers: Record<string, string>) => Promise<AuthContext | null>;
   accountLoader?: (accountId: string) => Promise<AccountRecord | null>;
   agentLoader?: (accountId: string, agentId: string) => Promise<AgentRecord | null>;
-  deploymentLoader?: (accountId: string, agentId: string) => Promise<AgentDeploymentRecord | null>;
   directApiEnabled?: boolean;
 }
 
@@ -180,8 +164,6 @@ export function createIncomingEventRouter(options: IntegrationRoutingOptions = {
   const authResolver = options.authResolver ?? resolveBearerAuth;
   const accountLoader = options.accountLoader ?? ((accountId: string) => getStorage().accounts.getById(accountId));
   const agentLoader = options.agentLoader ?? ((accountId: string, agentId: string) => getStorage().agents.getById(accountId, agentId));
-  const deploymentLoader = options.deploymentLoader ?? ((accountId: string, agentId: string) =>
-    getStorage().agentDeployments.getByAgentId?.(accountId, agentId) ?? Promise.resolve(null));
   const directApiEnabled = options.directApiEnabled ?? true;
 
   return async (
@@ -191,7 +173,6 @@ export function createIncomingEventRouter(options: IntegrationRoutingOptions = {
     authResolver,
     accountLoader,
     agentLoader,
-    deploymentLoader,
     directApiEnabled,
   });
 }
@@ -200,7 +181,6 @@ interface LambdaUrlRoutingContext {
   authResolver(headers: Record<string, string>): Promise<AuthContext | null>;
   accountLoader(accountId: string): Promise<AccountRecord | null>;
   agentLoader(accountId: string, agentId: string): Promise<AgentRecord | null>;
-  deploymentLoader(accountId: string, agentId: string): Promise<AgentDeploymentRecord | null>;
   directApiEnabled: boolean;
 }
 
@@ -371,34 +351,15 @@ async function handleLambdaUrlEvent(
       return integrationNotConfigured(isConfigured ? `Webhook ${channelName}` : channelName);
     }
 
-    const deployment = await context.deploymentLoader(account.accountId, agent.agentId);
-
-    return handleChannelWebhook(accountChannel, request, handlers, account, agent, deployment);
+    return handleChannelWebhook(accountChannel, request, handlers, account, agent);
   }
 
-  const publicEndpoint = parsePublicEndpointPath(event.rawPath);
-  if (!context.directApiEnabled && (event.rawPath === "/" || isAsyncPath(event.rawPath) || publicEndpoint)) {
+  if (!context.directApiEnabled && (event.rawPath === "/" || isAsyncPath(event.rawPath))) {
     return directApiDisabledResponse();
   }
 
+  const publicEndpoint = parsePublicEndpointPath(event.rawPath);
   const auth = await context.authResolver(request.headers);
-
-  // Scope resolution for the realtime observability gateway. The gateway calls
-  // this server-side with the client's runtime key to learn which NATS subjects
-  // and Loki/Tempo labels it may stream. Scope comes from the key, never the
-  // client, so a deployment key is required and the response is its own scope.
-  if (isObservabilityScopePath(event.rawPath)) {
-    if (auth?.kind !== "deployment") {
-      return unauthorizedResponse();
-    }
-
-    return jsonResponse(200, {
-      accountId: auth.account.accountId,
-      projectSlug: auth.projectSlug,
-      environmentSlug: auth.environmentSlug,
-      endpointIds: [auth.endpointId],
-    });
-  }
 
   // A project+environment runtime key works on both the root direct API and the
   // scoped /v1/{project}/agents/{environment}/{endpointId} URL the dashboard
@@ -412,36 +373,18 @@ async function handleLambdaUrlEvent(
 
     try {
       const parsed = await parseDirectPayload(request.body, request.headers, auth.account, context.agentLoader);
-      // Secure by default: the public runtime key only reaches agents that have
-      // explicitly opted into the public endpoint. Internal callers (account/
-      // admin secret), channel webhooks, and cron paths are never gated here.
-      if (parsed.agentConfig.publicAccess !== true) {
-        return errorResponse(
-          403,
-          `Agent ${parsed.agentId} is not publicly accessible. Enable public access and redeploy, or reach it through an internal endpoint or channel webhook.`,
-          { code: "public_access_disabled", agentId: parsed.agentId },
-        );
-      }
-      if (publicEndpoint?.mode === "async" || isAsyncPath(event.rawPath)) {
+      if (isAsyncPath(event.rawPath)) {
         if (!handlers.handleAsyncRequest) {
           return notFoundResponse();
         }
 
         return handlers.handleAsyncRequest({
           ...parsed,
-          endpointId: auth.endpointId,
-          projectSlug: auth.projectSlug,
-          environmentSlug: auth.environmentSlug,
           statusUrl: buildStatusUrl(event, parsed.publicEventId, parsed.agentId),
         });
       }
 
-      return handlers.handleDirectRequest({
-        ...parsed,
-        endpointId: auth.endpointId,
-        projectSlug: auth.projectSlug,
-        environmentSlug: auth.environmentSlug,
-      });
+      return handlers.handleDirectRequest(parsed);
     } catch (err) {
       return badRequestResponse(err);
     }
@@ -485,23 +428,7 @@ async function handleChannelWebhook(
   handlers: IntegrationHandlers,
   account: AccountRecord,
   agent: AgentRecord,
-  deployment: AgentDeploymentRecord | null,
 ): Promise<LambdaResponse> {
-  const previousObservabilityContext = getObservabilityContext();
-  if (deployment) {
-    setObservabilityContext({
-      accountId: account.accountId,
-      project: deployment.projectSlug,
-      environment: deployment.environmentSlug,
-      endpointId: deployment.endpointId,
-      agentId: agent.agentId,
-      conversationKey: `webhook:${adapter.name}:${agent.agentId}`,
-      traceId: mintTraceId(),
-      otelContext: otelContextApi.active(),
-      secretValues: collectSecretValues(agent.config),
-    });
-  }
-
   try {
     logInfo("Channel webhook received", {
       channel: adapter.name,
@@ -531,7 +458,6 @@ async function handleChannelWebhook(
         ? {
           eventId: parsed.message.eventId,
           conversationKey: parsed.message.conversationKey,
-          source: parsed.message.source,
         }
         : {}),
     });
@@ -562,9 +488,8 @@ async function handleChannelWebhook(
       return toLambdaResponse(parsed.response ?? { statusCode: 200 });
     }
 
-    // The promise is deferred by one microtask so this request's scoped context
-    // is restored in finally before background channel processing establishes
-    // its own context.
+    // Else webhook contains a real user message.
+    // Send the webhook ACK immediately then use afterResponse to conitnue into normal channle processing
     const { message, ack } = parsed;
     const channel = adapter.actions(message);
     const response = ack ?? { statusCode: 200 };
@@ -581,29 +506,21 @@ async function handleChannelWebhook(
       statusCode: response.statusCode,
       headers: response.headers,
       body: response.body ?? "",
-      afterResponse: Promise.resolve().then(() =>
-        processChannelMessage(
-          {
-            eventId: accountAgentScopedKey(account.accountId, agent.agentId, message.eventId),
-            conversationKey: accountAgentScopedKey(account.accountId, agent.agentId, message.conversationKey),
-            content: message.content,
-            events: [{ role: "user", content: message.content }],
-            channelName: message.channelName,
-            source: message.source,
-            channel: channel,
-            accountId: account.accountId,
-            agentId: agent.agentId,
-            agentConfig: toChannelRuntimeAgentConfig(agent.config, message.channelName),
-            ...(deployment
-              ? {
-                endpointId: deployment.endpointId,
-                projectSlug: deployment.projectSlug,
-                environmentSlug: deployment.environmentSlug,
-              }
-              : {}),
-          },
-          handlers,
-        )
+      afterResponse: processChannelMessage(
+        {
+          eventId: accountAgentScopedKey(account.accountId, agent.agentId, message.eventId),
+          conversationKey: accountAgentScopedKey(account.accountId, agent.agentId, message.conversationKey),
+          content: message.content,
+          ...(message.attachments ? { attachments: message.attachments } : {}),
+          events: [{ role: "user", content: message.content }],
+          channelName: message.channelName,
+          source: message.source,
+          channel: channel,
+          accountId: account.accountId,
+          agentId: agent.agentId,
+          agentConfig: toChannelRuntimeAgentConfig(agent.config, message.channelName),
+        },
+        handlers,
       ),
     };
   } catch (err) {
@@ -613,10 +530,6 @@ async function handleChannelWebhook(
     });
 
     return errorResponse(500, "Internal server error");
-  } finally {
-    if (deployment) {
-      setObservabilityContext(previousObservabilityContext);
-    }
   }
 }
 
@@ -624,28 +537,6 @@ async function processChannelMessage(
   event: ChannelInboundEvent,
   handlers: IntegrationHandlers,
 ): Promise<void> {
-  const previousObservabilityContext = getObservabilityContext();
-  const hasDeploymentScope = Boolean(
-    event.accountId &&
-    event.agentId &&
-    event.endpointId &&
-    event.projectSlug &&
-    event.environmentSlug,
-  );
-  if (hasDeploymentScope) {
-    setObservabilityContext({
-      accountId: event.accountId!,
-      project: event.projectSlug!,
-      environment: event.environmentSlug!,
-      endpointId: event.endpointId!,
-      agentId: event.agentId!,
-      conversationKey: event.conversationKey,
-      traceId: mintTraceId(),
-      otelContext: otelContextApi.active(),
-      secretValues: collectSecretValues(event.agentConfig),
-    });
-  }
-
   try {
     logInfo("Channel message processing started", {
       channel: event.channelName,
@@ -653,7 +544,6 @@ async function processChannelMessage(
       agentId: event.agentId,
       eventId: event.eventId,
       conversationKey: event.conversationKey,
-      source: event.source,
     });
 
     event.channel.sendTyping().catch(() => { });
@@ -684,10 +574,6 @@ async function processChannelMessage(
         error: sendErr instanceof Error ? sendErr.message : String(sendErr),
       });
     });
-  } finally {
-    if (hasDeploymentScope) {
-      setObservabilityContext(previousObservabilityContext);
-    }
   }
 }
 
@@ -785,26 +671,21 @@ type PublicEndpointPath = {
   endpointId: string;
   projectSlug?: string;
   environmentSlug?: string;
-  mode: "sync" | "async";
 };
 
 function parsePublicEndpointPath(rawPath: string): PublicEndpointPath | null {
-  const scoped = rawPath.match(/^\/v1\/([^/]+)\/agents\/([^/]+)\/([^/]+)(?:\/(async))?$/);
+  const scoped = rawPath.match(/^\/v1\/([^/]+)\/agents\/([^/]+)\/([^/]+)$/);
   if (scoped?.[1] && scoped[2] && scoped[3]) {
     return {
       projectSlug: decodeURIComponent(scoped[1]),
       environmentSlug: decodeURIComponent(scoped[2]),
       endpointId: decodeURIComponent(scoped[3]),
-      mode: scoped[4] === "async" ? "async" : "sync",
     };
   }
 
-  const unscoped = rawPath.match(/^\/v1\/agents\/([^/]+)(?:\/(async))?$/);
+  const unscoped = rawPath.match(/^\/v1\/agents\/([^/]+)$/);
   if (unscoped?.[1]) {
-    return {
-      endpointId: decodeURIComponent(unscoped[1]),
-      mode: unscoped[2] === "async" ? "async" : "sync",
-    };
+    return { endpointId: decodeURIComponent(unscoped[1]) };
   }
 
   return null;
@@ -1029,11 +910,6 @@ function parseSandboxJobCompletionPayload(
   };
 }
 
-function isObservabilityScopePath(rawPath: string): boolean {
-  return rawPath === "/v1/internal/observability-scope" ||
-    rawPath === "/internal/observability-scope";
-}
-
 function unauthorizedResponse(): LambdaResponse {
   return errorResponse(401, "Unauthorized");
 }
@@ -1102,6 +978,7 @@ function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
     if (!parsedUser.success) {
       throw new Error(`Invalid direct event: ${parsedUser.error.issues[0]?.message ?? "must match UserModelMessage"}`);
     }
+    assertNoRemoteMediaUrls(parsedUser.data);
 
     return parsedUser.data;
   }
@@ -1138,6 +1015,17 @@ function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
     ...parsedSystem.data,
     persist: false,
   };
+}
+
+function assertNoRemoteMediaUrls(message: UserModelMessage): void {
+  if (!Array.isArray(message.content)) return;
+  for (const part of message.content) {
+    const value = part.type === "image" ? part.image : part.type === "file" ? part.data : undefined;
+    const text = value instanceof URL ? value.href : typeof value === "string" ? value : undefined;
+    if (text && /^https?:\/\//i.test(text)) {
+      throw new Error("Direct API remote media URLs are not supported; send inline data or use an authenticated channel attachment");
+    }
+  }
 }
 
 class DirectNotFoundError extends Error { }

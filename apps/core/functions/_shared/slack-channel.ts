@@ -7,8 +7,10 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type {
   ChannelActions,
   ChannelAdapter,
-  ChannelParseResult
+  ChannelParseResult,
+  InboundAttachmentCandidate,
 } from "./channels.ts";
+import { assertOutboundArtifactLimits } from "./channels.ts";
 import { formatSlackMessage } from "./channel-format.ts";
 import { logWarn } from "./log.ts";
 import {
@@ -31,7 +33,18 @@ interface SlackEventEnvelope {
     bot_id?: string;
     ts?: string;
     thread_ts?: string;
+    files?: SlackFile[];
   };
+}
+
+interface SlackFile {
+  id?: string;
+  name?: string;
+  mimetype?: string;
+  size?: number;
+  url_private_download?: string;
+  url_private?: string;
+  mode?: string;
 }
 
 export interface SlackSource {
@@ -85,7 +98,7 @@ export function createSlackChannel(
         return parseSlashCommand(req.body, allowedChannelIds);
       }
 
-      return parseEventCallback(req.body, allowedChannelIds);
+      return parseEventCallback(req.body, allowedChannelIds, botToken);
     },
 
     actions(msg): ChannelActions {
@@ -97,6 +110,7 @@ export function createSlackChannel(
 function parseEventCallback(
   body: string,
   allowedChannelIds: Set<string> | null,
+  botToken: string,
 ): ChannelParseResult {
   const payload = JSON.parse(body) as SlackEventEnvelope;
 
@@ -131,6 +145,7 @@ function parseEventCallback(
   }
 
   const text = stripSlackMentions(payload.event.text ?? "");
+  const attachments = extractSlackAttachments(payload.event.files, botToken);
   const threadTs = payload.event.thread_ts ?? ts;
   const replyThreadTs = getSlackReplyThreadTs(payload.event, ts);
 
@@ -141,7 +156,8 @@ function parseEventCallback(
       eventId: `${SLACK_INTEGRATION_PREFIX}${payload.event_id}`,
       conversationKey: getSlackConversationKey(payload.team_id, channelId, payload.event, threadTs),
       channelName: "slack",
-      content: [{ type: "text", text }],
+      content: text ? [{ type: "text", text }] : [],
+      ...(attachments.length > 0 ? { attachments } : {}),
       source: {
         teamId: payload.team_id,
         channelId,
@@ -154,7 +170,7 @@ function parseEventCallback(
 }
 
 function isSupportedSlackEvent(event: NonNullable<SlackEventEnvelope["event"]>): boolean {
-  if (event.subtype || event.bot_id) {
+  if ((event.subtype && event.subtype !== "file_share") || event.bot_id) {
     return false;
   }
 
@@ -163,6 +179,48 @@ function isSupportedSlackEvent(event: NonNullable<SlackEventEnvelope["event"]>):
   }
 
   return event.type === "message" && (event.channel_type === "im" || event.channel_type === "app_home");
+}
+
+function extractSlackAttachments(files: SlackFile[] | undefined, botToken: string): InboundAttachmentCandidate[] {
+  return (files ?? []).flatMap((file) => {
+    const url = file.url_private_download ?? file.url_private;
+    if (!file.id) return [];
+    const mediaType = file.mimetype;
+    return [{
+      id: file.id,
+      kind: mediaKind(mediaType),
+      ...(file.name ? { filename: file.name } : {}),
+      ...(mediaType ? { mediaType } : {}),
+      ...(typeof file.size === "number" ? { size: file.size } : {}),
+      async resolveDownload() {
+        if (!url || file.mode === "external") throw new Error("Slack file is not downloadable");
+        const parsed = new URL(url);
+        const hostname = parsed.hostname.toLowerCase();
+        if (parsed.protocol !== "https:" || !isSlackMediaHost(hostname)) {
+          throw new Error("Slack file host is not allowed");
+        }
+        return {
+          url: parsed.href,
+          headers: { Authorization: `Bearer ${botToken}` },
+          allowedHosts: [hostname],
+        };
+      },
+    } satisfies InboundAttachmentCandidate];
+  });
+}
+
+function isSlackMediaHost(hostname: string): boolean {
+  return ["slack.com", "slack-files.com", "slack-edge.com"].some((base) =>
+    hostname === base || hostname.endsWith(`.${base}`)
+  );
+}
+
+function mediaKind(mediaType: string | undefined): InboundAttachmentCandidate["kind"] {
+  if (mediaType === "image/gif") return "gif";
+  if (mediaType?.startsWith("image/")) return "image";
+  if (mediaType?.startsWith("video/")) return "video";
+  if (mediaType?.startsWith("audio/")) return "audio";
+  return "file";
 }
 
 function getSlackConversationKey(
@@ -232,7 +290,12 @@ function createSlackActions(
   botToken: string,
   source: SlackSource,
 ): ChannelActions {
+  const artifactLimits = {
+    maxBytesPerArtifact: 20 * 1024 * 1024,
+    maxTotalBytes: 20 * 1024 * 1024,
+  } as const;
   return {
+    artifactLimits,
     async sendText(text) {
       const formattedMessage = formatSlackMessage(text);
 
@@ -274,6 +337,46 @@ function createSlackActions(
         timestamp: source.messageTs,
         name: "eyes",
       });
+    },
+
+    async addReaction(emoji) {
+      if (!source.messageTs) throw new Error("Slack reaction requires a source message");
+      await slackApi(botToken, "reactions.add", {
+        channel: source.channelId,
+        timestamp: source.messageTs,
+        name: emoji.replace(/^:|:$/g, ""),
+      });
+    },
+
+    async sendArtifacts(artifacts, text) {
+      assertOutboundArtifactLimits(artifacts, artifactLimits);
+      const files: Array<{ id: string; title: string }> = [];
+      for (const artifact of artifacts) {
+        const upload = await slackApi(botToken, "files.getUploadURLExternal", {
+          filename: artifact.filename,
+          length: artifact.bytes.byteLength,
+        }) as { upload_url?: string; file_id?: string };
+        if (!upload.upload_url || !upload.file_id) throw new Error("Slack did not return an upload URL");
+        const response = await fetch(upload.upload_url, {
+          method: "POST",
+          headers: { "Content-Type": artifact.mediaType },
+          body: artifact.bytes,
+        });
+        const uploadBody = await response.text();
+        if (!response.ok || !uploadBody.startsWith("OK")) {
+          throw new Error(`Slack file upload failed (${response.status}): ${uploadBody || "unknown_error"}`);
+        }
+        files.push({ id: upload.file_id, title: artifact.filename });
+      }
+      const completed = await slackApi(botToken, "files.completeUploadExternal", {
+        files,
+        channel_id: source.channelId,
+        ...(text ? { initial_comment: text } : {}),
+        ...(source.threadTs ? { thread_ts: source.threadTs } : {}),
+      });
+      if (!Array.isArray(completed.files) || completed.files.length !== files.length) {
+        throw new Error("Slack files.completeUploadExternal returned an incomplete file list");
+      }
     },
 
     // Edit-in-place streaming. Always posts to the channel/thread (chat.update
@@ -321,7 +424,7 @@ async function slackApi(
   token: string,
   method: string,
   payload: Record<string, unknown>,
-): Promise<{ ok?: boolean; error?: string; ts?: string }> {
+): Promise<{ ok?: boolean; error?: string; ts?: string; [key: string]: unknown }> {
   const response = await fetch(`https://slack.com/api/${method}`, {
     method: "POST",
     headers: {

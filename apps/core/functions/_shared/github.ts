@@ -7,6 +7,8 @@ import { createSign } from "node:crypto";
 import type { ChannelActions } from "./channels.ts";
 import type { GitHubSource } from "./github-channel.ts";
 
+export const GITHUB_REACTION_VALUES = ["+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"] as const;
+
 export function createGitHubActions(
   appId: string,
   privateKey: string,
@@ -19,7 +21,22 @@ export function createGitHubActions(
     return installationTokenPromise;
   };
 
+  const react = async (content: string) => {
+    if (!(GITHUB_REACTION_VALUES as readonly string[]).includes(content)) {
+      throw new Error("GitHub reaction is not supported");
+    }
+    const token = await getInstallationToken();
+    if (source.target === "pull_request_review_comment" && source.commentId) {
+      await githubApi(token, `repos/${source.owner}/${source.repo}/pulls/comments/${source.commentId}/reactions`, { content });
+    } else if (source.commentId) {
+      await githubApi(token, `repos/${source.owner}/${source.repo}/issues/comments/${source.commentId}/reactions`, { content });
+    } else if (source.issueNumber) {
+      await githubApi(token, `repos/${source.owner}/${source.repo}/issues/${source.issueNumber}/reactions`, { content });
+    }
+  };
+
   return {
+    reactionValues: GITHUB_REACTION_VALUES,
     async sendText(text) {
       const token = await getInstallationToken();
 
@@ -48,36 +65,9 @@ export function createGitHubActions(
     },
 
     async reactToMessage() {
-      const token = await getInstallationToken();
-
-      if (source.target === "pull_request_review_comment" && source.commentId) {
-        await githubApi(
-          token,
-          `repos/${source.owner}/${source.repo}/pulls/comments/${source.commentId}/reactions`,
-          { content: "eyes" },
-        );
-        return;
-      }
-
-      if (source.commentId) {
-        await githubApi(
-          token,
-          `repos/${source.owner}/${source.repo}/issues/comments/${source.commentId}/reactions`,
-          { content: "eyes" },
-        );
-        return;
-      }
-
-      if (!source.issueNumber) {
-        return;
-      }
-
-      await githubApi(
-        token,
-        `repos/${source.owner}/${source.repo}/issues/${source.issueNumber}/reactions`,
-        { content: "eyes" },
-      );
+      await react("eyes");
     },
+    addReaction: react,
   };
 }
 

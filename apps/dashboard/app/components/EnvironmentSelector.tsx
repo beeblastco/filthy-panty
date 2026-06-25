@@ -3,9 +3,9 @@
 /** Dropdown selector for switching between project environments and creating new ones. */
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { api } from "@broods/convex/_generated/api";
-import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import { useParams } from "next/navigation";
+import { api } from "@filthy-panty/convex/_generated/api";
+import type { Doc, Id } from "@filthy-panty/convex/_generated/dataModel";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { ChevronDown, Circle, Copy, Plus } from "lucide-react";
 import {
@@ -37,11 +37,11 @@ import { Label } from "@/app/components/ui/label";
 import { cn } from "@/app/lib/utils";
 
 type EnvironmentKind = "development" | "production" | "custom";
-type DeploymentRegion = "ap-southeast-1" | "eu-west-1" | "us-east-1";
+type DeploymentRegion = "ap-southeast-1" | "eu-central-1" | "us-east-1";
 
 const regionOptions: Array<{ value: DeploymentRegion; label: string; flag: string; enabled: boolean }> = [
-  { value: "eu-west-1", label: "Europe (Ireland)", flag: "🇮🇪", enabled: true },
-  { value: "ap-southeast-1", label: "Asia Pacific (Singapore)", flag: "🇸🇬", enabled: false },
+  { value: "ap-southeast-1", label: "Asia Pacific (Singapore)", flag: "🇸🇬", enabled: true },
+  { value: "eu-central-1", label: "Europe (Frankfurt)", flag: "🇩🇪", enabled: false },
   { value: "us-east-1", label: "US East (N. Virginia)", flag: "🇺🇸", enabled: false },
 ];
 
@@ -71,9 +71,6 @@ export function EnvironmentDot({ kind }: { kind: EnvironmentKind }) {
 /** Dropdown to list, switch, and create project environments. */
 export function EnvironmentSelector() {
   const params = useParams<{ projectId?: string }>();
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const shouldOpenProductionPanel = searchParams.get("initialize") === "production";
   const projectId = params.projectId as Id<"projects"> | undefined;
   const { environmentId, setEnvironmentId } = useEnvironment();
 
@@ -86,8 +83,8 @@ export function EnvironmentSelector() {
   const initializeProduction = useMutation(api.environment.initializeProduction);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [productionOpen, setProductionOpen] = useState(shouldOpenProductionPanel);
-  const [productionRegion, setProductionRegion] = useState<DeploymentRegion>("eu-west-1");
+  const [productionOpen, setProductionOpen] = useState(false);
+  const [productionRegion, setProductionRegion] = useState<DeploymentRegion>("ap-southeast-1");
   const [newName, setNewName] = useState("");
   const [createMode, setCreateMode] = useState<"empty" | "duplicate">("empty");
   const [duplicateFromId, setDuplicateFromId] =
@@ -97,14 +94,6 @@ export function EnvironmentSelector() {
 
   const developmentEnv = environments?.find((env) => environmentKind(env) === "development");
   const productionEnv = environments?.find((env) => environmentKind(env) === "production");
-
-  useEffect(() => {
-    if (!projectId || !environments || !shouldOpenProductionPanel) return;
-    const next = new URLSearchParams(searchParams.toString());
-    next.delete("initialize");
-    const suffix = next.toString();
-    router.replace(`/${projectId}${suffix ? `?${suffix}` : ""}`, { scroll: false });
-  }, [environments, shouldOpenProductionPanel, projectId, router, searchParams]);
 
   // Ensure default Development environment exists when project loads.
   useEffect(() => {

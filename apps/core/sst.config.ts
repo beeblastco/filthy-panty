@@ -5,9 +5,9 @@
 // No in-source defaults — provided via repo vars / local env (see .env.example).
 // CI injects them into the validate + deploy jobs; forks must set them to run
 // `sst install` / deploy.
-const AWS_ACCOUNT_ID = requiredEnv("AWS_ACCOUNT_ID");
-const PROJECT_NAME = requiredEnv("PROJECT_NAME");
-const PROJECT_OWNER_EMAIL = requiredEnv("PROJECT_OWNER_EMAIL");
+const AWS_ACCOUNT_ID = process.env.AWS_ACCOUNT_ID!;
+const PROJECT_NAME = process.env.PROJECT_NAME!;
+const PROJECT_OWNER_EMAIL = process.env.PROJECT_OWNER_EMAIL!;
 const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
 const ENABLE_DIRECT_API = parseBooleanEnv("ENABLE_DIRECT_API", false);
 const ENABLE_WEBSOCKET = parseBooleanEnv("ENABLE_WEBSOCKET", false);
@@ -21,12 +21,6 @@ const SANDBOX_WORKSPACE_MOUNT_PATH = "/mnt/workspaces";
 const NATS_URL = process.env.NATS_URL?.trim();
 // Token-auth credential for the NATS server; omit for an unauthenticated server.
 const NATS_TOKEN = process.env.NATS_TOKEN?.trim();
-// OpenTelemetry OTLP push target for durable logs/traces (otel.beeblast.co,
-// http/protobuf). The endpoint is 401-gated, so OTEL_EXPORTER_OTLP_HEADERS
-// carries the `Authorization=Basic ...` credential. Both are injected via CI —
-// no inline default. When unset, otel.ts no-ops and only stdout/NATS emit.
-const OTEL_EXPORTER_OTLP_ENDPOINT = process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim();
-const OTEL_EXPORTER_OTLP_HEADERS = process.env.OTEL_EXPORTER_OTLP_HEADERS?.trim();
 // Convex storage provider credentials. Always set for production; also set for
 // any other stage (e.g. dev) that opts into Convex storage. When present the
 // stage runs the Convex provider instead of DynamoDB (see `useConvexStorage`).
@@ -35,23 +29,12 @@ const CONVEX_DEPLOY_KEY = process.env.CONVEX_DEPLOY_KEY?.trim();
 const DAYTONA_ORGANIZATION_ID = process.env.DAYTONA_ORGANIZATION_ID?.trim();
 const DAYTONA_API_URL = process.env.DAYTONA_API_URL?.trim();
 const DAYTONA_TARGET = process.env.DAYTONA_TARGET?.trim();
-// kubernetes sandbox provider (agent-sandbox on the Broods k3s cluster). Non-secret
-// knobs; the kubeconfig is a CI-injected env var (KUBERNETES_SANDBOX_KUBECONFIG),
-// stored in SSM at runtime. See docs/workspace/sandbox/kubernetes.md.
+// kubernetes sandbox provider (agent-sandbox on the Beeblast k3s cluster). Non-secret
+// knobs; the kubeconfig is an sst.Secret. See docs/workspace/sandbox/kubernetes.md.
 const KUBERNETES_SANDBOX_NAMESPACE = process.env.KUBERNETES_SANDBOX_NAMESPACE?.trim();
 const KUBERNETES_SANDBOX_IMAGE = process.env.KUBERNETES_SANDBOX_IMAGE?.trim();
 const KUBERNETES_SANDBOX_SERVICE_ACCOUNT = process.env.KUBERNETES_SANDBOX_SERVICE_ACCOUNT?.trim();
 const KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS = process.env.KUBERNETES_SANDBOX_IMAGE_PULL_SECRETS?.trim();
-// Secrets formerly held in the SST secret store are now plain environment
-// variables injected by CI from GitHub Actions secrets (see deploy.yaml). No
-// `sst.Secret` indirection. Required ones use `!` (CI validates they are set
-// before deploy); optional provider creds default to empty so stages that do
-// not use them still deploy.
-const ADMIN_ACCOUNT_SECRET = requiredEnv("ADMIN_ACCOUNT_SECRET");
-const ACCOUNT_CONFIG_ENCRYPTION_SECRET = requiredEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET");
-const SERVICE_AUTH_SECRET = process.env.SERVICE_AUTH_SECRET ?? "";
-const DAYTONA_API_KEY = process.env.DAYTONA_API_KEY ?? "";
-const KUBERNETES_SANDBOX_KUBECONFIG = process.env.KUBERNETES_SANDBOX_KUBECONFIG?.trim() ?? "";
 
 if (ENABLE_WEBSOCKET && !NATS_URL) {
   throw new Error("NATS_URL must be set when ENABLE_WEBSOCKET=true");
@@ -67,36 +50,12 @@ function awsRegion(): string {
     throw new Error("AWS_REGION must be set in CI");
   }
 
-  return "eu-west-1";
-}
-
-function requiredEnv(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`${name} must be set`);
-  }
-  return value;
+  return "eu-central-1";
 }
 
 function resourceName(service: string, stage: string, region: string): string {
-  const stagePrefix = isProductionStage(stage) ? "" : `${stage}-`;
-  return `${stagePrefix}${PROJECT_NAME}-${service}-${AWS_ACCOUNT_ID}-${region}`;
-}
-
-function accountRegionalBucketName(service: string, stage: string, region: string): string {
-  const name = `${resourceName(service, stage, region)}-an`;
-  if (name.length > 63) {
-    throw new Error(`S3 bucket name is too long (${name.length}/63): ${name}`);
-  }
-  return name;
-}
-
-function isProductionStage(stage: string): boolean {
-  return stage === "production" || stage.startsWith("production-");
-}
-
-function microvmPrereqsEnabled(region: string): boolean {
-  return region !== "ap-southeast-1";
+  const stagePrefix = stage === "production" ? "" : `${stage}-`;
+  return `${stagePrefix}${PROJECT_NAME}-${service}-${region}-${AWS_ACCOUNT_ID}`;
 }
 
 function parseBooleanEnv(name: string, defaultValue: boolean): boolean {
@@ -116,29 +75,6 @@ function parseBooleanEnv(name: string, defaultValue: boolean): boolean {
   throw new Error(`${name} must be a boolean-like value`);
 }
 
-function ecrRepositoryExists(name: string, region: string): boolean {
-  try {
-    const result = Bun.spawnSync({
-      cmd: [
-        "aws",
-        "ecr",
-        "describe-repositories",
-        "--repository-names",
-        name,
-        "--region",
-        region,
-        "--output",
-        "json",
-      ],
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    return result.success;
-  } catch {
-    return false;
-  }
-}
-
 function sandboxRuntimePermissions(
   filesystemBucketArn: string,
   s3FilesFileSystemArn: $util.Input<string>,
@@ -149,11 +85,19 @@ function sandboxRuntimePermissions(
 }[] {
   return [
     {
-      actions: ["s3files:ClientMount", "s3files:ClientWrite"],
+      actions: [
+        "s3files:ClientMount",
+        "s3files:ClientWrite",
+      ],
       resources: [s3FilesFileSystemArn, s3FilesAccessPointArn],
     },
     {
-      actions: ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:DeleteObject"],
+      actions: [
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:PutObject",
+        "s3:DeleteObject",
+      ],
       resources: [`${filesystemBucketArn}/*`],
     },
     {
@@ -165,30 +109,26 @@ function sandboxRuntimePermissions(
 
 const LAMBDA_ASSUME_ROLE = JSON.stringify({
   Version: "2012-10-17",
-  Statement: [
-    {
-      Effect: "Allow",
-      Principal: { Service: "lambda.amazonaws.com" },
-      Action: "sts:AssumeRole",
-    },
-  ],
+  Statement: [{
+    Effect: "Allow",
+    Principal: { Service: "lambda.amazonaws.com" },
+    Action: "sts:AssumeRole",
+  }],
 });
 
 // SST's `permissions` shorthand -> a raw IAM policy doc. Used by the sandbox
 // functions, which run from a pre-built ECR image and so can't use sst.aws.Function
 // (it has no `image` arg and always builds a zip). $jsonStringify resolves Outputs.
-function permissionsPolicy(perms: { actions: string[]; resources: $util.Input<string>[] }[]) {
+function permissionsPolicy(
+  perms: { actions: string[]; resources: $util.Input<string>[] }[],
+) {
   return $jsonStringify({
     Version: "2012-10-17",
-    Statement: perms.map((p) => ({
-      Effect: "Allow",
-      Action: p.actions,
-      Resource: p.resources,
-    })),
+    Statement: perms.map((p) => ({ Effect: "Allow", Action: p.actions, Resource: p.resources })),
   });
 }
 
-function denyUnlessProjectPrincipal(stage: string, region: string) {
+function denyUnlessProjectPrincipal(stage: string, region: string, includeSandboxRoles = true) {
   return {
     effect: "deny" as const,
     principals: "*" as const,
@@ -200,21 +140,34 @@ function denyUnlessProjectPrincipal(stage: string, region: string) {
         values: [
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-AccountManageRole-*`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-HarnessProcessingRole-*`,
-          // Only the workspace-mounted sandbox functions touch the bucket directly.
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxMountNetRole-*`,
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxMountNoNetRole-*`,
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/beeblast_k3s_role`,
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3files", stage, region)}`,
-          // Scoped role assumed by the harness for provider-sandbox mount-s3 credentials.
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3mount", stage, region)}`,
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("microvm-build", stage, region)}`,
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("microvm-execution", stage, region)}`,
+          ...(includeSandboxRoles
+            ? [
+              // Only workspace buckets need sandbox and mount-role access.
+              `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxMountNetRole-*`,
+              `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${PROJECT_NAME}-${stage}-SandboxMountNoNetRole-*`,
+              `arn:aws:iam::${AWS_ACCOUNT_ID}:role/beeblast_k3s_role`,
+              `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3files", stage, region)}`,
+              `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3mount", stage, region)}`,
+            ]
+            : []),
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-infra-deploy`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-sst-infra-deploy`,
-          `arn:aws:iam::${AWS_ACCOUNT_ID}:root`,
         ],
       },
     ],
+  };
+}
+
+function denyInsecureTransport() {
+  return {
+    effect: "deny" as const,
+    principals: "*" as const,
+    actions: ["s3:*"],
+    conditions: [{
+      test: "Bool",
+      variable: "aws:SecureTransport",
+      values: ["false"],
+    }],
   };
 }
 
@@ -225,8 +178,8 @@ export default $config({
 
     return {
       name: PROJECT_NAME,
-      removal: isProductionStage(stage) ? "retain" : "remove",
-      protect: isProductionStage(stage),
+      removal: stage === "production" ? "retain" : "remove",
+      protect: stage === "production",
       home: "aws",
       providers: {
         aws: {
@@ -252,8 +205,7 @@ export default $config({
     // Production = SaaS = Convex storage. Other stages = DynamoDB (default).
     // Async tools, dedupe, conversations still rely on DDB until those modules
     // are lifted into the StorageProvider abstraction in a follow-up.
-    const isProduction = isProductionStage(stage);
-    const enableMicrovmPrereqs = microvmPrereqsEnabled(region);
+    const isProduction = stage === "production";
     // Convex storage is used whenever Convex credentials are supplied: always on
     // production, and opt-in on any other stage (e.g. dev) by setting CONVEX_URL +
     // CONVEX_DEPLOY_KEY. Stages without them fall back to DynamoDB. When a stage
@@ -261,22 +213,24 @@ export default $config({
     // desired state, so the deploy also removes those DynamoDB tables.
     const useConvexStorage = Boolean(CONVEX_URL && CONVEX_DEPLOY_KEY);
     if (isProduction && !useConvexStorage) {
-      throw new Error("Production stage requires CONVEX_URL and CONVEX_DEPLOY_KEY env vars");
+      throw new Error(
+        "Production stage requires CONVEX_URL and CONVEX_DEPLOY_KEY env vars",
+      );
     }
     const storageEnv: Record<string, string> = useConvexStorage
       ? {
-          STORAGE_PROVIDER: "convex",
-          CONVEX_URL: CONVEX_URL!,
-          CONVEX_DEPLOY_KEY: CONVEX_DEPLOY_KEY!,
-        }
+        STORAGE_PROVIDER: "convex",
+        CONVEX_URL: CONVEX_URL!,
+        CONVEX_DEPLOY_KEY: CONVEX_DEPLOY_KEY!,
+      }
       : { STORAGE_PROVIDER: "dynamodb" };
     const names = {
       conversations: resourceName("conversations", stage, region),
       processedEvents: resourceName("processed-events", stage, region),
       asyncAgentResult: resourceName("async-agent-result", stage, region),
       asyncToolResult: resourceName("async-tool-result", stage, region),
-      usage: resourceName("usage", stage, region),
       persistentSandboxInstance: resourceName("persistent-sandbox-instance", stage, region),
+      webhookSubscribeMock: resourceName("webhook-sub-mock", stage, region),
       // Uniform sandbox image deployed across two axes (workspace mount, internet).
       sandboxMountNet: resourceName("sandbox-mount-net", stage, region),
       sandboxMountNonet: resourceName("sandbox-mount-nonet", stage, region),
@@ -287,31 +241,37 @@ export default $config({
       sandboxConfigs: resourceName("sandbox-configs", stage, region),
       workspaceConfigs: resourceName("workspace-configs", stage, region),
       accountTools: resourceName("account-tools", stage, region),
+      artifacts: resourceName("artifacts", stage, region),
       accountSignupRateLimits: resourceName("account-signup-rate-limits", stage, region),
       crons: resourceName("crons", stage, region),
       cronSchedules: resourceName("cron-schedules", stage, region),
       harnessProcessing: resourceName("harness-processing", stage, region),
       accountManage: resourceName("account-manage", stage, region),
-      filesystem: accountRegionalBucketName("filesystem", stage, region),
-      skills: accountRegionalBucketName("skills", stage, region),
-      toolBundles: accountRegionalBucketName("tool-bundles", stage, region),
-      microvmArtifacts: accountRegionalBucketName("microvm-artifacts", stage, region),
-      microvmBuildRole: resourceName("microvm-build", stage, region),
-      microvmExecutionRole: resourceName("microvm-execution", stage, region),
+      memory: resourceName("memory", stage, region),
+      artifactStaging: resourceName("artifact-staging", stage, region),
+      skills: resourceName("skills", stage, region),
+      toolBundles: resourceName("tool-bundles", stage, region),
     };
 
-    // ADMIN_ACCOUNT_SECRET, ACCOUNT_CONFIG_ENCRYPTION_SECRET, SERVICE_AUTH_SECRET,
-    // DAYTONA_API_KEY, and KUBERNETES_SANDBOX_KUBECONFIG are read from the
-    // environment above (CI-injected) — no `sst.Secret` resources.
-    //
+    const adminAccountSecret = new sst.Secret("AdminAccountSecret");
+    const accountConfigEncryptionSecret = new sst.Secret("AccountConfigEncryptionSecret");
+    // Shared token for trusted server-side callers (the dashboard's Convex run/sync
+    // proxy) that act on behalf of an account via the X-Account-Id header. Optional:
+    // the empty default keeps deploys working for stages that only use the public
+    // account-secret API; set a real value per stage to enable the service-token path.
+    const serviceAuthSecret = new sst.Secret("ServiceAuthSecret", "");
+    const daytonaApiKey = new sst.Secret("DaytonaApiKey");
+    // Base64 kubeconfig (SA bearer token) for the kubernetes sandbox provider. Optional:
+    // the placeholder keeps deploys working for stages that don't use this provider.
+    const kubernetesSandboxKubeconfig = new sst.Secret("KubernetesSandboxKubeconfig", "");
     // The kubeconfig (CA + token) is ~2.7KB — too big for a Lambda env var alongside
     // everything else (4KB hard limit). Store it in SSM and let the harness fetch it at
     // runtime; only the parameter name goes in the env. SecureString can't be empty, so
     // unset stages get a "unset" placeholder.
     const kubernetesSandboxKubeconfigParam = new aws.ssm.Parameter("KubernetesSandboxKubeconfigParam", {
-      name: `/broods/${stage}/kubernetes-sandbox-kubeconfig`,
+      name: `/filthy-panty/${stage}/kubernetes-sandbox-kubeconfig`,
       type: "SecureString",
-      value: KUBERNETES_SANDBOX_KUBECONFIG.length > 0 ? KUBERNETES_SANDBOX_KUBECONFIG : "unset",
+      value: kubernetesSandboxKubeconfig.value.apply((v) => (v && v.length > 0 ? v : "unset")),
     });
 
     // accounts / agents / crons DDB tables are skipped on production —
@@ -320,21 +280,21 @@ export default $config({
     const accountConfigsTable = useConvexStorage
       ? null
       : new sst.aws.Dynamo("AccountConfig", {
-          fields: {
-            accountId: "string",
-            secretHash: "string",
+        fields: {
+          accountId: "string",
+          secretHash: "string",
+        },
+        primaryIndex: { hashKey: "accountId" },
+        globalIndexes: {
+          SecretHashIndex: { hashKey: "secretHash" },
+        },
+        deletionProtection: false,
+        transform: {
+          table: {
+            name: names.accountConfigs,
           },
-          primaryIndex: { hashKey: "accountId" },
-          globalIndexes: {
-            SecretHashIndex: { hashKey: "secretHash" },
-          },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.accountConfigs,
-            },
-          },
-        });
+        },
+      });
 
     const accountSignupRateLimitTable = new sst.aws.Dynamo("AccountSignupRateLimit", {
       fields: {
@@ -342,7 +302,7 @@ export default $config({
       },
       primaryIndex: { hashKey: "rateLimitKey" },
       ttl: "expiresAt",
-      deletionProtection: isProduction,
+      deletionProtection: stage === "production",
       transform: {
         table: {
           name: names.accountSignupRateLimits,
@@ -353,84 +313,104 @@ export default $config({
     const agentConfigsTable = useConvexStorage
       ? null
       : new sst.aws.Dynamo("AgentConfig", {
-          fields: {
-            accountId: "string",
-            agentId: "string",
+        fields: {
+          accountId: "string",
+          agentId: "string",
+        },
+        primaryIndex: { hashKey: "accountId", rangeKey: "agentId" },
+        deletionProtection: false,
+        transform: {
+          table: {
+            name: names.agentConfigs,
           },
-          primaryIndex: { hashKey: "accountId", rangeKey: "agentId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.agentConfigs,
-            },
-          },
-        });
+        },
+      });
 
     // Account-scoped, reusable sandbox / workspace config records. Like agents,
     // these live in Convex on production and DynamoDB elsewhere.
     const sandboxConfigsTable = useConvexStorage
       ? null
       : new sst.aws.Dynamo("SandboxConfig", {
-          fields: {
-            accountId: "string",
-            sandboxId: "string",
+        fields: {
+          accountId: "string",
+          sandboxId: "string",
+        },
+        primaryIndex: { hashKey: "accountId", rangeKey: "sandboxId" },
+        deletionProtection: false,
+        transform: {
+          table: {
+            name: names.sandboxConfigs,
           },
-          primaryIndex: { hashKey: "accountId", rangeKey: "sandboxId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.sandboxConfigs,
-            },
-          },
-        });
+        },
+      });
 
     const workspaceConfigsTable = useConvexStorage
       ? null
       : new sst.aws.Dynamo("WorkspaceConfig", {
-          fields: {
-            accountId: "string",
-            workspaceId: "string",
+        fields: {
+          accountId: "string",
+          workspaceId: "string",
+        },
+        primaryIndex: { hashKey: "accountId", rangeKey: "workspaceId" },
+        deletionProtection: false,
+        transform: {
+          table: {
+            name: names.workspaceConfigs,
           },
-          primaryIndex: { hashKey: "accountId", rangeKey: "workspaceId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.workspaceConfigs,
-            },
-          },
-        });
+        },
+      });
 
     const accountToolsTable = useConvexStorage
       ? null
       : new sst.aws.Dynamo("AccountTool", {
-          fields: {
-            accountId: "string",
-            toolId: "string",
+        fields: {
+          accountId: "string",
+          toolId: "string",
+        },
+        primaryIndex: { hashKey: "accountId", rangeKey: "toolId" },
+        deletionProtection: false,
+        transform: {
+          table: {
+            name: names.accountTools,
           },
-          primaryIndex: { hashKey: "accountId", rangeKey: "toolId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.accountTools,
-            },
+        },
+      });
+
+    const artifactsTable = useConvexStorage
+      ? null
+      : new sst.aws.Dynamo("Artifact", {
+        fields: {
+          accountId: "string",
+          artifactId: "string",
+          conversationKey: "string",
+        },
+        primaryIndex: { hashKey: "accountId", rangeKey: "artifactId" },
+        globalIndexes: {
+          ConversationIndex: { hashKey: "accountId", rangeKey: "conversationKey" },
+        },
+        deletionProtection: stage === "production",
+        transform: {
+          table: {
+            name: names.artifacts,
           },
-        });
+        },
+      });
 
     const cronsTable = useConvexStorage
       ? null
       : new sst.aws.Dynamo("Cron", {
-          fields: {
-            accountId: "string",
-            cronId: "string",
+        fields: {
+          accountId: "string",
+          cronId: "string",
+        },
+        primaryIndex: { hashKey: "accountId", rangeKey: "cronId" },
+        deletionProtection: false,
+        transform: {
+          table: {
+            name: names.crons,
           },
-          primaryIndex: { hashKey: "accountId", rangeKey: "cronId" },
-          deletionProtection: false,
-          transform: {
-            table: {
-              name: names.crons,
-            },
-          },
-        });
+        },
+      });
 
     const conversationsTable = new sst.aws.Dynamo("Conversations", {
       fields: {
@@ -438,7 +418,7 @@ export default $config({
         createdAt: "string",
       },
       primaryIndex: { hashKey: "conversationKey", rangeKey: "createdAt" },
-      deletionProtection: isProduction,
+      deletionProtection: stage === "production",
       transform: {
         table: {
           name: names.conversations,
@@ -452,7 +432,7 @@ export default $config({
       },
       primaryIndex: { hashKey: "eventId" },
       ttl: "expiresAt",
-      deletionProtection: isProduction,
+      deletionProtection: stage === "production",
       transform: {
         table: {
           name: names.processedEvents,
@@ -460,33 +440,13 @@ export default $config({
       },
     });
 
-    // Per-task + rollup usage metering for DynamoDB-mode (OSS/self-host)
-    // deployments only; Convex-mode stages meter through the Convex provider, so
-    // this table (and USAGE_TABLE_NAME) is absent there. Composite pk/sk:
-    // pk=ACCOUNT#<id>, sk=TASK#<taskId> or ROLLUP#<agent>#<provider>#<model>#<bucket>.
-    const usageTable = useConvexStorage
-      ? null
-      : new sst.aws.Dynamo("Usage", {
-          fields: {
-            pk: "string",
-            sk: "string",
-          },
-          primaryIndex: { hashKey: "pk", rangeKey: "sk" },
-          deletionProtection: isProduction,
-          transform: {
-            table: {
-              name: names.usage,
-            },
-          },
-        });
-
     const asyncAgentResultTable = new sst.aws.Dynamo("AsyncAgentResult", {
       fields: {
         eventId: "string",
       },
       primaryIndex: { hashKey: "eventId" },
       ttl: "expiresAt",
-      deletionProtection: isProduction,
+      deletionProtection: stage === "production",
       transform: {
         table: {
           name: names.asyncAgentResult,
@@ -503,7 +463,7 @@ export default $config({
         ParentEventIdIndex: { hashKey: "parentEventId" },
       },
       ttl: "expiresAt",
-      deletionProtection: isProduction,
+      deletionProtection: stage === "production",
       transform: {
         table: {
           name: names.asyncToolResult,
@@ -518,32 +478,56 @@ export default $config({
       },
       primaryIndex: { hashKey: "instanceKey" },
       ttl: "expiresAt",
-      deletionProtection: isProduction,
+      deletionProtection: stage === "production",
       transform: {
         table: {
           name: names.persistentSandboxInstance,
         },
       },
     });
-    const filesystemBucketArn = `arn:aws:s3:::${names.filesystem}`;
+    const filesystemBucketArn = `arn:aws:s3:::${names.memory}`;
+    const artifactStagingBucketArn = `arn:aws:s3:::${names.artifactStaging}`;
     const skillsBucketArn = `arn:aws:s3:::${names.skills}`;
     const toolBundlesBucketArn = `arn:aws:s3:::${names.toolBundles}`;
-    const microvmArtifactsBucketArn = `arn:aws:s3:::${names.microvmArtifacts}`;
-    const filesystemBucket = new sst.aws.Bucket("Filesystem", {
+    const filesystemBucket = new sst.aws.Bucket("Memory", {
       versioning: true,
       policy: [denyUnlessProjectPrincipal(stage, region)],
       transform: {
         bucket: {
-          bucket: names.filesystem,
-          bucketNamespace: "account-regional",
+          bucket: names.memory,
         },
         publicAccessBlock: {
           blockPublicAcls: true,
-          ignorePublicAcls: false,
+          ignorePublicAcls: true,
           blockPublicPolicy: true,
           restrictPublicBuckets: true,
         },
       },
+    });
+    const artifactStagingBucket = new sst.aws.Bucket("ArtifactStaging", {
+      versioning: false,
+      policy: [denyUnlessProjectPrincipal(stage, region, false), denyInsecureTransport()],
+      transform: {
+        bucket: {
+          bucket: names.artifactStaging,
+        },
+        publicAccessBlock: {
+          blockPublicAcls: true,
+          ignorePublicAcls: true,
+          blockPublicPolicy: true,
+          restrictPublicBuckets: true,
+        },
+      },
+    });
+    new aws.s3.BucketLifecycleConfiguration("ArtifactStagingLifecycle", {
+      bucket: artifactStagingBucket.name,
+      rules: [{
+        id: "expire-staged-artifacts",
+        status: "Enabled",
+        filter: { prefix: "staging/" },
+        expiration: { days: 1 },
+        abortIncompleteMultipartUpload: { daysAfterInitiation: 1 },
+      }],
     });
 
     const skillsBucket = new sst.aws.Bucket("Skills", {
@@ -552,7 +536,6 @@ export default $config({
       transform: {
         bucket: {
           bucket: names.skills,
-          bucketNamespace: "account-regional",
         },
         publicAccessBlock: {
           blockPublicAcls: true,
@@ -569,7 +552,6 @@ export default $config({
       transform: {
         bucket: {
           bucket: names.toolBundles,
-          bucketNamespace: "account-regional",
         },
         publicAccessBlock: {
           blockPublicAcls: true,
@@ -580,117 +562,10 @@ export default $config({
       },
     });
 
-    const microvmArtifactsBucket = enableMicrovmPrereqs
-      ? new sst.aws.Bucket("MicrovmArtifacts", {
-          versioning: true,
-          policy: [denyUnlessProjectPrincipal(stage, region)],
-          transform: {
-            bucket: {
-              bucket: names.microvmArtifacts,
-              bucketNamespace: "account-regional",
-            },
-            publicAccessBlock: {
-              blockPublicAcls: true,
-              ignorePublicAcls: true,
-              blockPublicPolicy: true,
-              restrictPublicBuckets: true,
-            },
-          },
-        })
-      : null;
-
-    const microvmRoleTrustPolicy = JSON.stringify({
-      Version: "2012-10-17",
-      Statement: [
-        {
-          Effect: "Allow",
-          Principal: { Service: "lambda.amazonaws.com" },
-          Action: "sts:AssumeRole",
-          Condition: {
-            StringEquals: {
-              "aws:SourceAccount": AWS_ACCOUNT_ID,
-            },
-            ArnLike: {
-              "aws:SourceArn": [
-                `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm-image:*`,
-                `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm-image/*`,
-              ],
-            },
-          },
-        },
-      ],
-    });
-
-    const microvmBuildRole = enableMicrovmPrereqs
-      ? new aws.iam.Role("MicrovmBuildRole", {
-          name: names.microvmBuildRole,
-          assumeRolePolicy: microvmRoleTrustPolicy,
-        })
-      : null;
-
-    if (microvmBuildRole) {
-      new aws.iam.RolePolicy("MicrovmBuildRolePolicy", {
-        role: microvmBuildRole.id,
-        policy: JSON.stringify({
-          Version: "2012-10-17",
-          Statement: [
-            {
-              Sid: "ReadMicrovmArtifacts",
-              Effect: "Allow",
-              Action: ["s3:GetObject"],
-              Resource: [`${microvmArtifactsBucketArn}/microvm-images/*`],
-            },
-            {
-              Sid: "WriteMicrovmBuildLogs",
-              Effect: "Allow",
-              Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
-              Resource: [`arn:aws:logs:${region}:${AWS_ACCOUNT_ID}:log-group:/aws/lambda-microvms/*`],
-            },
-            {
-              Sid: "PullPrivateEcrBaseImages",
-              Effect: "Allow",
-              Action: ["ecr:GetAuthorizationToken"],
-              Resource: ["*"],
-            },
-            {
-              Sid: "PullPrivateEcrLayers",
-              Effect: "Allow",
-              Action: ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
-              Resource: [`arn:aws:ecr:${region}:${AWS_ACCOUNT_ID}:repository/*`],
-            },
-          ],
-        }),
-      });
-    }
-
-    const microvmExecutionRole = enableMicrovmPrereqs
-      ? new aws.iam.Role("MicrovmExecutionRole", {
-          name: names.microvmExecutionRole,
-          assumeRolePolicy: microvmRoleTrustPolicy,
-        })
-      : null;
-
-    if (microvmExecutionRole) {
-      new aws.iam.RolePolicy("MicrovmExecutionRolePolicy", {
-        role: microvmExecutionRole.id,
-        policy: JSON.stringify({
-          Version: "2012-10-17",
-          Statement: [
-            {
-              Sid: "WriteMicrovmRuntimeLogs",
-              Effect: "Allow",
-              Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
-              Resource: [`arn:aws:logs:${region}:${AWS_ACCOUNT_ID}:log-group:/aws/lambda-microvms/*`],
-            },
-          ],
-        }),
-      });
-    }
-
     // Setup the VPC for the sandbox connection. Uses fck-nat (nat: "ec2") on
     // non-production stages — a t4g.nano-based NAT solution ~10x cheaper than
     // a managed NAT Gateway. Production omits NAT entirely to avoid cost.
-    const sandboxNetwork = new sst.aws.Vpc.v1("SandboxNetwork", {
+    const sandboxNetwork = new sst.aws.Vpc("SandboxNetwork", {
       az: 2, // 2 az same price of 1 az.
       ...(isProduction ? {} : { nat: "ec2" }),
     });
@@ -699,22 +574,20 @@ export default $config({
       name: resourceName("sandbox-s3files", stage, region),
       assumeRolePolicy: JSON.stringify({
         Version: "2012-10-17",
-        Statement: [
-          {
-            Sid: "AllowS3FilesAssumeRole",
-            Effect: "Allow",
-            Principal: { Service: "elasticfilesystem.amazonaws.com" },
-            Action: "sts:AssumeRole",
-            Condition: {
-              StringEquals: {
-                "aws:SourceAccount": AWS_ACCOUNT_ID,
-              },
-              ArnLike: {
-                "aws:SourceArn": `arn:aws:s3files:${region}:${AWS_ACCOUNT_ID}:file-system/*`,
-              },
+        Statement: [{
+          Sid: "AllowS3FilesAssumeRole",
+          Effect: "Allow",
+          Principal: { Service: "elasticfilesystem.amazonaws.com" },
+          Action: "sts:AssumeRole",
+          Condition: {
+            StringEquals: {
+              "aws:SourceAccount": AWS_ACCOUNT_ID,
+            },
+            ArnLike: {
+              "aws:SourceArn": `arn:aws:s3files:${region}:${AWS_ACCOUNT_ID}:file-system/*`,
             },
           },
-        ],
+        }],
       }),
     });
 
@@ -742,7 +615,12 @@ export default $config({
           },
           {
             Effect: "Allow",
-            Action: ["s3:HeadBucket", "s3:ListBucket", "s3:ListBucketVersions", "s3:ListBucketMultipartUploads"],
+            Action: [
+              "s3:HeadBucket",
+              "s3:ListBucket",
+              "s3:ListBucketVersions",
+              "s3:ListBucketMultipartUploads",
+            ],
             Resource: [filesystemBucketArn],
             Condition: {
               StringEquals: {
@@ -789,14 +667,12 @@ export default $config({
       name: resourceName("sandbox-s3mount", stage, region),
       assumeRolePolicy: JSON.stringify({
         Version: "2012-10-17",
-        Statement: [
-          {
-            Sid: "AllowHarnessAssumeRole",
-            Effect: "Allow",
-            Principal: { AWS: `arn:aws:iam::${AWS_ACCOUNT_ID}:root` },
-            Action: "sts:AssumeRole",
-          },
-        ],
+        Statement: [{
+          Sid: "AllowHarnessAssumeRole",
+          Effect: "Allow",
+          Principal: { AWS: `arn:aws:iam::${AWS_ACCOUNT_ID}:root` },
+          Action: "sts:AssumeRole",
+        }],
       }),
     });
 
@@ -807,7 +683,12 @@ export default $config({
         Statement: [
           {
             Effect: "Allow",
-            Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+            Action: [
+              "s3:GetObject",
+              "s3:PutObject",
+              "s3:DeleteObject",
+              "s3:AbortMultipartUpload",
+            ],
             Resource: [`${filesystemBucketArn}/*`],
           },
           {
@@ -829,17 +710,13 @@ export default $config({
       }),
     });
 
-    const sandboxS3Files = new aws.s3.FilesFileSystem(
-      "SandboxS3Files",
-      {
-        bucket: filesystemBucketArn,
-        roleArn: s3FilesRole.arn,
-        acceptBucketWarning: true,
-      },
-      {
-        dependsOn: [filesystemBucket],
-      },
-    );
+    const sandboxS3Files = new aws.s3.FilesFileSystem("SandboxS3Files", {
+      bucket: filesystemBucketArn,
+      roleArn: s3FilesRole.arn,
+      acceptBucketWarning: true,
+    }, {
+      dependsOn: [filesystemBucket],
+    });
 
     const sandboxS3FilesAccessPoint = new aws.s3.FilesAccessPoint("SandboxS3FilesAccessPoint", {
       fileSystemId: sandboxS3Files.id,
@@ -858,23 +735,19 @@ export default $config({
       // the same prefix via workspaceNamespacePrefix(). If you change this path, change
       // WORKSPACE_MOUNT_PREFIX to match or the harness and sandbox stop seeing each
       // other's files (publish loses bash-written files; loads show an empty mount).
-      rootDirectories: [
-        {
-          path: "/sandbox",
-          creationPermissions: [
-            {
-              ownerUid: 1000,
-              ownerGid: 1000,
-              permissions: "777",
-            },
-          ],
-        },
-      ],
+      rootDirectories: [{
+        path: "/sandbox",
+        creationPermissions: [{
+          ownerUid: 1000,
+          ownerGid: 1000,
+          permissions: "777",
+        }],
+      }],
     });
 
     new aws.vpc.SecurityGroupIngressRule("SandboxS3FilesNfsIngress", {
-      securityGroupId: sandboxNetwork.securityGroups[0]!,
-      referencedSecurityGroupId: sandboxNetwork.securityGroups[0]!,
+      securityGroupId: sandboxNetwork.securityGroups.apply((ids) => ids[0]!),
+      referencedSecurityGroupId: sandboxNetwork.securityGroups.apply((ids) => ids[0]!),
       ipProtocol: "tcp",
       fromPort: 2049,
       toPort: 2049,
@@ -892,6 +765,24 @@ export default $config({
       securityGroups: sandboxNetwork.securityGroups,
     });
 
+    const mockWebhookSubscribe = new sst.aws.Function("MockWebhookSubscribe", {
+      name: names.webhookSubscribeMock,
+      runtime: "python3.12",
+      architecture: "arm64",
+      bundle: "functions/mock-webhook-subscribe",
+      handler: "handler.handler",
+      description: "Mock webhook subscription endpoint for testing inbound webhooks.",
+      timeout: "30 seconds",
+      memory: "128 MB",
+      url: {
+        authorization: "none",
+      },
+      logging: { format: "json", retention: "1 month" },
+      environment: {
+        MOCK_WEBHOOK_SECRET: process.env.MOCK_WEBHOOK_SECRET ?? "",
+      },
+    });
+
     // This app owns the sandbox image ECR repo (moved out of the infra Terraform repo) so
     // the repo lifecycle stays in sync with the functions that consume it — no cross-repo
     // coordination. Lambda pulls only from PRIVATE ECR in its own region (public.ecr.aws is
@@ -900,25 +791,14 @@ export default $config({
     // land before the sandbox functions can be created (the first deploy creates the empty
     // repo, then re-deploy once the image exists). See docs/workspace/sandbox/lambda.md.
     const sandboxImageRepoName = `beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${region}`;
-    const sandboxImageRepoExists = ecrRepositoryExists(sandboxImageRepoName, region);
-    const sandboxImageRepoShouldImport = SANDBOX_IMAGE_READY || sandboxImageRepoExists;
-    const sandboxEcr = new aws.ecr.Repository(
-      "SandboxImage",
-      {
-        name: sandboxImageRepoName,
-        imageTagMutability: "MUTABLE",
-        imageScanningConfiguration: { scanOnPush: true },
-        forceDelete: !isProduction,
-      },
-      {
-        retainOnDelete: isProduction,
-        // The repo name is intentionally not PROJECT_NAME-scoped (the external lambda-sanbdox
-        // CI pushes `latest-arm64` to this exact name). When SANDBOX_IMAGE_READY is true,
-        // the deploy workflow has already ensured the regional repo exists, so import it
-        // even if the local describe probe cannot run from inside SST config evaluation.
-        ...(sandboxImageRepoShouldImport ? { import: sandboxImageRepoName } : {}),
-      },
-    );
+    const sandboxEcr = new aws.ecr.Repository("SandboxImage", {
+      name: sandboxImageRepoName,
+      imageTagMutability: "MUTABLE",
+      imageScanningConfiguration: { scanOnPush: true },
+      forceDelete: !isProduction,
+    }, {
+      retainOnDelete: isProduction,
+    });
 
     // Wide pull mirrors the prior infra policy. Same-account Lambda pulls work without it;
     // cross-account consumers (kubernetes / daytona sandbox providers) rely on it.
@@ -926,34 +806,21 @@ export default $config({
       repository: sandboxEcr.name,
       policy: JSON.stringify({
         Version: "2012-10-17",
-        Statement: [
-          {
-            Sid: "AllowCrossAccountPull",
-            Effect: "Allow",
-            Principal: "*",
-            Action: ["ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage", "ecr:BatchCheckLayerAvailability"],
-          },
-        ],
+        Statement: [{
+          Sid: "AllowCrossAccountPull",
+          Effect: "Allow",
+          Principal: "*",
+          Action: [
+            "ecr:GetDownloadUrlForLayer",
+            "ecr:BatchGetImage",
+            "ecr:BatchCheckLayerAvailability",
+          ],
+        }],
       }),
     });
 
-    // ARM64-only image; there is no multi-arch `latest` manifest, so the source tag is
-    // `latest-arm64`. Pin the function to the tag's *resolved digest* rather than the
-    // mutable tag: with a bare tag, Pulumi diffs the unchanged tag string and never
-    // updates the function, so a freshly pushed image (e.g. the lambda-sanbdox bash
-    // durability fix) silently never rolls out. Resolving the digest at deploy time makes
-    // the imageUri change whenever the tag moves, so each deploy rolls the current image.
-    // Only resolve when SANDBOX_IMAGE_READY: the lookup requires the image to already
-    // exist in ECR, which the flag guarantees (a brand-new region's first deploy leaves it
-    // false, skips the functions, and never queries). See docs/workspace/sandbox/lambda.md.
-    const sandboxImageUri = SANDBOX_IMAGE_READY
-      ? $interpolate`${sandboxEcr.repositoryUrl}@${
-          aws.ecr.getImageOutput({
-            repositoryName: sandboxEcr.name,
-            imageTag: "latest-arm64",
-          }).imageDigest
-        }`
-      : $interpolate`${sandboxEcr.repositoryUrl}:latest-arm64`;
+    // ARM64-only image; there is no multi-arch `latest` manifest, so pin the arch tag.
+    const sandboxImageUri = $interpolate`${sandboxEcr.repositoryUrl}:latest-arm64`;
 
     // The uniform sandbox image is deployed across two axes — workspace mount (VPC +
     // S3 Files mount) vs none, and internet on vs off. The harness auto-selects the
@@ -965,11 +832,7 @@ export default $config({
     // and the fastest cold start. Internet-off functions use a restricted security group
     // that drops all egress except NFS (port 2049) to the S3 Files mount targets —
     // blocking outbound internet even though the subnets route through NAT.
-    const sandboxMountPermissions = sandboxRuntimePermissions(
-      filesystemBucketArn,
-      sandboxS3Files.arn,
-      sandboxS3FilesAccessPoint.arn,
-    );
+    const sandboxMountPermissions = sandboxRuntimePermissions(filesystemBucketArn, sandboxS3Files.arn, sandboxS3FilesAccessPoint.arn);
 
     // Security group for internet-off sandbox functions. Removes the default allow-all
     // egress so Lambda cannot reach the public internet. NFS egress to the VPC security
@@ -977,20 +840,18 @@ export default $config({
     const sandboxNoNetSecurityGroup = new aws.ec2.SecurityGroup("SandboxNoNetSecurityGroup", {
       vpcId: sandboxNetwork.nodes.vpc.id,
       description: "No-internet sandbox: blocks outbound internet, allows NFS to S3 Files only",
-      egress: [
-        {
-          protocol: "tcp",
-          fromPort: 2049,
-          toPort: 2049,
-          securityGroups: sandboxNetwork.securityGroups.slice(0, 1),
-          description: "Allow NFS egress to S3 Files mount targets",
-        },
-      ],
+      egress: [{
+        protocol: "tcp",
+        fromPort: 2049,
+        toPort: 2049,
+        securityGroups: sandboxNetwork.securityGroups.apply((ids) => ids.slice(0, 1)),
+        description: "Allow NFS egress to S3 Files mount targets",
+      }],
       tags: { Name: resourceName("sandbox-nonet-sg", stage, region) },
     });
     // Allow NFS ingress to the S3 Files mount targets from the no-internet security group.
     new aws.vpc.SecurityGroupIngressRule("SandboxS3FilesNfsIngressNoNet", {
-      securityGroupId: sandboxNetwork.securityGroups[0]!,
+      securityGroupId: sandboxNetwork.securityGroups.apply((ids) => ids[0]!),
       referencedSecurityGroupId: sandboxNoNetSecurityGroup.id,
       ipProtocol: "tcp",
       fromPort: 2049,
@@ -1003,17 +864,9 @@ export default $config({
     // wiring SST would otherwise manage. Axes: workspace mount (VPC + S3 Files) and VPC.
     const sandboxImageFunction = (
       logical: string,
-      cfg: {
-        name: string;
-        description: string;
-        mount: boolean;
-        vpc: boolean;
-        securityGroupIds?: $util.Input<string[]>;
-      },
+      cfg: { name: string; description: string; mount: boolean; vpc: boolean; securityGroupIds?: $util.Input<string[]> },
     ) => {
-      const role = new aws.iam.Role(`${logical}Role`, {
-        assumeRolePolicy: LAMBDA_ASSUME_ROLE,
-      });
+      const role = new aws.iam.Role(`${logical}Role`, { assumeRolePolicy: LAMBDA_ASSUME_ROLE });
 
       new aws.iam.RolePolicyAttachment(`${logical}LogsPolicy`, {
         role: role.name,
@@ -1038,44 +891,41 @@ export default $config({
         retentionInDays: 30,
       });
 
-      return new aws.lambda.Function(
-        logical,
-        {
-          name: cfg.name,
-          packageType: "Image",
-          imageUri: sandboxImageUri,
-          architectures: ["arm64"],
-          role: role.arn,
-          description: cfg.description,
-          timeout: 300,
-          memorySize: 512, // Minimum AWS requires for the S3 mount + sandbox execution.
-          environment: { variables: { SANDBOX_WORKSPACE_MOUNT_PATH } },
-          loggingConfig: { logFormat: "JSON", logGroup: logGroup.name },
-          ...(cfg.vpc
-            ? {
-                vpcConfig: {
-                  subnetIds: sandboxNetwork.privateSubnets,
-                  securityGroupIds: cfg.securityGroupIds ?? sandboxNetwork.securityGroups,
-                },
-              }
-            : {}),
-          ...(cfg.mount
-            ? {
-                fileSystemConfig: {
-                  arn: sandboxS3FilesAccessPoint.arn,
-                  localMountPath: SANDBOX_WORKSPACE_MOUNT_PATH,
-                },
-              }
-            : {}),
-        },
-        { dependsOn: [logGroup] },
-      );
+      return new aws.lambda.Function(logical, {
+        name: cfg.name,
+        packageType: "Image",
+        imageUri: sandboxImageUri,
+        architectures: ["arm64"],
+        role: role.arn,
+        description: cfg.description,
+        timeout: 300,
+        memorySize: 512, // Minimum AWS requires for the S3 mount + sandbox execution.
+        environment: { variables: { SANDBOX_WORKSPACE_MOUNT_PATH } },
+        loggingConfig: { logFormat: "JSON", logGroup: logGroup.name },
+        ...(cfg.vpc
+          ? {
+            vpcConfig: {
+              subnetIds: sandboxNetwork.privateSubnets,
+              securityGroupIds: cfg.securityGroupIds ?? sandboxNetwork.securityGroups,
+            },
+          }
+          : {}),
+        ...(cfg.mount
+          ? {
+            fileSystemConfig: {
+              arn: sandboxS3FilesAccessPoint.arn,
+              localMountPath: SANDBOX_WORKSPACE_MOUNT_PATH,
+            },
+          }
+          : {}),
+      }, { dependsOn: [logGroup] });
     };
 
     // Harness wiring (env, IAM, outputs) always uses the deterministic function names/ARNs,
     // so it is correct whether or not the functions exist yet. The function *resources* are
     // created only once the arm64 image is in ECR (SANDBOX_IMAGE_READY=true) — see the flag.
-    const sandboxFunctionArn = (name: string) => `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:function:${name}`;
+    const sandboxFunctionArn = (name: string) =>
+      `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:function:${name}`;
 
     if (SANDBOX_IMAGE_READY) {
       sandboxImageFunction("SandboxMountNet", {
@@ -1130,49 +980,48 @@ export default $config({
         ASYNC_AGENT_RESULT_TABLE_NAME: asyncAgentResultTable.name,
         ASYNC_TOOL_RESULT_TABLE_NAME: asyncToolResultTable.name,
         PERSISTENT_SANDBOX_INSTANCE_TABLE_NAME: persistentSandboxInstanceTable.name,
-        ...(accountConfigsTable ? { ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name } : {}),
-        ...(agentConfigsTable ? { AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name } : {}),
-        ...(sandboxConfigsTable ? { SANDBOX_CONFIGS_TABLE_NAME: sandboxConfigsTable.name } : {}),
-        ...(workspaceConfigsTable ? { WORKSPACE_CONFIGS_TABLE_NAME: workspaceConfigsTable.name } : {}),
-        ...(accountToolsTable ? { ACCOUNT_TOOLS_TABLE_NAME: accountToolsTable.name } : {}),
+        ...(accountConfigsTable
+          ? { ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name }
+          : {}),
+        ...(agentConfigsTable
+          ? { AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name }
+          : {}),
+        ...(sandboxConfigsTable
+          ? { SANDBOX_CONFIGS_TABLE_NAME: sandboxConfigsTable.name }
+          : {}),
+        ...(workspaceConfigsTable
+          ? { WORKSPACE_CONFIGS_TABLE_NAME: workspaceConfigsTable.name }
+          : {}),
+        ...(accountToolsTable
+          ? { ACCOUNT_TOOLS_TABLE_NAME: accountToolsTable.name }
+          : {}),
+        ...(artifactsTable
+          ? { ARTIFACTS_TABLE_NAME: artifactsTable.name }
+          : {}),
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
-        ACCOUNT_CONFIG_ENCRYPTION_SECRET,
-        SERVICE_AUTH_SECRET,
-        FILESYSTEM_BUCKET_NAME: names.filesystem,
+        ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
+        SERVICE_AUTH_SECRET: serviceAuthSecret.value,
+        FILESYSTEM_BUCKET_NAME: names.memory,
+        ARTIFACT_STAGING_BUCKET_NAME: names.artifactStaging,
         SKILLS_BUCKET_NAME: names.skills,
         TOOL_BUNDLES_BUCKET_NAME: names.toolBundles,
-        ...(microvmBuildRole && microvmExecutionRole
-          ? {
-              MICROVM_ARTIFACTS_BUCKET_NAME: names.microvmArtifacts,
-              MICROVM_BUILD_ROLE_ARN: microvmBuildRole.arn,
-              MICROVM_EXECUTION_ROLE_ARN: microvmExecutionRole.arn,
-            }
-          : {}),
         ENABLE_DIRECT_API: ENABLE_DIRECT_API ? "true" : "false",
         ENABLE_WEBSOCKET: ENABLE_WEBSOCKET ? "true" : "false",
         SANDBOX_FN_MOUNT_NET: names.sandboxMountNet,
         SANDBOX_FN_MOUNT_NONET: names.sandboxMountNonet,
         SANDBOX_FN_NOMOUNT_NET: names.sandboxNomountNet,
         SANDBOX_FN_NOMOUNT_NONET: names.sandboxNomountNonet,
-        ...(cronsTable ? { CRONS_TABLE_NAME: cronsTable.name } : {}),
+        ...(cronsTable
+          ? { CRONS_TABLE_NAME: cronsTable.name }
+          : {}),
         ...(NATS_URL ? { NATS_URL } : {}),
         ...(NATS_TOKEN ? { NATS_TOKEN } : {}),
-        ...(OTEL_EXPORTER_OTLP_ENDPOINT ? { OTEL_EXPORTER_OTLP_ENDPOINT } : {}),
-        ...(OTEL_EXPORTER_OTLP_HEADERS ? { OTEL_EXPORTER_OTLP_HEADERS } : {}),
-        ...(usageTable ? { USAGE_TABLE_NAME: usageTable.name } : {}),
-        DAYTONA_API_KEY,
+        DAYTONA_API_KEY: daytonaApiKey.value,
         SANDBOX_MOUNT_ROLE_ARN: sandboxS3MountRole.arn,
         ...(DAYTONA_ORGANIZATION_ID ? { DAYTONA_ORGANIZATION_ID } : {}),
         ...(DAYTONA_API_URL ? { DAYTONA_API_URL } : {}),
         ...(DAYTONA_TARGET ? { DAYTONA_TARGET } : {}),
         KUBERNETES_SANDBOX_KUBECONFIG_SSM: kubernetesSandboxKubeconfigParam.name,
-        // k3s serves a self-signed API cert, and the bun-compiled Lambda runtime's fetch
-        // ignores the kubeconfig CA / insecure-skip-tls-verify (only this env is honored).
-        // Scope the TLS-verification opt-out to non-production stages, where the kubernetes
-        // sandbox provider is exercised. Production must front the API with a trusted cert
-        // (or bundle the CA via NODE_EXTRA_CA_CERTS) before enabling this provider — we do
-        // NOT weaken TLS on the production harness, which handles account secrets.
-        ...(isProduction ? {} : { NODE_TLS_REJECT_UNAUTHORIZED: "0" }),
         ...(KUBERNETES_SANDBOX_NAMESPACE ? { KUBERNETES_SANDBOX_NAMESPACE } : {}),
         ...(KUBERNETES_SANDBOX_IMAGE ? { KUBERNETES_SANDBOX_IMAGE } : {}),
         ...(KUBERNETES_SANDBOX_SERVICE_ACCOUNT ? { KUBERNETES_SANDBOX_SERVICE_ACCOUNT } : {}),
@@ -1193,82 +1042,103 @@ export default $config({
           resources: ["*"],
         },
         ...(accountConfigsTable
-          ? [
-              {
-                actions: ["dynamodb:GetItem", "dynamodb:Query"],
-                resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
-              },
-            ]
+          ? [{
+            actions: [
+              "dynamodb:GetItem",
+              "dynamodb:Query",
+            ],
+            resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
+          }]
           : []),
         ...(agentConfigsTable
-          ? [
-              {
-                actions: ["dynamodb:GetItem", "dynamodb:Query"],
-                resources: [agentConfigsTable.arn],
-              },
-            ]
+          ? [{
+            actions: [
+              "dynamodb:GetItem",
+              "dynamodb:Query",
+            ],
+            resources: [agentConfigsTable.arn],
+          }]
           : []),
         ...(sandboxConfigsTable
-          ? [
-              {
-                actions: ["dynamodb:GetItem", "dynamodb:Query"],
-                resources: [sandboxConfigsTable.arn],
-              },
-            ]
+          ? [{
+            actions: [
+              "dynamodb:GetItem",
+              "dynamodb:Query",
+            ],
+            resources: [sandboxConfigsTable.arn],
+          }]
           : []),
         ...(workspaceConfigsTable
-          ? [
-              {
-                actions: ["dynamodb:GetItem", "dynamodb:Query"],
-                resources: [workspaceConfigsTable.arn],
-              },
-            ]
+          ? [{
+            actions: [
+              "dynamodb:GetItem",
+              "dynamodb:Query",
+            ],
+            resources: [workspaceConfigsTable.arn],
+          }]
           : []),
         ...(accountToolsTable
-          ? [
-              {
-                actions: ["dynamodb:GetItem", "dynamodb:Query"],
-                resources: [accountToolsTable.arn],
-              },
-            ]
+          ? [{
+            actions: [
+              "dynamodb:GetItem",
+              "dynamodb:Query",
+            ],
+            resources: [accountToolsTable.arn],
+          }]
+          : []),
+        ...(artifactsTable
+          ? [{
+            actions: [
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:Query",
+              "dynamodb:UpdateItem",
+            ],
+            resources: [artifactsTable.arn, $interpolate`${artifactsTable.arn}/index/ConversationIndex`],
+          }]
           : []),
         {
           actions: [
             "dynamodb:BatchWriteItem",
             "dynamodb:Query",
             "dynamodb:PutItem",
-            "dynamodb:UpdateItem",
             "dynamodb:DeleteItem",
           ],
           resources: [conversationsTable.arn, processedEventsTable.arn],
         },
         {
-          actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"],
+          actions: [
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+          ],
           resources: [asyncAgentResultTable.arn],
         },
         {
-          actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"],
+          actions: [
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+          ],
           resources: [asyncToolResultTable.arn],
         },
         {
-          actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"],
+          actions: [
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
+          ],
           resources: [persistentSandboxInstanceTable.arn],
         },
         ...(cronsTable
-          ? [
-              {
-                actions: ["dynamodb:GetItem", "dynamodb:UpdateItem"],
-                resources: [cronsTable.arn],
-              },
-            ]
-          : []),
-        ...(usageTable
-          ? [
-              {
-                actions: ["dynamodb:PutItem", "dynamodb:UpdateItem"],
-                resources: [usageTable.arn],
-              },
-            ]
+          ? [{
+            actions: [
+              "dynamodb:GetItem",
+              "dynamodb:UpdateItem",
+            ],
+            resources: [cronsTable.arn],
+          }]
           : []),
         {
           // Self-invoke (async worker) + read its own Function URL so background
@@ -1285,55 +1155,35 @@ export default $config({
             sandboxFunctionArn(names.sandboxNomountNonet),
           ],
         },
-        ...(microvmBuildRole && microvmExecutionRole
-          ? [
-              {
-                actions: [
-                  "lambda:CreateMicrovmImage",
-                  "lambda:UpdateMicrovmImage",
-                  "lambda:DeleteMicrovmImage",
-                  "lambda:DeleteMicrovmImageVersion",
-                  "lambda:GetMicrovmImage",
-                  "lambda:ListMicrovmImages",
-                  "lambda:ListMicrovmImageVersions",
-                  "lambda:ListMicrovmImageBuilds",
-                  "lambda:RunMicrovm",
-                  "lambda:GetMicrovm",
-                  "lambda:ListMicrovms",
-                  "lambda:SuspendMicrovm",
-                  "lambda:ResumeMicrovm",
-                  "lambda:TerminateMicrovm",
-                  "lambda:CreateMicrovmAuthToken",
-                  "lambda:CreateMicrovmShellAuthToken",
-                ],
-                resources: [
-                  `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm-image:*`,
-                  `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm:*`,
-                ],
-              },
-              {
-                actions: ["lambda:PassNetworkConnector"],
-                resources: [
-                  `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:*`,
-                  `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:network-connector:*`,
-                ],
-              },
-              {
-                actions: ["iam:PassRole"],
-                resources: [microvmBuildRole.arn, microvmExecutionRole.arn],
-              },
-            ]
-          : []),
         {
-          actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
+          actions: [
+            "s3:GetObject",
+            "s3:HeadObject",
+            "s3:PutObject",
+            "s3:DeleteObject",
+          ],
           resources: [`${filesystemBucketArn}/*`],
+        },
+        {
+          actions: [
+            "s3:GetObject",
+            "s3:HeadObject",
+            "s3:PutObject",
+            "s3:DeleteObject",
+          ],
+          resources: [`${artifactStagingBucketArn}/*`],
         },
         {
           actions: ["s3:ListBucket"],
           resources: [filesystemBucketArn],
         },
         {
-          actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
+          actions: [
+            "s3:GetObject",
+            "s3:HeadObject",
+            "s3:PutObject",
+            "s3:DeleteObject",
+          ],
           resources: [`${skillsBucketArn}/*`],
         },
         {
@@ -1341,25 +1191,16 @@ export default $config({
           resources: [skillsBucketArn],
         },
         {
-          actions: ["s3:GetObject", "s3:HeadObject"],
+          actions: [
+            "s3:GetObject",
+            "s3:HeadObject",
+          ],
           resources: [`${toolBundlesBucketArn}/*`],
         },
         {
           actions: ["s3:ListBucket"],
           resources: [toolBundlesBucketArn],
         },
-        ...(microvmArtifactsBucket
-          ? [
-              {
-                actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
-                resources: [`${microvmArtifactsBucketArn}/microvm-images/*`],
-              },
-              {
-                actions: ["s3:ListBucket"],
-                resources: [microvmArtifactsBucketArn],
-              },
-            ]
-          : []),
       ],
     });
 
@@ -1371,30 +1212,24 @@ export default $config({
       name: resourceName("cron-scheduler", stage, region),
       assumeRolePolicy: JSON.stringify({
         Version: "2012-10-17",
-        Statement: [
-          {
-            Effect: "Allow",
-            Principal: { Service: "scheduler.amazonaws.com" },
-            Action: "sts:AssumeRole",
-          },
-        ],
+        Statement: [{
+          Effect: "Allow",
+          Principal: { Service: "scheduler.amazonaws.com" },
+          Action: "sts:AssumeRole",
+        }],
       }),
     });
 
     new aws.iam.RolePolicy("CronSchedulerRolePolicy", {
       role: cronSchedulerRole.id,
-      policy: harnessProcessing.arn.apply((arn) =>
-        JSON.stringify({
-          Version: "2012-10-17",
-          Statement: [
-            {
-              Effect: "Allow",
-              Action: ["lambda:InvokeFunction"],
-              Resource: [arn],
-            },
-          ],
-        }),
-      ),
+      policy: harnessProcessing.arn.apply((arn) => JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{
+          Effect: "Allow",
+          Action: ["lambda:InvokeFunction"],
+          Resource: [arn],
+        }],
+      })),
     });
 
     const accountManage = new sst.aws.Function("AccountManage", {
@@ -1404,8 +1239,8 @@ export default $config({
       bundle: "dist/account-manage",
       handler: "bootstrap",
       description: "Manages accounts, account secrets, and account-level harness configuration.",
-      timeout: "10 seconds",
-      memory: "128 MB",
+      timeout: "60 seconds",
+      memory: "256 MB",
       streaming: true,
       // Can configure additional service for authentication, here we keep it simple
       url: {
@@ -1414,120 +1249,129 @@ export default $config({
       logging: { format: "json", retention: "1 month" },
       environment: {
         ...storageEnv,
-        ...(accountConfigsTable ? { ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name } : {}),
-        ...(agentConfigsTable ? { AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name } : {}),
-        ...(sandboxConfigsTable ? { SANDBOX_CONFIGS_TABLE_NAME: sandboxConfigsTable.name } : {}),
-        ...(workspaceConfigsTable ? { WORKSPACE_CONFIGS_TABLE_NAME: workspaceConfigsTable.name } : {}),
-        ...(accountToolsTable ? { ACCOUNT_TOOLS_TABLE_NAME: accountToolsTable.name } : {}),
+        ...(accountConfigsTable
+          ? { ACCOUNT_CONFIGS_TABLE_NAME: accountConfigsTable.name }
+          : {}),
+        ...(agentConfigsTable
+          ? { AGENT_CONFIGS_TABLE_NAME: agentConfigsTable.name }
+          : {}),
+        ...(sandboxConfigsTable
+          ? { SANDBOX_CONFIGS_TABLE_NAME: sandboxConfigsTable.name }
+          : {}),
+        ...(workspaceConfigsTable
+          ? { WORKSPACE_CONFIGS_TABLE_NAME: workspaceConfigsTable.name }
+          : {}),
+        ...(accountToolsTable
+          ? { ACCOUNT_TOOLS_TABLE_NAME: accountToolsTable.name }
+          : {}),
+        ...(artifactsTable
+          ? { ARTIFACTS_TABLE_NAME: artifactsTable.name }
+          : {}),
         ACCOUNT_SECRET_INDEX_NAME: "SecretHashIndex",
         CONVERSATIONS_TABLE_NAME: conversationsTable.name,
         PROCESSED_EVENTS_TABLE_NAME: processedEventsTable.name,
         ASYNC_AGENT_RESULT_TABLE_NAME: asyncAgentResultTable.name,
         ASYNC_TOOL_RESULT_TABLE_NAME: asyncToolResultTable.name,
         PERSISTENT_SANDBOX_INSTANCE_TABLE_NAME: persistentSandboxInstanceTable.name,
-        FILESYSTEM_BUCKET_NAME: names.filesystem,
+        FILESYSTEM_BUCKET_NAME: names.memory,
+        ARTIFACT_STAGING_BUCKET_NAME: names.artifactStaging,
         SKILLS_BUCKET_NAME: names.skills,
         TOOL_BUNDLES_BUCKET_NAME: names.toolBundles,
-        ...(microvmArtifactsBucket ? { MICROVM_ARTIFACTS_BUCKET_NAME: names.microvmArtifacts } : {}),
         ACCOUNT_SIGNUP_RATE_LIMIT_TABLE_NAME: accountSignupRateLimitTable.name,
         ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR: "5",
-        ADMIN_ACCOUNT_SECRET,
-        ACCOUNT_CONFIG_ENCRYPTION_SECRET,
-        SERVICE_AUTH_SECRET,
-        ...(NATS_URL ? { NATS_URL } : {}),
-        ...(NATS_TOKEN ? { NATS_TOKEN } : {}),
-        ...(OTEL_EXPORTER_OTLP_ENDPOINT ? { OTEL_EXPORTER_OTLP_ENDPOINT } : {}),
-        ...(OTEL_EXPORTER_OTLP_HEADERS ? { OTEL_EXPORTER_OTLP_HEADERS } : {}),
-        ...(cronsTable ? { CRONS_TABLE_NAME: cronsTable.name } : {}),
+        ADMIN_ACCOUNT_SECRET: adminAccountSecret.value,
+        ACCOUNT_CONFIG_ENCRYPTION_SECRET: accountConfigEncryptionSecret.value,
+        SERVICE_AUTH_SECRET: serviceAuthSecret.value,
+        ...(cronsTable
+          ? { CRONS_TABLE_NAME: cronsTable.name }
+          : {}),
         CRON_SCHEDULER_TARGET_FUNCTION_ARN: harnessProcessing.arn,
         CRON_SCHEDULER_ROLE_ARN: cronSchedulerRole.arn,
         CRON_SCHEDULER_GROUP_NAME: cronScheduleGroup.name,
       },
       permissions: [
         ...(accountConfigsTable
-          ? [
-              {
-                actions: [
-                  "dynamodb:DeleteItem",
-                  "dynamodb:GetItem",
-                  "dynamodb:PutItem",
-                  "dynamodb:Query",
-                  "dynamodb:Scan",
-                  "dynamodb:UpdateItem",
-                ],
-                resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
-              },
-            ]
+          ? [{
+            actions: [
+              "dynamodb:DeleteItem",
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:Query",
+              "dynamodb:Scan",
+              "dynamodb:UpdateItem",
+            ],
+            resources: [accountConfigsTable.arn, $interpolate`${accountConfigsTable.arn}/index/SecretHashIndex`],
+          }]
           : []),
         ...(agentConfigsTable
-          ? [
-              {
-                actions: [
-                  "dynamodb:DeleteItem",
-                  "dynamodb:GetItem",
-                  "dynamodb:PutItem",
-                  "dynamodb:Query",
-                  "dynamodb:UpdateItem",
-                ],
-                resources: [agentConfigsTable.arn],
-              },
-            ]
+          ? [{
+            actions: [
+              "dynamodb:DeleteItem",
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:Query",
+              "dynamodb:UpdateItem",
+            ],
+            resources: [agentConfigsTable.arn],
+          }]
           : []),
         ...(sandboxConfigsTable
-          ? [
-              {
-                actions: [
-                  "dynamodb:DeleteItem",
-                  "dynamodb:GetItem",
-                  "dynamodb:PutItem",
-                  "dynamodb:Query",
-                  "dynamodb:UpdateItem",
-                ],
-                resources: [sandboxConfigsTable.arn],
-              },
-            ]
+          ? [{
+            actions: [
+              "dynamodb:DeleteItem",
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:Query",
+              "dynamodb:UpdateItem",
+            ],
+            resources: [sandboxConfigsTable.arn],
+          }]
           : []),
         ...(workspaceConfigsTable
-          ? [
-              {
-                actions: [
-                  "dynamodb:DeleteItem",
-                  "dynamodb:GetItem",
-                  "dynamodb:PutItem",
-                  "dynamodb:Query",
-                  "dynamodb:UpdateItem",
-                ],
-                resources: [workspaceConfigsTable.arn],
-              },
-            ]
+          ? [{
+            actions: [
+              "dynamodb:DeleteItem",
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:Query",
+              "dynamodb:UpdateItem",
+            ],
+            resources: [workspaceConfigsTable.arn],
+          }]
           : []),
         ...(accountToolsTable
-          ? [
-              {
-                actions: [
-                  "dynamodb:DeleteItem",
-                  "dynamodb:GetItem",
-                  "dynamodb:PutItem",
-                  "dynamodb:Query",
-                  "dynamodb:UpdateItem",
-                ],
-                resources: [accountToolsTable.arn],
-              },
-            ]
+          ? [{
+            actions: [
+              "dynamodb:DeleteItem",
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:Query",
+              "dynamodb:UpdateItem",
+            ],
+            resources: [accountToolsTable.arn],
+          }]
+          : []),
+        ...(artifactsTable
+          ? [{
+            actions: [
+              "dynamodb:BatchWriteItem",
+              "dynamodb:DeleteItem",
+              "dynamodb:Query",
+            ],
+            resources: [artifactsTable.arn],
+          }]
           : []),
         ...(cronsTable
-          ? [
-              {
-                actions: [
-                  "dynamodb:DeleteItem",
-                  "dynamodb:GetItem",
-                  "dynamodb:PutItem",
-                  "dynamodb:Query",
-                  "dynamodb:UpdateItem",
-                ],
-                resources: [cronsTable.arn],
-              },
-            ]
+          ? [{
+            actions: [
+              "dynamodb:DeleteItem",
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:Query",
+              "dynamodb:UpdateItem",
+            ],
+            resources: [cronsTable.arn],
+          }]
           : []),
         {
           // Read + drop reserved-sandbox instance rows when releasing on delete.
@@ -1535,7 +1379,11 @@ export default $config({
           resources: [persistentSandboxInstanceTable.arn],
         },
         {
-          actions: ["scheduler:CreateSchedule", "scheduler:DeleteSchedule", "scheduler:UpdateSchedule"],
+          actions: [
+            "scheduler:CreateSchedule",
+            "scheduler:DeleteSchedule",
+            "scheduler:UpdateSchedule",
+          ],
           resources: [$interpolate`arn:aws:scheduler:${region}:${AWS_ACCOUNT_ID}:schedule/${cronScheduleGroup.name}/*`],
         },
         {
@@ -1543,20 +1391,23 @@ export default $config({
           resources: [cronSchedulerRole.arn],
         },
         {
-          actions: ["dynamodb:BatchWriteItem", "dynamodb:DeleteItem", "dynamodb:Scan"],
-          resources: [
-            conversationsTable.arn,
-            processedEventsTable.arn,
-            asyncAgentResultTable.arn,
-            asyncToolResultTable.arn,
+          actions: [
+            "dynamodb:BatchWriteItem",
+            "dynamodb:DeleteItem",
+            "dynamodb:Scan",
           ],
+          resources: [conversationsTable.arn, processedEventsTable.arn, asyncAgentResultTable.arn, asyncToolResultTable.arn],
         },
         {
-          actions: ["dynamodb:UpdateItem"],
+          actions: [
+            "dynamodb:UpdateItem",
+          ],
           resources: [accountSignupRateLimitTable.arn],
         },
         {
-          actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+          actions: [
+            "s3:DeleteObject",
+          ],
           resources: [`${filesystemBucketArn}/*`],
         },
         {
@@ -1564,7 +1415,19 @@ export default $config({
           resources: [filesystemBucketArn],
         },
         {
-          actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+          actions: ["s3:DeleteObject"],
+          resources: [`${artifactStagingBucketArn}/*`],
+        },
+        {
+          actions: ["s3:ListBucket"],
+          resources: [artifactStagingBucketArn],
+        },
+        {
+          actions: [
+            "s3:GetObject",
+            "s3:PutObject",
+            "s3:DeleteObject",
+          ],
           resources: [`${skillsBucketArn}/*`],
         },
         {
@@ -1572,31 +1435,24 @@ export default $config({
           resources: [skillsBucketArn],
         },
         {
-          actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+          actions: [
+            "s3:GetObject",
+            "s3:PutObject",
+            "s3:DeleteObject",
+          ],
           resources: [`${toolBundlesBucketArn}/*`],
         },
         {
           actions: ["s3:ListBucket"],
           resources: [toolBundlesBucketArn],
         },
-        ...(microvmArtifactsBucket
-          ? [
-              {
-                actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-                resources: [`${microvmArtifactsBucketArn}/microvm-images/*`],
-              },
-              {
-                actions: ["s3:ListBucket"],
-                resources: [microvmArtifactsBucketArn],
-              },
-            ]
-          : []),
       ],
     });
 
     return {
       agentServiceUrl: harnessProcessing.url,
       accountServiceUrl: accountManage.url,
+      mockWebhookSubscribeUrl: mockWebhookSubscribe.url,
       sandboxMountNetFunctionName: names.sandboxMountNet,
       sandboxMountNoNetFunctionName: names.sandboxMountNonet,
       sandboxNoMountNetFunctionName: names.sandboxNomountNet,
@@ -1606,6 +1462,7 @@ export default $config({
       sandboxConfigsTableName: sandboxConfigsTable?.name,
       workspaceConfigsTableName: workspaceConfigsTable?.name,
       accountToolsTableName: accountToolsTable?.name,
+      artifactsTableName: artifactsTable?.name,
       cronsTableName: cronsTable?.name,
       accountSignupRateLimitTableName: accountSignupRateLimitTable.name,
       conversationsTableName: conversationsTable.name,
@@ -1614,11 +1471,9 @@ export default $config({
       asyncToolResultTableName: asyncToolResultTable.name,
       cronScheduleGroupName: cronScheduleGroup.name,
       filesystemBucketName: filesystemBucket.name,
+      artifactStagingBucketName: artifactStagingBucket.name,
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,
-      microvmArtifactsBucketName: microvmArtifactsBucket?.name,
-      microvmBuildRoleArn: microvmBuildRole?.arn,
-      microvmExecutionRoleArn: microvmExecutionRole?.arn,
     };
   },
 });

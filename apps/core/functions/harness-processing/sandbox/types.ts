@@ -109,20 +109,6 @@ export interface SandboxRunResult {
   timedOut?: boolean;
   truncated?: boolean;
   provider: SandboxProvider;
-  /** CPU time consumed by this exec in microseconds. Sourced from the cgroup v2
-   *  cpu.stat delta on kubernetes and from the lambda-sandbox image's getrusage
-   *  report on lambda. Absent (undefined) for providers that do not report it and
-   *  on read failure. */
-  cpuUsec?: number;
-}
-
-/** One sandbox exec's CPU, tagged by sandbox type and role for usage metering. */
-export interface SandboxCpuSample {
-  type: SandboxProvider;
-  role: "agent" | "tool";
-  /** The custom tool that ran, when role is "tool". */
-  toolName?: string;
-  cpuUsec: number;
 }
 
 // A detached, long-running job started inside a persistent sandbox. The work
@@ -170,7 +156,7 @@ export interface SandboxExecutor {
     // onStdout receives each stdout chunk as it arrives (used to stream a custom
     // tool's NDJSON frames live). The returned stdout still holds the full output.
     opts?: { stdin?: Readable; timeoutSeconds?: number; outputLimitBytes?: number; onStdout?: (chunk: string) => void },
-  ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean; cpuUsec?: number }>;
+  ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean }>;
   // Persistent-only background capabilities. Implemented by kubernetes/daytona/
   // e2b when config.persistent is true; absent otherwise (callers feature-detect).
   runBackground?(request: SandboxRunRequest): Promise<SandboxJobHandle>;

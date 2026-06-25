@@ -2,10 +2,10 @@
  * Example: async run with structured output polling.
  */
 
-import { BroodsClient } from "broods";
-import { api } from "./broods/_generated/api";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-const client = new BroodsClient();
+const client = new FilthyPantyClient();
 
 const run = await client.runAsync(api.agents.structuredAssistant, {
   input: "What is the newest model release from OpenAI? Provide a concise answer and suggest follow-up actions.",

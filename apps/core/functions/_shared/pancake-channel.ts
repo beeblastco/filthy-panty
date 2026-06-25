@@ -9,13 +9,18 @@
 import { createHash } from "node:crypto";
 import { timingSafeStringEqual } from "./auth.ts";
 import type {
+  AttachmentDownloadRequest,
   ChannelActions,
   ChannelAdapter,
   ChannelParseResult,
   ChannelRequest,
+  InboundAttachmentCandidate,
+  OutboundChannelArtifact,
   ParsedChannelMessage,
 } from "./channels.ts";
+import { assertOutboundArtifactLimits } from "./channels.ts";
 import { logInfo, logWarn } from "./log.ts";
+import { assertAllowedPinnedHttpsUrl } from "./pinned-https.ts";
 import { PANCAKE_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 interface PancakeWebhookPayload {
@@ -53,6 +58,16 @@ interface PancakeMessage {
   };
   is_hidden?: boolean;
   is_removed?: boolean;
+  attachments?: unknown;
+}
+
+interface PancakeAttachment {
+  id?: string;
+  type?: string;
+  url?: string;
+  title?: string | null;
+  mime_type?: string | null;
+  video_data?: { url?: string } | null;
 }
 
 interface PancakePost {
@@ -158,14 +173,16 @@ function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseR
 
   const conversation = payload.data?.conversation;
   const message = payload.data?.message;
-  const text = message?.message?.trim();
-  if (!conversation?.id || !message?.id || !text || !isPancakeMessageType(message.type)) {
+  const text = normalizePancakeText(message?.message);
+  const attachments = normalizePancakeAttachments(message?.attachments);
+  if (!conversation?.id || !message?.id || (!text && attachments.length === 0) || !isPancakeMessageType(message.type)) {
     logInfo("Pancake webhook ignored", {
       reason: "missing_or_unsupported_message",
       pageId: payload.page_id,
       conversationId: conversation?.id,
       messageId: message?.id,
       hasText: Boolean(text),
+      supportedAttachmentCount: attachments.length,
       messageType: message?.type,
     });
     return { kind: "ignore" };
@@ -194,7 +211,8 @@ function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseR
     conversationId: conversation.id,
     messageId: message.id,
     messageType: message.type,
-    textLength: text.length,
+    textLength: text?.length ?? 0,
+    attachmentCount: attachments.length,
     tagIds: normalizePancakeTagIds(conversation.tags),
   });
 
@@ -202,10 +220,11 @@ function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseR
     kind: "message",
     ack: { statusCode: 200 },
     message: {
-      eventId: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${message.id}:${hashEventText(text)}`,
+      eventId: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${message.id}:${hashEventContent(text, attachments)}`,
       conversationKey: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${conversation.id}`,
       channelName: "pancake",
-      content: [{ type: "text", text }],
+      content: text ? [{ type: "text", text }] : [],
+      ...(attachments.length > 0 ? { attachments } : {}),
       source: {
         pageId,
         conversationId: conversation.id,
@@ -247,7 +266,7 @@ export function createPancakeActions(
   source: PancakeSource,
   senderId?: string,
 ): ChannelActions {
-  return {
+  const actions: ChannelActions = {
     sendText: (text) => sendPancakeMessage(pageAccessToken, source, text, senderId),
     async sendTyping() {
       return;
@@ -256,6 +275,60 @@ export function createPancakeActions(
       return;
     },
   };
+  if (source.messageType === "INBOX") {
+    actions.artifactLimits = { maxCount: 1 };
+    actions.sendArtifacts = (artifacts, caption) => sendPancakeArtifacts(
+      pageAccessToken,
+      source,
+      artifacts,
+      caption,
+      senderId,
+    );
+  }
+  return actions;
+}
+
+async function sendPancakeArtifacts(
+  pageAccessToken: string,
+  source: PancakeSource,
+  artifacts: OutboundChannelArtifact[],
+  caption?: string,
+  senderId?: string,
+): Promise<void> {
+  assertOutboundArtifactLimits(artifacts, { maxCount: 1 });
+  if (artifacts.length === 0) throw new Error("Pancake attachment send requires one artifact");
+  const artifact = artifacts[0]!;
+  if (!isPancakeOutboundMedia(artifact)) {
+    throw new Error("Pancake outbound attachments currently support photo and video only");
+  }
+  if (artifact.kind === "video" && artifact.bytes.byteLength > 15 * 1024 * 1024) {
+    throw new Error("Pancake video exceeds the conservative 15 MiB upload limit");
+  }
+
+  const contentId = await uploadPancakeContent(pageAccessToken, source.pageId, artifact);
+  await postPancakeMessage(pageAccessToken, source, {
+    action: "reply_inbox",
+    content_ids: [contentId],
+    ...(senderId ? { sender_id: senderId } : {}),
+  });
+  if (caption?.trim()) await sendPancakeMessage(pageAccessToken, source, caption.trim(), senderId);
+}
+
+async function uploadPancakeContent(
+  pageAccessToken: string,
+  pageId: string,
+  artifact: OutboundChannelArtifact,
+): Promise<string> {
+  const url = pancakeApiUrl(`/pages/${encodeURIComponent(pageId)}/upload_contents`, pageAccessToken);
+  const form = new FormData();
+  form.set("file", new File([artifact.bytes], artifact.filename, { type: artifact.mediaType }));
+  const response = await fetch(url, { method: "POST", body: form });
+  const bodyText = await response.text();
+  const body = parseJsonBody(bodyText) as { success?: boolean; message?: string; id?: string } | null;
+  if (!response.ok || body?.success !== true || typeof body.id !== "string" || !body.id.trim()) {
+    throw new Error(`Pancake upload content failed (${response.status}): ${formatPancakeError(body, bodyText)}`);
+  }
+  return body.id;
 }
 
 async function sendPancakeMessage(
@@ -264,13 +337,6 @@ async function sendPancakeMessage(
   text: string,
   senderId?: string,
 ): Promise<void> {
-  const url = new URL(
-    `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(source.pageId)}/conversations/${
-      encodeURIComponent(source.conversationId)
-    }/messages`,
-  );
-  url.searchParams.set("page_access_token", pageAccessToken);
-
   const payload = source.messageType === "COMMENT"
     ? {
       action: "reply_comment",
@@ -293,6 +359,18 @@ async function sendPancakeMessage(
     textLength: text.length,
   });
 
+  await postPancakeMessage(pageAccessToken, source, payload);
+}
+
+async function postPancakeMessage(
+  pageAccessToken: string,
+  source: PancakeSource,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const url = pancakeApiUrl(
+    `/pages/${encodeURIComponent(source.pageId)}/conversations/${encodeURIComponent(source.conversationId)}/messages`,
+    pageAccessToken,
+  );
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -360,8 +438,60 @@ function isPancakeMessageType(value: unknown): value is PancakeSource["messageTy
   return value === "INBOX" || value === "COMMENT";
 }
 
-function hashEventText(text: string): string {
-  return createHash("sha256").update(text).digest("hex").slice(0, 12);
+function hashEventContent(text: string | undefined, attachments: InboundAttachmentCandidate[]): string {
+  const attachmentIdentity = attachments.map((attachment) => `${attachment.kind}:${attachment.id}`).join("\n");
+  const identity = attachmentIdentity ? `${text ?? ""}\n${attachmentIdentity}` : text ?? "";
+  return createHash("sha256").update(identity).digest("hex").slice(0, 12);
+}
+
+function normalizePancakeText(value: string | undefined): string | undefined {
+  const text = value?.trim();
+  return text && !/^<div>\s*<\/div>$/i.test(text) ? text : undefined;
+}
+
+function normalizePancakeAttachments(value: unknown): InboundAttachmentCandidate[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw) => {
+    if (!raw || typeof raw !== "object") return [];
+    const attachment = raw as PancakeAttachment;
+    const kind = attachment.type === "photo" ? "image" : attachment.type === "video" ? "video" : null;
+    const directUrl = attachment.type === "photo"
+      ? attachment.url
+      : attachment.video_data && typeof attachment.video_data === "object"
+        ? attachment.video_data.url
+        : undefined;
+    if (!kind || typeof directUrl !== "string" || !directUrl.trim()) return [];
+    const id = typeof attachment.id === "string" && attachment.id.trim()
+      ? attachment.id.trim()
+      : createHash("sha256").update(`${attachment.type}:${directUrl}`).digest("hex").slice(0, 16);
+    return [{
+      id,
+      kind,
+      ...(typeof attachment.title === "string" && attachment.title.trim() ? { filename: attachment.title.trim() } : {}),
+      ...(typeof attachment.mime_type === "string" && attachment.mime_type.trim()
+        ? { mediaType: attachment.mime_type.trim() }
+        : {}),
+      resolveDownload: () => resolvePancakeDownload(directUrl),
+    } satisfies InboundAttachmentCandidate];
+  });
+}
+
+async function resolvePancakeDownload(value: string): Promise<AttachmentDownloadRequest> {
+  const url = new URL(value);
+  const allowedHosts = [url.hostname];
+  assertAllowedPinnedHttpsUrl(url, allowedHosts);
+  return { url: url.toString(), allowedHosts };
+}
+
+function isPancakeOutboundMedia(artifact: OutboundChannelArtifact): boolean {
+  return (artifact.kind === "image" && artifact.mediaType.startsWith("image/") && artifact.mediaType !== "image/gif") ||
+    (artifact.kind === "video" && artifact.mediaType.startsWith("video/"));
+}
+
+function pancakeApiUrl(path: string, pageAccessToken: string): URL {
+  const url = new URL(path.replace(/^\//, ""), "https://pages.fm/api/public_api/v1/");
+  url.searchParams.set("page_access_token", pageAccessToken);
+  return url;
 }
 
 function parseJsonBody(text: string): { success?: boolean; message?: string } | null {

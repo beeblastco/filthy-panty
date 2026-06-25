@@ -1,46 +1,12 @@
 # Deployment
 
-You have two deployment paths:
-
-1. **Managed service** (recommended) — the platform at `gateway.broods.app` handles all infrastructure. You only run `broods deploy`.
-2. **Self-hosted** — deploy the full serverless stack to your own AWS account with SST.
-
-Both paths use the same CLI and SDK workflow.
-
----
-
-## Managed Service
-
-The fastest path. No infrastructure to manage.
-
-```bash
-broods init      # create broods/ project
-broods login     # authenticate with the dashboard
-broods dev       # sync to development, watch for changes
-broods deploy    # sync to production
-```
-
-The CLI handles everything: compiling resources, bundling tools, uploading skills, syncing environment variables, and generating typed runtime references. See [Getting Started](getting-started.md) for the full walkthrough.
-
----
-
-## Self-Hosted
-
-Deploy the full serverless infrastructure to your own AWS account for complete control.
-
 `sst.config.ts` is the source of truth for infra names, tags, region, Lambda resources, DynamoDB tables, S3 bucket, and SST secrets.
 
-### Prerequisites
-
-- [Bun](https://bun.sh/) installed
-- An AWS account with CLI access configured
-- [SST](https://sst.dev/) (installed by `bun install` as a project dependency; commands use `bunx sst`)
-
-### Local Setup
+## Local Setup
 
 ```bash
 bun install
-cp apps/core/.env.example apps/core/.env
+cp .env.example .env
 ```
 
 Keep `.env` for local SST inputs only:
@@ -65,7 +31,7 @@ bunx sst secret set DaytonaApiKey <daytona-api-key>
 
 Provider and tool API keys are account-specific. Store them in the encrypted agent config under fields such as `config.provider.<provider>.apiKey` and `config.tools.<tool>.apiKey`.
 
-### Build and Deploy
+## Build and Deploy
 
 ```bash
 bun run check
@@ -79,33 +45,25 @@ Deploy outputs include:
 
 - `accountServiceUrl`
 - `agentServiceUrl`
+- `mockWebhookSubscribeUrl`
 - DynamoDB table names (dev/community stages; `undefined` on production, which stores config domains in Convex)
 - `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
 - sandbox Lambda function names and `cronScheduleGroupName`
 
-### Using the CLI with Self-Hosted
+## Account Setup
 
-After self-hosted deploy, use the same CLI workflow but point it at your deployment:
-
-```bash
-export BROODS_BASE_URL="https://your-deployment.lambda-url.eu-west-1.on.aws"
-broods init
-broods login --dashboard-url https://your-dashboard.example.com
-broods dev
-broods deploy
-```
-
-### Account Setup (Self-Hosted)
-
-Create an account through the account-management Function URL:
+After deploy, create an account through the account-management Function URL and store the returned `secret`.
 
 ```bash
 curl -X POST "$ACCOUNT_SERVICE_URL/accounts" \
   -H "Content-Type: application/json" \
-  -d '{ "username": "company-a", "description": "Company A account" }'
+  -d '{
+    "username": "company-a",
+    "description": "Company A account"
+  }'
 ```
 
-Store the returned `secret` securely.
+Use that account secret for account self-service calls, direct API calls, async requests, and `/status/{eventId}` polling.
 
 Provider webhooks use the deployed harness-processing URL:
 

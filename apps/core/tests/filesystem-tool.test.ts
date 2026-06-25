@@ -65,7 +65,7 @@ mock.module("../functions/_shared/s3.ts", () => ({
 }));
 
 beforeEach(() => {
-  process.env.AWS_REGION = "us-east-1";
+  process.env.AWS_REGION = "eu-central-1";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   process.env.SANDBOX_FN_MOUNT_NET = "sandbox-mount-net";
   process.env.SANDBOX_FN_MOUNT_NONET = "sandbox-mount-nonet";
@@ -180,16 +180,6 @@ describe("sandbox tool set", () => {
     await expect(bash.execute({ command: "find / -maxdepth 1" }))
       .resolves.toEqual({ type: "error-text", value: "Error: bash commands must stay in the workspace directory" });
     expect(lambdaSendMock).not.toHaveBeenCalled();
-  });
-
-  it("bash allows URL scheme separators while still blocking absolute paths", async () => {
-    const bash = await tool("bash", workspaceCtx());
-    const ok = await bash.execute({ command: "curl -sS https://api.github.com/zen -o out.txt" });
-    expect(ok.type).toBe("text");
-    expect(lastLambdaInput().payload.code).toContain("https://api.github.com/zen");
-    // A bare absolute path stays rejected; only the scheme `://` is exempt.
-    await expect(bash.execute({ command: "curl https://x -o /tmp/out.txt" }))
-      .resolves.toEqual({ type: "error-text", value: "Error: absolute paths are not allowed in workspace bash commands: /tmp/out.txt" });
   });
 
   it("bash allows relative workspace commands and heredoc bodies", async () => {

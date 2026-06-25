@@ -141,7 +141,7 @@ export function UserMenu() {
         </DropdownMenuItem>
         <DropdownMenuItem className="cursor-pointer" asChild>
           <a
-            href="https://broods.app/terms"
+            href="https://beeblast.co/terms"
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -151,7 +151,7 @@ export function UserMenu() {
         </DropdownMenuItem>
         <DropdownMenuItem className="cursor-pointer" asChild>
           <a
-            href="https://broods.app/privacy"
+            href="https://beeblast.co/privacy"
             target="_blank"
             rel="noopener noreferrer"
           >

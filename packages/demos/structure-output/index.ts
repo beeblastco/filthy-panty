@@ -1,12 +1,12 @@
 /**
- * Example: streaming SSE with structured output parsing via declarative broods resources.
+ * Example: streaming SSE with structured output parsing via declarative filthy-panty resources.
  */
 
-import { BroodsClient } from "broods";
-import { api } from "./broods/_generated/api";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-// Create a client to connect to the Broods API.
-const client = new BroodsClient();
+// Create a client to connect to the Filthy Panty API.
+const client = new FilthyPantyClient();
 
 // Stream the response from the agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.structuredAssistant, {

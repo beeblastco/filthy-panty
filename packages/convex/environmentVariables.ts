@@ -11,7 +11,6 @@ import { getOwnedEnvironment } from "./model/ownership/environment";
 import { decryptAgentConfigBlob, encryptAgentConfigBlob } from "./model/agentConfigCodec";
 import { refreshAgentConfigsForEnvironmentVariable } from "./model/agentSync";
 import { refreshSandboxConfigsForEnvironmentVariable } from "./model/sandboxConfigSync";
-import { scheduleServiceLog } from "./observability";
 
 const environmentVariableDoc = v.object({
     _id: v.id("environmentVariables"),
@@ -137,13 +136,6 @@ export const set = mutation({
                 trimmedName,
                 value,
             );
-            await scheduleServiceLog(ctx, {
-                projectId: projectId,
-                environmentId: environmentId,
-                eventType: "service.environment.variable.updated",
-                message: "Environment variable updated",
-                data: { name: trimmedName },
-            });
 
             return existing._id;
         }
@@ -172,13 +164,6 @@ export const set = mutation({
             trimmedName,
             value,
         );
-        await scheduleServiceLog(ctx, {
-            projectId: projectId,
-            environmentId: environmentId,
-            eventType: "service.environment.variable.created",
-            message: "Environment variable created",
-            data: { name: trimmedName },
-        });
 
         return variableId;
     },
@@ -266,13 +251,6 @@ export const remove = mutation({
             variable.name,
             undefined,
         );
-        await scheduleServiceLog(ctx, {
-            projectId: variable.projectId,
-            environmentId: variable.environmentId,
-            eventType: "service.environment.variable.deleted",
-            message: "Environment variable deleted",
-            data: { name: variable.name },
-        });
 
         return variableId;
     },

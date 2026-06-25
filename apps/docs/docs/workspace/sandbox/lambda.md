@@ -27,9 +27,8 @@ The same image is deployed across two axes; the harness auto-selects one per run
 Lambda can only pull a **private** ECR image **in the function's own region** — public
 ECR and cross-region are rejected. So the repo is region-scoped and **owned by this app**
 (`sst.config.ts` creates `aws.ecr.Repository` `beeblast-lambda-sandbox-<account>-<region>`),
-not the infra repo. The `latest-arm64` image is built by the
-[`lambda-sandbox custom image`](https://github.com/beeblastco/lambda-sanbdox) CI and mirrored
-by the Broods deploy workflow when a target region needs it.
+not the infra repo. The `latest-arm64` image is built and pushed by the
+[`lambda-sandbox custom image`](https://github.com/beeblastco/lambda-sanbdox) CI.
 
 ```text
 sst deploy ──creates──▶ ECR repo (per region)  ◀──pushes── lambda-sandbox CI
@@ -38,51 +37,21 @@ sst deploy ──creates──▶ ECR repo (per region)  ◀──pushes── l
                     4 sandbox Lambda functions
 ```
 
-- **Multi-region:** every region you deploy to needs its own repo + pushed image. When a
-  target's sandbox flag is `true`, `.github/workflows/deploy.yaml` checks for the regional
-  `latest-arm64` tag. If it is missing, CI runs one repo-only SST deploy with
-  `SANDBOX_IMAGE_READY=false`, copies the source image from `SANDBOX_IMAGE_SOURCE_REGION`
-  (default `eu-west-1`) with `crane`, then runs the final deploy with the sandbox
-  functions enabled.
-- **Bootstrap remains gated by `SANDBOX_IMAGE_READY`:** the 4 functions are created only when
-  this flag is `true`. The CI bootstrap path keeps a brand-new region deployable without local
-  AWS commands, while preserving the repo-only first pass that lets SST own the ECR repository.
-  Harness env/IAM always carry the deterministic function names/ARNs, so the second pass creates
-  the same function names.
-- **The flag is per-stage/region in `deploy.yaml`**, because each region bootstraps
-  independently. The resolve step picks `SANDBOX_IMAGE_READY_DEV` (falling back to the
-  legacy repo-wide `SANDBOX_IMAGE_READY`) for `dev`, and
-  `SANDBOX_IMAGE_READY_PRODUCTION_{US_EAST_1,EU_WEST_1,AP_SOUTHEAST_1}` for the three
-  production targets. A region whose image is not mirrored yet can keep its flag `false`
-  while another stays `true`.
-
-## Lambda MicroVM prerequisites
-
-The SST stack also creates the AWS Lambda MicroVM prerequisites in the same region as the
-core stack:
-
-- `microvmArtifactsBucketName` — account-regional S3 bucket for zipped MicroVM image
-  artifacts under `microvm-images/`.
-- `microvmBuildRoleArn` — build role for `CreateMicrovmImage` / `UpdateMicrovmImage`.
-- `microvmExecutionRoleArn` — runtime role for `RunMicrovm` and CloudWatch logs.
-
-General-purpose S3 buckets use the account-regional namespace naming convention:
-
-```text
-[stage-]broods-<service>-<account-id>-<region>-an
-```
-
-Non-bucket AWS resources use the same order without the `-an` suffix:
-
-```text
-[stage-]broods-<service>-<account-id>-<region>
-```
-
-The dev AWS stack defaults to `eu-west-1` for the current cost-down rollout. Production
-currently deploys to `eu-west-1` only. `us-east-1` and `ap-southeast-1` are kept as planned
-production regions, but they are disabled until production is explicitly promoted. Lambda
-MicroVM prerequisites are skipped in `ap-southeast-1` because the feature is not available
-there yet. The production Convex database remains in `eu-west-1`.
+- **Multi-region:** every region you deploy to needs its own repo + pushed image. The CI
+  mirrors the image to each region in `ECR_REGIONS` and **skips (with a warning) any region
+  whose repo doesn't exist yet**.
+- **Bootstrap a region (two passes), gated by `SANDBOX_IMAGE_READY`:** the 4 functions are
+  created only when this flag is `true`. Without it the first `sst deploy` creates the empty
+  repo and **succeeds** (functions skipped, deploy not blocked) → lambda-sanbdox CI mirrors the
+  image into the now-existing repo → re-deploy with the flag `true` and the functions create.
+  Harness env/IAM always carry the deterministic function names/ARNs, so flipping the flag is
+  the only change needed on the second pass.
+- **The flag is per-stage in `deploy.yaml`**, because `dev` and `production` deploy to
+  different regions that bootstrap independently. The resolve step picks
+  `SANDBOX_IMAGE_READY_DEV` (falls back to the legacy repo-wide `SANDBOX_IMAGE_READY`) for
+  `dev` and `SANDBOX_IMAGE_READY_PRODUCTION` (default `false`) for `production`. So a region
+  whose image isn't mirrored yet can keep its flag `false` while the other stays `true` —
+  setting one global flag `true` would otherwise break the unbootstrapped region's deploy.
 
 ## Config
 
@@ -203,31 +172,31 @@ a write to a plain S3 object is a two-hop journey, and each hop is asynchronous 
   that export. The **default** read-only path reads through the mount (hop 1), so it — like
   any mounted sandbox — sees committed writes immediately and never waits on hop 2.
 
-### `bash` writes are flushed automatically
+### ⚠️ The `bash` tool is not auto-synced
 
-The sandbox runtime calls `sync(2)` after every persistent run, flushing all dirty
-page-cache writes — including raw `bash` redirection (`echo > f`, `cmd > out`, `>>`,
-in-script writes) — to the S3 Files mount before the Lambda freezes. So `bash`-written
-files are durable across the next cold container without any explicit flush, just like
-the dedicated `write`/`edit` tools (which also `fsync` per file). No `sync report.txt`
-incantation is needed in agent scripts anymore.
+Only the dedicated `write`/`edit` tools fsync. Files created by raw `bash` redirection
+(`echo > f`, `cmd > out`, `>>`, in-script writes) live only in the page cache and can be
+**lost on the next cold container**. If an agent needs a `bash`-written file to persist,
+it must flush explicitly:
 
-> **Note — this is a stopgap.** The per-run `sync(2)` only prevents silent data loss on
-> cold containers. It does not solve cross-provider durability, the hop-2 visibility lag,
-> or multi-agent write conflicts on a shared workspace. The intended final solution is a
-> unified shared-data layer (an Archil-style elastic POSIX filesystem mountable across
-> sandboxes) that owns durability and conflict resolution in one place, replacing the
-> per-provider mount/flush mechanics. Tracked in
-> [#64](https://github.com/beeblastco/broods/issues/64).
+```bash
+echo "data" > report.txt && sync report.txt   # fsync this file
+# or, after a batch of writes:
+sync                                           # flush everything
+```
+
+Prefer the `write` tool over `bash` redirection when durability matters — it does this for you.
 
 ### Known limitations
 
 - **S3-direct opt-out visibility lag.** Because of hop 2, a write is not immediately visible
   to a reader using the `sandbox: null` opt-out. Expect a delay (≥60s) and verify the bucket
   has versioning on. The default read-only mount and any mounted sandbox are unaffected.
+- **Unflushed `bash` writes can vanish.** See the warning above — this is a correctness
+  footgun for agents that script their own file writes instead of using the `write` tool.
+  Tracked in [#46](https://github.com/beeblastco/filthy-panty/issues/46) for a future fix.
 - **No mount-level `sync` option.** Lambda's managed `fileSystemConfig` mount does not expose
-  NFS mount options, so durability is enforced by the runtime (`sync(2)` after each persistent
-  run) and per-write in the dedicated tools, rather than globally at mount time.
+  NFS mount options, so durability is enforced per-write in the tools rather than globally.
 
 ## Security
 

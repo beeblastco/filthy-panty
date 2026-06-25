@@ -1,0 +1,29 @@
+{
+  "name": "filthy-panty",
+  "version": "0.1.0",
+  "description": "CLI + TypeScript SDK for the filthy-panty agent platform.",
+  "type": "module",
+  "license": "FSL-1.1-Apache-2.0",
+  "bin": {
+    "filthy-panty": "./src/cli/index.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./artifacts": "./src/artifacts.ts"
+  },
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "ai": "^6.0.195"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
+  },
+  "peerDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

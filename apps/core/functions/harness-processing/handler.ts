@@ -7,11 +7,10 @@ import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { ToolModelMessage, JSONValue, UserModelMessage } from "ai";
 import type { LambdaFunctionURLEvent } from "aws-lambda";
 import { timingSafeStringEqual } from "../_shared/auth.ts";
-import { markHandlerEntry } from "../_shared/cold-start.ts";
-import { formatChannelErrorText } from "../_shared/channels.ts";
+import { formatChannelErrorText, type ChannelActions } from "../_shared/channels.ts";
 import { createChannelStreamWriter, type ChannelStreamMode, type ChannelStreamWriter } from "../_shared/channel-streaming.ts";
 import { executeCommand } from "../_shared/commands.ts";
-import { toRuntimeAgentConfig } from "../_shared/storage/index.ts";
+import { toRuntimeAgentConfig, type AgentChannelActionsConfig } from "../_shared/storage/index.ts";
 import { getStorage, type CronRecord } from "../_shared/storage/index.ts";
 import { booleanEnv, requireEnv } from "../_shared/env.ts";
 import { jsonResponse } from "../_shared/http.ts";
@@ -24,6 +23,7 @@ import {
   scopedDirectEventId,
 } from "../_shared/runtime-keys.ts";
 import { runAgentLoop, type ToolApprovalSummary } from "./harness.ts";
+import { ingestChannelAttachments } from "./artifacts.ts";
 import {
   routeIncomingEvent,
   sendChannelReply,
@@ -34,7 +34,7 @@ import {
   type SandboxJobCompletionInboundEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
-import { Session, type ConversationIngressEvent } from "./session.ts";
+import { Session } from "./session.ts";
 import {
   createPendingAsyncAgentResult,
   getAsyncAgentResult,
@@ -108,10 +108,6 @@ export async function handler(
   event: LambdaFunctionURLEvent | AsyncWorkerInvocation | NatsWorkerInvocation | CronInvocation,
   context?: LambdaInvocation,
 ): Promise<LambdaResponse> {
-  // First entry in this execution environment marks the end of the cold-start
-  // init window so the first agent run can surface it as a phase span.
-  markHandlerEntry(Date.now());
-
   if (isAsyncWorkerInvocation(event)) {
     await handleAsyncWorkerRequest(event.event, context);
     return { statusCode: 204 };
@@ -669,9 +665,6 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
     // A background job launched from this turn delivers its result back to the
     // same chat (rebuilt from {channelName, source} when it settles later).
     { kind: "channel", channelName: event.channelName, source: event.source },
-    event.endpointId,
-    event.projectSlug,
-    event.environmentSlug,
   );
   logInfo("Channel session received", {
     channel: event.channelName,
@@ -714,75 +707,59 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
     return;
   }
 
-  // Acquire the conversation lease before writing this message to history. If a
-  // turn is already running for this conversation, buffer the message so the lease
-  // holder answers it after its current reply (in order) instead of dropping it.
-  // The typing/reaction ack already fired upstream, so the user still sees that
-  // the message was received. This applies to every channel, since all channel
-  // webhooks funnel through here.
-  let ownEvents: ConversationIngressEvent[] = event.events;
-  let leaseAcquired = await session.acquireConversationLease();
-  if (!leaseAcquired) {
-    await session.enqueuePendingIngress(ownEvents);
-    // The holder may have released right after our first attempt; retry once so a
-    // message queued at that boundary is drained now, not stranded until the next
-    // inbound message.
-    leaseAcquired = await session.acquireConversationLease();
-    if (!leaseAcquired) {
-      logInfo("Conversation busy; channel message queued for drain", {
-        conversationKey: session.conversationKey,
-        eventId: session.eventId,
+  try {
+    let ingressEvents = event.events;
+    if (event.attachments?.length) {
+      if (!event.accountId || !event.agentId) {
+        throw new Error("Channel attachments require an account-scoped agent");
+      }
+      const runtime = await session.prepareRuntime();
+      const ingested = await ingestChannelAttachments({
+        accountId: event.accountId,
+        agentId: event.agentId,
+        agentConfig: event.agentConfig ?? {},
+        channelName: event.channelName,
+        conversationKey: event.conversationKey,
+        eventId: event.eventId,
+        content: event.content,
+        candidates: event.attachments,
+        workspaces: runtime.workspaces,
       });
-      return;
+      ingressEvents = [{ role: "user", content: ingested.content }];
     }
-    // We are the drainer now; this message lives in the pending buffer and is
-    // picked up by takePendingIngress in the loop below.
-    ownEvents = [];
+    await session.appendIngressEvents(ingressEvents);
+    logInfo("Channel ingress events persisted", {
+      channel: event.channelName,
+      accountId: event.accountId,
+      agentId: event.agentId,
+      eventId: session.eventId,
+      conversationKey: session.conversationKey,
+      eventCount: ingressEvents.length,
+      attachmentCount: event.attachments?.length ?? 0,
+    });
+  } catch (err) {
+    logError("Channel request pre-processing failed", {
+      eventId: session.eventId,
+      conversationKey: session.conversationKey,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    await session.release().catch(() => { });
+    throw err;
+  }
+
+  if (!(await session.acquireConversationLease())) {
+    logInfo("Conversation already processing; event queued", {
+      conversationKey: session.conversationKey,
+      eventId: session.eventId,
+    });
+    return;
   }
 
   try {
-    // Run turns until history has no runnable input and no queued follow-ups
-    // remain. A message that arrives mid-turn is buffered (above) and appended
-    // here — after the in-flight reply — so a fast follow-up is answered in order.
-    let incoming: ConversationIngressEvent[] = ownEvents;
     while (true) {
-      if (incoming.length > 0) {
-        try {
-          await session.appendIngressEvents(incoming);
-          logInfo("Channel ingress events persisted", {
-            channel: event.channelName,
-            accountId: event.accountId,
-            agentId: event.agentId,
-            eventId: session.eventId,
-            conversationKey: session.conversationKey,
-            eventCount: incoming.length,
-          });
-        } catch (err) {
-          logError("Channel request pre-processing failed", {
-            eventId: session.eventId,
-            conversationKey: session.conversationKey,
-            error: err instanceof Error ? err.message : String(err),
-          });
-          await session.release().catch(() => { });
-          throw err;
-        }
-        incoming = [];
-      }
-
       const turnContext = await session.createTurnContext();
       if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-        // History is fully answered — drain anything queued during the reply.
-        incoming = await session.takePendingIngress();
-        if (incoming.length === 0) {
-          break;
-        }
-        logInfo("Draining channel messages queued during the previous turn", {
-          channel: event.channelName,
-          conversationKey: session.conversationKey,
-          eventId: session.eventId,
-          queuedCount: incoming.length,
-        });
-        continue;
+        return;
       }
 
       // Per-channel reply streaming. When configured, the reply streams into the
@@ -790,8 +767,7 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
       // final message is the writer's last flush, so onFinalText only sends directly
       // when nothing was streamed (e.g. a structured/object final or a tool-only
       // turn). The writer decides what each event does: edit/chunk consume text and
-      // ignore tool calls; progress shows tool/reasoning status and streams the
-      // answer text into the same live preview.
+      // ignore tool calls; progress consumes tool calls and ignores text.
       const streamMode = channelStreamMode(event.agentConfig, event.channelName);
       let writer: ChannelStreamWriter | undefined;
       let streamed = false;
@@ -807,6 +783,10 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
       });
 
       const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig ?? {}, context, {
+        channel: {
+          actions: event.channel,
+          policy: (event.agentConfig?.channels?.[event.channelName] as { actions?: AgentChannelActionsConfig } | undefined)?.actions ?? {},
+        },
         ...(streamMode
           ? {
             onTextDelta: async (delta) => {
@@ -819,33 +799,14 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
                 streamWarn("push")(error);
               }
             },
-            onReasoningDelta: async (delta) => {
-              const w = ensureWriter();
-              if (!w.reasoning) return; // only progress mode renders reasoning
-              try {
-                await w.reasoning(delta);
-                streamed = true;
-              } catch (error) {
-                streamWarn("reasoning")(error);
-              }
-            },
-            onToolCall: async (toolName, input) => {
+            onToolCall: async (toolName) => {
               const w = ensureWriter();
               if (!w.progress) return; // only progress mode renders tool activity
               try {
-                await w.progress(formatToolProgress(toolName, input));
+                await w.progress(toolName);
                 streamed = true;
               } catch (error) {
                 streamWarn("progress")(error);
-              }
-            },
-            onStepFinish: async () => {
-              const w = ensureWriter();
-              if (!w.stepFinish) return;
-              try {
-                await w.stepFinish();
-              } catch (error) {
-                streamWarn("step finish")(error);
               }
             },
           }
@@ -895,14 +856,6 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
             conversationKey: session.conversationKey,
             textLength: text.length,
           });
-          // A live preview is mid-stream: turn it into the error in place so no
-          // "Working…" draft is left dangling above the error message.
-          if (writer && streamed && !finished) {
-            finished = true;
-            await writer.finish(text).catch(streamWarn("error finish"));
-
-            return;
-          }
           await event.channel.sendText(text);
           logInfo("Channel error reply sent", {
             channel: event.channelName,
@@ -942,9 +895,7 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
           conversationKey: session.conversationKey,
           error: result.failureText ?? AGENT_PROCESSING_FAILED,
         });
-        // A failed turn ends the drain: leave any queued follow-ups in the buffer
-        // for the next inbound message rather than replaying a broken conversation.
-        break;
+        return;
       }
     }
   } finally {
@@ -993,7 +944,7 @@ async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn 
       publicConversationKey: event.publicConversationKey,
     }
     : undefined;
-  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.agentConfig, delivery, event.endpointId, event.projectSlug, event.environmentSlug);
+  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.agentConfig, delivery);
   if (!(await claimSession(session))) {
     return null;
   }
@@ -1214,7 +1165,6 @@ async function createCronDirectEvent(job: CronRecord): Promise<DirectInboundEven
   if (!agent || agent.status !== "active") {
     throw new Error(`Agent not found: ${job.agentId}`);
   }
-  const deployment = await getStorage().agentDeployments.getByAgentId?.(job.accountId, job.agentId);
 
   const publicEventId = `${job.cronId}-${crypto.randomUUID()}`;
   const publicConversationKey = job.conversationKey ?? `cron:${job.cronId}`;
@@ -1227,13 +1177,6 @@ async function createCronDirectEvent(job: CronRecord): Promise<DirectInboundEven
     conversationKey: scopedDirectConversationKey(job.accountId, job.agentId, publicConversationKey),
     publicConversationKey,
     events: job.events as DirectInboundEvent["events"],
-    ...(deployment
-      ? {
-        endpointId: deployment.endpointId,
-        projectSlug: deployment.projectSlug,
-        environmentSlug: deployment.environmentSlug,
-      }
-      : {}),
   } satisfies DirectInboundEvent;
 }
 
@@ -1316,21 +1259,19 @@ async function runAgentLoopUntilSubagentsIdle(
   agentConfig: DirectInboundEvent["agentConfig"],
   context: LambdaInvocation | undefined,
   reply: {
+    channel?: {
+      actions: ChannelActions;
+      policy: AgentChannelActionsConfig;
+    };
     onFinalText(response: JSONValue): Promise<void>;
     onErrorText(error: string): Promise<void>;
     onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
     // When present, assistant text deltas are forwarded live (used to stream a
     // reply into a chat channel). Absent => the stream is just drained.
     onTextDelta?(delta: string): Promise<void>;
-    // When present, reasoning/thinking deltas are forwarded live (used by
-    // progress-mode channel streaming to show the model's live thought).
-    onReasoningDelta?(delta: string): Promise<void>;
     // When present, each tool call's name is forwarded live (used by progress-mode
     // channel streaming to render a tool-activity preview).
-    onToolCall?(toolName: string, input: unknown): Promise<void>;
-    // Chunk streaming flushes once per completed model step, including steps
-    // without paragraph boundaries.
-    onStepFinish?(): Promise<void>;
+    onToolCall?(toolName: string): Promise<void>;
   },
 ): Promise<{ didFail: boolean; failureText: string | null; hasDetachedCallbacks: boolean }> {
   const subagentCoordinator = new SubagentCoordinator(session, agentConfig, waitUntilMs(context));
@@ -1341,28 +1282,18 @@ async function runAgentLoopUntilSubagentsIdle(
     asyncToolCoordinator: asyncToolCoordinator,
     initialTurnContext: initialTurnContext,
     agentConfig: agentConfig,
-    consumeStream: (reply.onTextDelta || reply.onReasoningDelta || reply.onToolCall || reply.onStepFinish)
+    ...(reply.channel ? { channel: reply.channel } : {}),
+    consumeStream: (reply.onTextDelta || reply.onToolCall)
       ? async (stream) => {
-          try {
-            const reader = stream.fullStream.getReader();
-            while (true) {
-              const { done, value: part } = await reader.read();
-              if (done) break;
-              if (part.type === "text-delta") {
-                await reply.onTextDelta?.(part.text);
-              } else if (part.type === "reasoning-delta") {
-                await reply.onReasoningDelta?.(part.text);
-              } else if (part.type === "tool-call") {
-                await reply.onToolCall?.(part.toolName, part.input);
-              } else if (part.type === "finish-step") {
-                await reply.onStepFinish?.();
-              }
+          const reader = stream.fullStream.getReader();
+          while (true) {
+            const { done, value: part } = await reader.read();
+            if (done) break;
+            if (part.type === "text-delta") {
+              await reply.onTextDelta?.(part.text);
+            } else if (part.type === "tool-call") {
+              await reply.onToolCall?.(part.toolName);
             }
-          } finally {
-            // Reading fullStream drives the model callbacks, but the AI SDK skips
-            // onFinish when the run errors before any step completes (usage-limit on
-            // the first call), so the task span would never close. Guarantee it.
-            await stream.ensureFinalized();
           }
         }
       : async (stream) => {
@@ -1409,6 +1340,10 @@ async function runParentContinuationLoop(options: {
   asyncToolCoordinator: AsyncToolCoordinator;
   initialTurnContext: DirectTurn["turnContext"];
   agentConfig: DirectInboundEvent["agentConfig"];
+  channel?: {
+    actions: ChannelActions;
+    policy: AgentChannelActionsConfig;
+  };
   consumeStream(stream: AgentLoopStream): Promise<void>;
   onLoopErrorText?(error: string): Promise<void>;
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
@@ -1433,6 +1368,11 @@ async function runParentContinuationLoop(options: {
     }, {
       dispatchSubagents: options.subagentCoordinator.dispatch,
       dispatchAsyncTools: options.asyncToolCoordinator.dispatch,
+      ...(options.channel
+        ? {
+          channel: options.channel,
+        }
+        : {}),
     });
 
     await options.consumeStream(stream);
@@ -1446,17 +1386,6 @@ async function runParentContinuationLoop(options: {
       };
     }
     if (stream.didFail()) {
-      // A failed parent pass may have already dispatched subagents in an earlier
-      // step that are still running in the background. Wait for them to settle
-      // before returning so each child finalizes — publishing AND flushing its
-      // terminal span. Otherwise the abandoned children spin "running" forever in
-      // the dashboard: their running span was stored durably, but the Lambda froze
-      // before the terminal one was ever flushed. Bounded by the same deadline
-      // budget as the success path.
-      if (options.subagentCoordinator.pendingCount > 0) {
-        await options.subagentCoordinator.waitForIdle({ onHeartbeat: options.onHeartbeat });
-      }
-
       return {
         didFail: true,
         failureText: stream.failureText(),
@@ -1749,39 +1678,4 @@ function channelStreamMode(
   const channel = channels?.[channelName] as { streaming?: { mode?: unknown } } | undefined;
   const mode = channel?.streaming?.mode;
   return mode === "edit" || mode === "chunk" || mode === "progress" ? mode : undefined;
-}
-
-function formatToolProgress(toolName: string, input: unknown): string {
-  const hint = toolProgressHint(input);
-
-  return hint ? `🛠 ${toolName}: ${hint}` : `🛠 ${toolName}`;
-}
-
-// A short, human-readable descriptor for a tool call — prefer a meaningful field
-// (query/prompt/command/path/url) over dumping the raw arguments JSON.
-function toolProgressHint(input: unknown): string | undefined {
-  const maxLength = 80;
-  const clip = (text: string): string => {
-    const oneLine = text.replace(/\s+/g, " ").trim();
-
-    return oneLine.length > maxLength ? `${oneLine.slice(0, maxLength - 1)}…` : oneLine;
-  };
-  if (typeof input === "string") return input ? clip(input) : undefined;
-  if (input === null || typeof input !== "object") return undefined;
-  const record = input as Record<string, unknown>;
-  // run_subagent: summarize the dispatched tasks.
-  const tasks = record["tasks"];
-  if (Array.isArray(tasks)) {
-    const first = tasks[0] as Record<string, unknown> | undefined;
-    const prompt = first && typeof first["prompt"] === "string" ? first["prompt"] : undefined;
-    const count = tasks.length > 1 ? ` (+${tasks.length - 1} more)` : "";
-
-    return prompt ? `${clip(prompt)}${count}` : `${tasks.length} task${tasks.length === 1 ? "" : "s"}`;
-  }
-  for (const key of ["query", "prompt", "command", "path", "url", "name", "pattern"]) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim()) return clip(value);
-  }
-
-  return undefined;
 }
