@@ -83,19 +83,12 @@ Usage notes:
           if (path) args.push("--", toWorkspaceRelative(path));
 
           const code = args.map(shellQuote).join(" ");
-          const result = await runSandbox(ws.sandbox, ws.namespace, code, { onSandboxCpu: context.onSandboxCpu });
+          const result = await runSandbox(ws.sandbox, ws.namespace, code);
           // ripgrep: exit 0 = matches, 1 = no matches (not an error), >=2 = error.
           if (result.exitCode === 1 && result.stderr.trim().length === 0) {
             return toolText("No matches found");
           }
           if (!result.ok && result.exitCode !== 1) {
-            // Self-explanatory failure when the sandbox image lacks ripgrep, so the
-            // model doesn't loop retrying a tool that can never work here.
-            if (/rg: command not found|rg: not found/i.test(result.stderr)) {
-              return toolError(
-                "Error: ripgrep (rg) is not installed in this sandbox image, so content search is unavailable. Use the bash tool with `grep -r` instead.",
-              );
-            }
             return toolError(`${result.stderr}${result.stdout}`.trim() || "Error: grep failed");
           }
           return toolText(result.stdout.trim() || "No matches found");

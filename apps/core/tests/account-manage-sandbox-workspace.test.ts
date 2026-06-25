@@ -23,11 +23,8 @@ import {
 
 const ACCOUNT_ID = "acct_test";
 const AUTH = { authorization: "Bearer fp_acct_test" };
-const ORIGINAL_SERVICE_AUTH_SECRET = process.env.SERVICE_AUTH_SECRET;
 
 afterEach(() => {
-  if (ORIGINAL_SERVICE_AUTH_SECRET === undefined) delete process.env.SERVICE_AUTH_SECRET;
-  else process.env.SERVICE_AUTH_SECRET = ORIGINAL_SERVICE_AUTH_SECRET;
   setStorageForTests(null);
   resetStorageForTests();
 });
@@ -151,24 +148,6 @@ describe("account-manage workspace endpoints", () => {
     const response = await handler(createEvent("PATCH", "/accounts/me/workspaces/ws_missing", AUTH, { name: "x" }));
     expect(response.statusCode).toBe(404);
     expect(responseJson(response)).toEqual({ error: "Workspace not found" });
-  });
-
-  it("allows the Convex service token to reach workspace file routes", async () => {
-    process.env.SERVICE_AUTH_SECRET = "service-secret";
-    setStorageForTests(createFakeStorage());
-    const created = responseJson(await handler(createEvent("POST", "/accounts/me/workspaces", AUTH, {
-      name: "notes",
-      config: { storage: { provider: "s3" } },
-    }))) as WorkspaceConfigRecord;
-
-    const response = await handler(createEvent(
-      "PUT",
-      `/accounts/me/workspaces/${created.workspaceId}/files`,
-      { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
-    ));
-
-    expect(response.statusCode).toBe(405);
-    expect(responseJson(response)).toMatchObject({ error: "Method not allowed" });
   });
 });
 

@@ -5,11 +5,12 @@
  *
  * Read paths (the auth path + harness reads) are fully implemented.
  * Account-create / rotate-secret are owned by the cherry-coke side
- * (orgLifecycle) and intentionally throw here — broods does not
+ * (orgLifecycle) and intentionally throw here — filthy-panty does not
  * create accounts in SaaS mode. Agent + cron writes are wired so
  * the harness can persist normally.
  */
 
+import { randomUUID } from "node:crypto";
 import {
   encryptAgentConfig,
   decodeStoredAgentConfig,
@@ -41,7 +42,12 @@ import {
   normalizeUpdateAccountToolInput,
   type AccountToolRecord,
 } from "../account-tools.ts";
-import { usage } from "./usage.ts";
+import {
+  createArtifactId,
+  normalizeCreateArtifactInput,
+  normalizeUpdateArtifactInput,
+  type ArtifactRecord,
+} from "../artifacts.ts";
 
 // ConvexHttpClient's typed `query`/`mutation` only accept public function
 // refs; the backend package exposes internalQuery / internalMutation, so we
@@ -50,7 +56,7 @@ import { usage } from "./usage.ts";
 // package's typecheck program — its sources are checked by their own
 // tsconfig — while Bun still resolves and bundles the module statically.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const internal: any = require("@broods/convex/_generated/api").internal;
+const internal: any = require("@filthy-panty/convex/_generated/api").internal;
 import type {
   AccountRecord,
   AgentDeploymentRecord,
@@ -58,6 +64,7 @@ import type {
   AgentRecord,
   AccountStore,
   AccountToolStore,
+  ArtifactStore,
   AgentStore,
   CronRecord,
   CronRunRecord,
@@ -308,13 +315,6 @@ const agentDeployments: AgentDeploymentStore = {
     }) as AgentDeploymentRecord | null;
     return doc;
   },
-  async getByAgentId(accountId, agentId) {
-    const doc = await getConvexClient().query(internal.agentDeployments.getByAgentId, {
-      accountId: accountId as any,
-      agentId: agentId,
-    }) as AgentDeploymentRecord | null;
-    return doc;
-  },
 };
 
 const crons: CronStore = {
@@ -438,7 +438,7 @@ const crons: CronStore = {
 };
 
 function cryptoRandomId(): string {
-  return Math.random().toString(36).slice(2, 14);
+  return randomUUID();
 }
 
 interface ConvexSandboxConfigDoc {
@@ -703,6 +703,122 @@ const accountTools: AccountToolStore = {
   },
 };
 
+interface ConvexArtifactDoc {
+  artifactId: string;
+  accountId: string;
+  agentId: string;
+  conversationKey: string;
+  sourceEventId: string;
+  sourceAttachmentId: string;
+  driverId: string;
+  externalRef?: string;
+  filename: string;
+  mediaType: string;
+  kind: ArtifactRecord["kind"];
+  size: number;
+  sha256: string;
+  state: ArtifactRecord["state"];
+  failureCode?: string;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+function artifactFromConvex(doc: ConvexArtifactDoc | null): ArtifactRecord | null {
+  if (!doc) return null;
+  return {
+    artifactId: doc.artifactId,
+    accountId: doc.accountId,
+    agentId: doc.agentId,
+    conversationKey: doc.conversationKey,
+    sourceEventId: doc.sourceEventId,
+    sourceAttachmentId: doc.sourceAttachmentId,
+    driverId: doc.driverId,
+    ...(doc.externalRef ? { externalRef: doc.externalRef } : {}),
+    filename: doc.filename,
+    mediaType: doc.mediaType,
+    kind: doc.kind,
+    size: doc.size,
+    sha256: doc.sha256,
+    state: doc.state,
+    ...(doc.failureCode ? { failureCode: doc.failureCode } : {}),
+    createdAt: new Date(doc.createdAt).toISOString(),
+    updatedAt: new Date(doc.updatedAt).toISOString(),
+    ...(doc.deletedAt ? { deletedAt: new Date(doc.deletedAt).toISOString() } : {}),
+  };
+}
+
+const artifacts: ArtifactStore = {
+  async getById(accountId, conversationKey, artifactId) {
+    const doc = await getConvexClient().query(internal.artifacts.getById, {
+      accountId: accountId as any,
+      conversationKey,
+      artifactId,
+    });
+    return artifactFromConvex(doc as ConvexArtifactDoc | null);
+  },
+  async list(accountId, conversationKey, requestedLimit = 100) {
+    const limit = Math.max(1, Math.min(100, Math.floor(requestedLimit)));
+    const docs = await getConvexClient().query(internal.artifacts.list, {
+      accountId: accountId as any,
+      conversationKey,
+      limit,
+    }) as ConvexArtifactDoc[];
+    return docs.map((doc) => artifactFromConvex(doc)!).filter(Boolean);
+  },
+  async create(accountId, rawInput) {
+    const input = normalizeCreateArtifactInput(rawInput);
+    const artifactId = createArtifactId(accountId, input);
+    const doc = await getConvexClient().mutation(internal.artifacts.create, {
+      artifactId,
+      accountId: accountId as any,
+      agentId: input.agentId as any,
+      conversationKey: input.conversationKey,
+      sourceEventId: input.sourceEventId,
+      sourceAttachmentId: input.sourceAttachmentId,
+      driverId: input.driverId,
+      externalRef: input.externalRef,
+      filename: input.filename,
+      mediaType: input.mediaType,
+      kind: input.kind,
+      size: input.size,
+      sha256: input.sha256,
+      state: input.state,
+      failureCode: input.failureCode,
+    }) as ConvexArtifactDoc;
+    const created = artifactFromConvex(doc);
+    if (!created) throw new Error("Failed to create artifact");
+    return created;
+  },
+  async update(accountId, conversationKey, artifactId, rawPatch) {
+    const patch = normalizeUpdateArtifactInput(rawPatch);
+    const doc = await getConvexClient().mutation(internal.artifacts.update, {
+      accountId: accountId as any,
+      conversationKey,
+      artifactId,
+      ...patch,
+    }) as ConvexArtifactDoc | null;
+    return artifactFromConvex(doc);
+  },
+  async remove(accountId, conversationKey, artifactId) {
+    return await getConvexClient().mutation(internal.artifacts.remove, {
+      accountId: accountId as any,
+      conversationKey,
+      artifactId,
+    }) as boolean;
+  },
+  async removeAllForAccount(accountId) {
+    let deleted = 0;
+    while (true) {
+      const batch = await getConvexClient().mutation(internal.artifacts.removeAllForAccount, {
+        accountId: accountId as any,
+      }) as number;
+      deleted += batch;
+      if (batch < 500) return deleted;
+    }
+  },
+};
+
 export const convexStorageProvider: StorageProvider = {
   kind: "convex",
   accounts,
@@ -712,5 +828,5 @@ export const convexStorageProvider: StorageProvider = {
   sandboxConfigs,
   workspaceConfigs,
   accountTools,
-  usage,
+  artifacts,
 };

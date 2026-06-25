@@ -1,71 +1,28 @@
 /**
  * Bun gateway for public app traffic. It forwards normal HTTP requests to core
  * and adapts public WebSocket clients to core's NATS-backed stream.
- *
- * Two WS modes coexist — never mixed on the same socket:
- *   agent-test  /v1/agents/<id>/ws  and  /v1/<project>/agents/<env>/<endpointId>/ws
- *   observability  /v1/<project>/<env>/observability/ws
  */
 
-import { resolveRunEvents } from "../../../packages/broods/src/run-input.ts";
+import { resolveRunEvents } from "../../../packages/filthy-panty/src/run-input.ts";
 import type {
   WebSocketClientExecuteMessage,
   WebSocketClientMessage,
   WebSocketServerMessage,
-} from "../../../packages/broods/src/websocket-contracts.ts";
-import {
-  isObservabilityClientMessage,
-  type ObservabilityClientMessage,
-  type ObservabilityLogEntry,
-  type ObservabilityServerMessage,
-  type ObservabilitySpanRow,
-  type LogLevel,
-} from "../../../packages/broods/src/observability-contracts.ts";
+} from "../../../packages/filthy-panty/src/websocket-contracts.ts";
 import {
   connectNats,
   readConversationStream,
-  readObservabilityStream,
   type NatsConnection,
   type NatsStreamEvent,
 } from "../../core/functions/_shared/nats.ts";
 
-// Typed socket data — agent-test vs observability are fully separate.
-type AgentTestGatewayData = {
-  kind: "agent-test";
+type GatewayData = {
   corePath: string;
   token: string;
-  coreBaseUrl: string;
-};
-
-type ObservabilityGatewayData = {
-  kind: "observability";
-  project: string;
-  env: string;
-  token: string;
-  scope: ObservabilityScope;
-};
-
-type GatewayData = AgentTestGatewayData | ObservabilityGatewayData;
-
-// Observability scope returned by POST /v1/internal/observability-scope.
-type ObservabilityScope = {
-  accountId: string;
-  projectSlug: string;
-  environmentSlug: string;
-  endpointIds: string[];
-};
-
-type NatsSubscription = { unsubscribe(): void };
-
-type ObservabilitySocketState = {
-  scope: ObservabilityScope;
-  logsSub: NatsSubscription | null;
-  tracesSub: NatsSubscription | null;
-  logsMinLevel: LogLevel;
 };
 
 type GatewayServerOptions = {
-  coreBaseUrls: string[];
+  coreBaseUrl: string;
   port?: number;
   host?: string;
   limits?: GatewayLimits;
@@ -86,26 +43,22 @@ type GatewayLimits = {
 
 const decoder = new TextDecoder();
 const activeRuns = new WeakMap<Bun.ServerWebSocket<GatewayData>, ActiveRun>();
-const obsState = new WeakMap<Bun.ServerWebSocket<GatewayData>, ObservabilitySocketState>();
 let natsConnectionPromise: Promise<NatsConnection> | null = null;
 let activeSocketCount = 0;
 const maxBunIdleTimeoutSeconds = 255;
 
-// Level ordering used for minLevel filtering (NATS live stream).
-const LOG_LEVEL_ORDER: Record<LogLevel, number> = { INFO: 0, WARN: 1, ERROR: 2 };
-
 export function createGatewayServer(options: GatewayServerOptions): Bun.Server<GatewayData> {
-  const coreBaseUrls = normalizedCoreBaseUrls(options.coreBaseUrls);
+  const coreBaseUrl = normalizeBaseUrl(options.coreBaseUrl);
   const limits = options.limits ?? gatewayLimitsFromEnv();
 
   return Bun.serve<GatewayData>({
     port: options.port ?? Number(process.env.PORT ?? "3000"),
     hostname: options.host ?? process.env.BIND_HOST ?? process.env.HOSTNAME ?? "0.0.0.0",
     idleTimeout: limits.idleTimeoutSeconds,
-    async fetch(request, server) {
+    fetch(request, server) {
       const url = new URL(request.url);
 
-      if ((url.pathname === "/" || url.pathname === "/healthz") && request.method === "GET") {
+      if (url.pathname === "/" || url.pathname === "/healthz") {
         return json({
           status: "ok",
           activeWebSockets: activeSocketCount,
@@ -113,134 +66,65 @@ export function createGatewayServer(options: GatewayServerOptions): Bun.Server<G
         });
       }
 
-      if (isWebSocketRequest(request)) {
-        if (isObservabilityWebSocketPath(url.pathname)) {
-          if (activeSocketCount >= limits.maxConnections) {
-            return json({ error: "Gateway is at capacity" }, { status: 503 });
-          }
-
-          const token = bearerToken(request.headers.get("authorization")) ?? url.searchParams.get("token") ?? "";
-          if (!token.trim()) {
-            return json({ error: "Missing WebSocket token" }, { status: 401 });
-          }
-
-          // Extract <project> and <env> from /v1/<project>/<env>/observability/ws
-          const obsMatch = url.pathname.match(/^\/v1\/([^/]+)\/([^/]+)\/observability\/ws$/);
-          if (!obsMatch) {
-            return json({ error: "Invalid observability WebSocket path" }, { status: 400 });
-          }
-
-          const resolved = await resolveObservabilityScope(token.trim(), coreBaseUrls);
-          if (!resolved) {
-            return json({ error: "Invalid WebSocket token" }, { status: 401 });
-          }
-          if (
-            resolved.scope.projectSlug !== decodeURIComponent(obsMatch[1]) ||
-            resolved.scope.environmentSlug !== decodeURIComponent(obsMatch[2])
-          ) {
-            return json({ error: "WebSocket scope does not match the requested project/environment" }, { status: 403 });
-          }
-
-          const upgraded = server.upgrade(request, {
-            data: {
-              kind: "observability",
-              project: obsMatch[1],
-              env: obsMatch[2],
-              token: token.trim(),
-              scope: resolved.scope,
-            } satisfies ObservabilityGatewayData,
-          });
-
-          return upgraded ? undefined : json({ error: "WebSocket upgrade failed" }, { status: 400 });
+      if (isWebSocketRequest(request) && isWebSocketPath(url.pathname)) {
+        if (activeSocketCount >= limits.maxConnections) {
+          return json({ error: "Gateway is at capacity" }, { status: 503 });
         }
 
-        if (isWebSocketPath(url.pathname)) {
-          if (activeSocketCount >= limits.maxConnections) {
-            return json({ error: "Gateway is at capacity" }, { status: 503 });
-          }
-
-          const token = bearerToken(request.headers.get("authorization")) ?? url.searchParams.get("token") ?? "";
-          if (!token.trim()) {
-            return json({ error: "Missing WebSocket token" }, { status: 401 });
-          }
-
-          const resolved = await resolveObservabilityScope(token.trim(), coreBaseUrls);
-          if (!resolved) {
-            return json({ error: "Invalid WebSocket token" }, { status: 401 });
-          }
-
-          const upgraded = server.upgrade(request, {
-            data: {
-              kind: "agent-test",
-              corePath: url.pathname.slice(0, -"/ws".length),
-              token: token.trim(),
-              coreBaseUrl: resolved.coreBaseUrl,
-            } satisfies AgentTestGatewayData,
-          });
-
-          return upgraded ? undefined : json({ error: "WebSocket upgrade failed" }, { status: 400 });
+        const token = bearerToken(request.headers.get("authorization")) ?? url.searchParams.get("token") ?? "";
+        if (!token.trim()) {
+          return json({ error: "Missing WebSocket token" }, { status: 401 });
         }
+
+        const upgraded = server.upgrade(request, {
+          data: {
+            corePath: url.pathname.slice(0, -"/ws".length),
+            token: token.trim(),
+          },
+        });
+
+        return upgraded ? undefined : json({ error: "WebSocket upgrade failed" }, { status: 400 });
       }
 
       if (!isCoreHttpPath(url.pathname)) {
         return json({ error: "Not found" }, { status: 404 });
       }
 
-      return proxyHttp(request, coreBaseUrls);
+      return proxyHttp(request, coreBaseUrl);
     },
     websocket: {
       maxPayloadLength: limits.maxPayloadBytes,
       backpressureLimit: limits.backpressureBytes,
       closeOnBackpressureLimit: true,
       idleTimeout: limits.idleTimeoutSeconds,
-      open(socket) {
+      open() {
         activeSocketCount += 1;
-        if (socket.data.kind === "observability") {
-          obsState.set(socket, {
-            scope: socket.data.scope,
-            logsSub: null,
-            tracesSub: null,
-            logsMinLevel: "INFO",
-          });
-        }
       },
       async message(socket, rawMessage) {
-        if (socket.data.kind === "observability") {
-          await handleObservabilityMessage(socket as Bun.ServerWebSocket<ObservabilityGatewayData>, rawMessage);
-          return;
-        }
-
-        // Agent-test path (kind === "agent-test")
-        const agentSocket = socket as Bun.ServerWebSocket<AgentTestGatewayData>;
         const message = parseGatewayMessage(rawMessage);
         if (!message) {
-          send(agentSocket, { type: "error", error: "Invalid WebSocket message" });
+          send(socket, { type: "error", error: "Invalid WebSocket message" });
           socket.close(1003, "invalid message");
           return;
         }
 
         if (message.type === "cancel") {
-          activeRuns.get(agentSocket)?.abort.abort();
-          activeRuns.delete(agentSocket);
+          activeRuns.get(socket)?.abort.abort();
+          activeRuns.delete(socket);
           return;
         }
 
-        if (activeRuns.has(agentSocket)) {
-          send(agentSocket, { type: "error", error: "A run is already active on this WebSocket" });
+        if (activeRuns.has(socket)) {
+          send(socket, { type: "error", error: "A run is already active on this WebSocket" });
           return;
         }
 
-        void runCoreStream(agentSocket, message, limits);
+        void runCoreStream(socket, coreBaseUrl, message, limits);
       },
       close(socket) {
         activeSocketCount = Math.max(0, activeSocketCount - 1);
-        if (socket.data.kind === "observability") {
-          cleanupObservabilitySocket(socket as Bun.ServerWebSocket<ObservabilityGatewayData>);
-          return;
-        }
-        const agentSocket = socket as Bun.ServerWebSocket<AgentTestGatewayData>;
-        stopActiveRun(agentSocket);
-        activeRuns.delete(agentSocket);
+        stopActiveRun(socket);
+        activeRuns.delete(socket);
       },
     },
   });
@@ -277,7 +161,8 @@ type NatsStartResponse = {
 };
 
 async function runCoreStream(
-  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+  socket: Bun.ServerWebSocket<GatewayData>,
+  coreBaseUrl: string,
   message: ExecuteMessage,
   limits: GatewayLimits,
 ): Promise<void> {
@@ -305,7 +190,7 @@ async function runCoreStream(
   });
 
   try {
-    const response = await fetch(`${socket.data.coreBaseUrl}${socket.data.corePath}`, {
+    const response = await fetch(`${coreBaseUrl}${socket.data.corePath}`, {
       method: "POST",
       headers: {
         "Accept": "application/json",
@@ -340,32 +225,24 @@ async function runCoreStream(
   }
 }
 
-async function proxyHttp(request: Request, coreBaseUrls: string[]): Promise<Response> {
+async function proxyHttp(request: Request, coreBaseUrl: string): Promise<Response> {
   const url = new URL(request.url);
+  const target = `${coreBaseUrl}${url.pathname}${url.search}`;
   const headers = new Headers(request.headers);
   headers.delete("host");
   headers.delete("connection");
   headers.delete("upgrade");
 
-  const body = request.method === "GET" || request.method === "HEAD"
-    ? undefined
-    : await request.arrayBuffer();
-  let response: Response | null = null;
-  for (const coreBaseUrl of coreBaseUrls) {
-    response = await fetch(`${coreBaseUrl}${url.pathname}${url.search}`, {
-      method: request.method,
-      headers,
-      body,
-      redirect: "manual",
-    });
-    if (response.status !== 401) return response;
-  }
-
-  return response ?? json({ error: "No core upstream is configured" }, { status: 503 });
+  return fetch(target, {
+    method: request.method,
+    headers,
+    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+    redirect: "manual",
+  });
 }
 
 async function streamNatsResponses(
-  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+  socket: Bun.ServerWebSocket<GatewayData>,
   started: NatsStartResponse,
   signal: AbortSignal,
 ): Promise<void> {
@@ -391,7 +268,7 @@ async function streamNatsResponses(
 
       const outbound = websocketMessageForNatsData(event.data);
       if (outbound) {
-        sendAgentTest(socket, outbound);
+        send(socket, outbound);
       }
       ackNatsMessage(message);
 
@@ -466,26 +343,11 @@ function parseJson(value: string): unknown {
   }
 }
 
-/** Send an agent-test protocol message. */
-function sendAgentTest(socket: Bun.ServerWebSocket<AgentTestGatewayData>, payload: WebSocketServerMessage): void {
+function send(socket: Bun.ServerWebSocket<GatewayData>, payload: WebSocketServerMessage): void {
   socket.send(JSON.stringify(payload));
 }
 
-/** Send an observability protocol message. Best-effort: a closing or
- * backpressured socket must never throw into the NATS relay loop. */
-function sendObs(socket: Bun.ServerWebSocket<ObservabilityGatewayData>, payload: ObservabilityServerMessage): void {
-  if (socket.readyState !== WebSocket.OPEN) return;
-  try {
-    socket.send(JSON.stringify(payload));
-  } catch {
-    // Transport closed mid-send — drop this message; the relay keeps running.
-  }
-}
-
-// Short alias used throughout runCoreStream.
-const send = sendAgentTest;
-
-function stopActiveRun(socket: Bun.ServerWebSocket<AgentTestGatewayData>): void {
+function stopActiveRun(socket: Bun.ServerWebSocket<GatewayData>): void {
   const activeRun = activeRuns.get(socket);
   if (!activeRun) return;
   clearTimeout(activeRun.startTimeout);
@@ -506,515 +368,16 @@ function json(payload: Record<string, unknown>, init: ResponseInit = {}): Respon
 function normalizeBaseUrl(value: string): string {
   const trimmed = value.trim().replace(/\/+$/, "");
   if (!trimmed) {
-    throw new Error("Gateway requires BROODS_CORE_URLS");
+    throw new Error("Gateway requires FILTHY_PANTY_CORE_URL");
   }
 
   return /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`;
-}
-
-/** Normalize, de-duplicate, and require at least one core upstream URL. */
-export function normalizedCoreBaseUrls(values: string[]): string[] {
-  const urls = [...new Set(values.map((value) => value.trim()).filter(Boolean).map(normalizeBaseUrl))];
-  if (urls.length === 0) throw new Error("Gateway requires BROODS_CORE_URLS");
-
-  return urls;
 }
 
 function bearerToken(value: string | null): string | null {
   const match = value?.match(/^Bearer\s+(.+)$/i);
 
   return match?.[1]?.trim() || null;
-}
-
-type ResolvedObservabilityScope = {
-  scope: ObservabilityScope;
-  coreBaseUrl: string;
-};
-type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-
-// Validate the bearer token against each configured core. The matched upstream
-// is retained for stage-correct agent execution while one public gateway serves
-// both dev and production.
-export async function resolveObservabilityScope(
-  token: string,
-  coreBaseUrls: string[],
-  fetchImpl: FetchLike = fetch,
-): Promise<ResolvedObservabilityScope | null> {
-  for (const coreBaseUrl of coreBaseUrls) {
-    try {
-      const response = await fetchImpl(`${coreBaseUrl}/v1/internal/observability-scope`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        signal: AbortSignal.timeout(5_000),
-      });
-      if (!response.ok) continue;
-
-      return { scope: await response.json() as ObservabilityScope, coreBaseUrl };
-    } catch {
-      continue;
-    }
-  }
-
-  return null;
-}
-
-/** Dispatch an incoming message for an observability socket. */
-async function handleObservabilityMessage(
-  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
-  rawMessage: string | Buffer,
-): Promise<void> {
-  const text = typeof rawMessage === "string" ? rawMessage : decoder.decode(rawMessage);
-  const parsed = parseJson(text);
-
-  if (!isObservabilityClientMessage(parsed as unknown)) {
-    sendObs(socket, { type: "error", error: "Invalid observability message" });
-    return;
-  }
-
-  const msg = parsed as ObservabilityClientMessage;
-
-  const scope = socket.data.scope;
-
-  if (msg.type === "unsubscribe") {
-    cleanupObservabilityStream(socket, msg.stream);
-    return;
-  }
-
-  // subscribe
-  await handleObservabilitySubscribe(socket, scope, msg.stream, msg.backfill, msg.minLevel ?? "INFO");
-}
-
-async function handleObservabilitySubscribe(
-  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
-  scope: ObservabilityScope,
-  stream: "logs" | "traces",
-  backfill: number | undefined,
-  minLevel: LogLevel,
-): Promise<void> {
-  const state = obsState.get(socket as Bun.ServerWebSocket<GatewayData>);
-  if (!state) return;
-
-  cleanupObservabilityStream(socket, stream);
-
-  // Update minLevel for live filtering (logs only).
-  if (stream === "logs") {
-    state.logsMinLevel = minLevel;
-  }
-
-  // Subscribe and relay live events immediately. The durable backfill runs in the
-  // background below so a slow Tempo/Loki query can never hold back live spans —
-  // historical entries merge in when they land and clients de-duplicate overlap.
-  const live = await startLiveSubscription(socket, scope, stream, state);
-  if (!live) {
-    sendObs(socket, { type: "error", error: "Live observability transport is unavailable." });
-    return;
-  }
-
-  sendObs(socket, { type: "ready" });
-
-  // Best-effort durable history — never blocks live and never errors the stream.
-  if (typeof backfill === "number" && backfill > 0) {
-    void sendBackfill(socket, scope, stream, backfill);
-  }
-}
-
-/** Query Loki or Tempo and send a backfill message. Best-effort — skip on missing env. */
-async function sendBackfill(
-  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
-  scope: ObservabilityScope,
-  stream: "logs" | "traces",
-  limit: number,
-): Promise<boolean> {
-  try {
-    if (stream === "logs") {
-      const lokiUrl = process.env.LOKI_URL?.trim();
-      if (!lokiUrl) return false;
-      const entries = await fetchLokiBackfill(lokiUrl, scope, limit);
-      sendObs(socket, { type: "backfill", stream: "logs", entries });
-    } else {
-      const tempoUrl = process.env.TEMPO_URL?.trim();
-      if (!tempoUrl) return false;
-      const entries = await fetchTempoBackfill(tempoUrl, scope, limit);
-      sendObs(socket, { type: "backfill", stream: "traces", entries });
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// Loki query lookback for reload backfill — wide enough that a return after a
-// long pause still shows retained history (the live JetStream replay only covers
-// the recent window). Mirrors the Tempo trace search window.
-const LOKI_BACKFILL_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
-
-// Selectors are built only from server-validated scope, never raw client input.
-async function fetchLokiBackfill(
-  lokiUrl: string,
-  scope: ObservabilityScope,
-  limit: number,
-): Promise<ObservabilityLogEntry[]> {
-  const selector = `{account_id="${scope.accountId}",project="${scope.projectSlug}",environment="${scope.environmentSlug}"}`;
-  const url = new URL(`${lokiUrl}/loki/api/v1/query_range`);
-  url.searchParams.set("query", selector);
-  url.searchParams.set("limit", String(limit));
-  url.searchParams.set("direction", "backward");
-  // Without an explicit range Loki only looks back 1 hour, so a reload after a
-  // pause would drop every older log even though it is still retained. Span a
-  // wide window (matching the Tempo trace backfill) and let `limit` + backward
-  // direction return the most recent entries.
-  url.searchParams.set("start", new Date(Date.now() - LOKI_BACKFILL_WINDOW_MS).toISOString());
-  url.searchParams.set("end", new Date().toISOString());
-
-  const response = await fetch(url.toString(), { signal: AbortSignal.timeout(5_000) });
-  if (!response.ok) throw new Error(`Loki query failed with HTTP ${response.status}`);
-
-  const body = await response.json() as {
-    data?: { result?: Array<{ stream: Record<string, string>; values: Array<[string, string]> }> };
-  };
-
-  const result = body?.data?.result ?? [];
-  const entries: ObservabilityLogEntry[] = [];
-
-  for (const stream of result) {
-    for (const [nsStr, line] of stream.values) {
-      const tsMs = Math.floor(Number(nsStr) / 1_000_000);
-      entries.push(lokiLogEntry(stream.stream, line, tsMs, scope.accountId));
-    }
-  }
-
-  // Return chronological order (Loki returns newest-first with direction=backward).
-  return entries.reverse();
-}
-
-/** Rehydrate one Loki OTLP line with the structured metadata returned beside it. */
-export function lokiLogEntry(
-  metadata: Record<string, string>,
-  line: string,
-  fallbackTs: number,
-  fallbackAccountId: string,
-): ObservabilityLogEntry {
-  const parsed = parseJson(line);
-  const record = parsed && typeof parsed === "object"
-    ? parsed as Record<string, unknown>
-    : {};
-  const rawLevel = record.level ?? metadata.level ?? metadata.severity_text ?? metadata.detected_level;
-  const level = rawLevel === "DEBUG" || rawLevel === "WARN" || rawLevel === "ERROR"
-    ? rawLevel
-    : "INFO";
-  const parsedTime = typeof record.ts === "number"
-    ? record.ts
-    : typeof record.time === "string"
-      ? Date.parse(record.time)
-      : Number.NaN;
-
-  return {
-    ts: Number.isFinite(parsedTime) ? parsedTime : fallbackTs,
-    level,
-    eventType: stringValue(record.eventType, metadata.eventType, "log"),
-    message: stringValue(record.message, metadata.message, line),
-    traceId: optionalString(record.traceId, metadata.traceId, metadata.trace_id),
-    accountId: optionalString(record.accountId, metadata.accountId, metadata.account_id) ?? fallbackAccountId,
-    endpointId: optionalString(record.endpointId, metadata.endpointId, metadata.endpoint_id),
-    agentId: optionalString(record.agentId, metadata.agentId, metadata.agent_id),
-    conversationKey: optionalString(record.conversationKey, metadata.conversationKey, metadata.conversation_key),
-    service: optionalString(record.service, metadata.service, metadata.service_name),
-    data: Object.keys(record).length > 0 ? record : metadata,
-  };
-}
-
-function optionalString(...values: unknown[]): string | undefined {
-  return values.find((value): value is string => typeof value === "string" && value.length > 0);
-}
-
-function stringValue(...values: unknown[]): string {
-  return optionalString(...values) ?? "";
-}
-
-// Tag filters are built only from server-validated scope.
-async function fetchTempoBackfill(
-  tempoUrl: string,
-  scope: ObservabilityScope,
-  limit: number,
-): Promise<ObservabilitySpanRow[]> {
-  const url = new URL(`${tempoUrl}/api/search`);
-  const end = Math.floor(Date.now() / 1_000);
-  const start = end - 90 * 24 * 60 * 60;
-  url.searchParams.set("tags", `account_id=${scope.accountId} project=${scope.projectSlug} environment=${scope.environmentSlug}`);
-  url.searchParams.set("limit", String(limit));
-  url.searchParams.set("start", String(start));
-  url.searchParams.set("end", String(end));
-
-  const response = await fetch(url.toString(), { signal: AbortSignal.timeout(5_000) });
-  if (!response.ok) throw new Error(`Tempo search failed with HTTP ${response.status}`);
-
-  const body = await response.json() as {
-    traces?: Array<{
-      traceID: string;
-      rootSpanName?: string;
-      rootTraceName?: string;
-      startTimeUnixNano?: string;
-      durationMs?: number;
-    }>;
-  };
-
-  const traces = body?.traces ?? [];
-  // Bounded concurrency: firing one detail request per trace all at once
-  // overwhelms Tempo and trips the 5s timeouts; a small pool keeps the
-  // per-trace fan-out reliable.
-  const rows = await mapWithConcurrency(traces, TEMPO_DETAIL_CONCURRENCY, async (traceSummary) => {
-    const detailResponse = await fetch(
-      `${tempoUrl}/api/traces/${encodeURIComponent(traceSummary.traceID)}`,
-      { signal: AbortSignal.timeout(5_000) },
-    );
-    if (!detailResponse.ok) throw new Error(`Tempo trace query failed with HTTP ${detailResponse.status}`);
-
-    return tempoTraceRowsFromResponse(await detailResponse.json(), traceSummary.traceID);
-  });
-
-  return rows
-    .flatMap((result) => result.status === "fulfilled" ? result.value : [])
-    .sort((a, b) => b.startTimeMs - a.startTimeMs);
-}
-
-const TEMPO_DETAIL_CONCURRENCY = 6;
-
-/** Run an async mapper over items with a bounded number of concurrent workers. */
-export async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  mapper: (item: T) => Promise<R>,
-): Promise<PromiseSettledResult<R>[]> {
-  const results: PromiseSettledResult<R>[] = new Array(items.length);
-  let cursor = 0;
-  const worker = async (): Promise<void> => {
-    while (cursor < items.length) {
-      const index = cursor;
-      cursor += 1;
-      try {
-        results[index] = { status: "fulfilled", value: await mapper(items[index]) };
-      } catch (reason) {
-        results[index] = { status: "rejected", reason: reason };
-      }
-    }
-  };
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, () => worker()),
-  );
-
-  return results;
-}
-
-type OtelValue = {
-  stringValue?: string;
-  intValue?: string | number;
-  doubleValue?: number;
-  boolValue?: boolean;
-  arrayValue?: { values?: OtelValue[] };
-};
-
-type OtelAttribute = { key?: string; value?: OtelValue };
-
-function otelValue(value: OtelValue | undefined): unknown {
-  if (!value) return undefined;
-  if (value.stringValue !== undefined) return value.stringValue;
-  if (value.intValue !== undefined) return Number(value.intValue);
-  if (value.doubleValue !== undefined) return value.doubleValue;
-  if (value.boolValue !== undefined) return value.boolValue;
-  if (value.arrayValue) return (value.arrayValue.values ?? []).map(otelValue);
-  return undefined;
-}
-
-function otelAttributes(attributes: OtelAttribute[] | undefined): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const attribute of attributes ?? []) {
-    if (!attribute.key) continue;
-    result[attribute.key] = otelValue(attribute.value);
-  }
-
-  return result;
-}
-
-/**
- * Normalize an OTLP trace/span id to lowercase hex. Tempo's OTLP-JSON encodes
- * ids as base64 bytes, but the live NATS path emits lowercase hex — without this
- * the dashboard keys the backfilled and live copies of the same span differently
- * and renders duplicates on reload. Returns already-hex ids and unknown strings
- * (e.g. test fixtures) untouched; only base64 of the exact byte length converts.
- */
-export function normalizeOtelId(value: unknown, byteLength: number): string {
-  if (typeof value !== "string" || value.length === 0) return "";
-  if (value.length === byteLength * 2 && /^[0-9a-f]+$/.test(value)) return value;
-  try {
-    const bytes = Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64");
-    if (bytes.length === byteLength) return bytes.toString("hex");
-  } catch {
-    // Not base64 — fall through and leave the original value.
-  }
-
-  return value;
-}
-
-/** Convert Tempo's OTLP trace-detail response into the dashboard's full span tree. */
-export function tempoTraceRowsFromResponse(payload: unknown, fallbackTraceId = ""): ObservabilitySpanRow[] {
-  const batches = (payload as {
-    batches?: Array<{
-      resource?: { attributes?: OtelAttribute[] };
-      scopeSpans?: Array<{ spans?: Array<Record<string, unknown>> }>;
-      instrumentationLibrarySpans?: Array<{ spans?: Array<Record<string, unknown>> }>;
-    }>;
-  })?.batches ?? [];
-  const rows: ObservabilitySpanRow[] = [];
-
-  for (const batch of batches) {
-    const resourceAttributes = otelAttributes(batch.resource?.attributes);
-    const groups = batch.scopeSpans ?? batch.instrumentationLibrarySpans ?? [];
-    for (const group of groups) {
-      for (const raw of group.spans ?? []) {
-        const attributes = { ...resourceAttributes, ...otelAttributes(raw.attributes as OtelAttribute[] | undefined) };
-        const traceId = normalizeOtelId(raw.traceId, 16) || fallbackTraceId;
-        const spanId = normalizeOtelId(raw.spanId, 8);
-        const parentSpanId = normalizeOtelId(raw.parentSpanId, 8);
-        if (!traceId || !spanId) continue;
-        const startTimeMs = Math.floor(Number(raw.startTimeUnixNano ?? 0) / 1_000_000);
-        const endTimeMs = Math.floor(Number(raw.endTimeUnixNano ?? raw.startTimeUnixNano ?? 0) / 1_000_000);
-        const name = typeof raw.name === "string" ? raw.name : "agent.task";
-        const status = raw.status as { code?: unknown; message?: unknown } | undefined;
-        const isError = status?.code === 2 || status?.code === "STATUS_CODE_ERROR";
-        rows.push({
-          traceId,
-          spanId,
-          ...(parentSpanId ? { parentSpanId } : {}),
-          name,
-          kind: name === "model.step"
-            ? "model.step"
-            : name === "tool.call"
-              ? "tool.call"
-              : name.startsWith("phase.")
-                ? "phase"
-                : name === "agent.subtask"
-                  ? "subtask"
-                  : "task",
-          startTimeMs,
-          endTimeMs,
-          durationMs: Math.max(0, endTimeMs - startTimeMs),
-          status: isError ? "error" : "ok",
-          ...(typeof attributes.endpoint_id === "string" ? { endpointId: attributes.endpoint_id } : {}),
-          ...(typeof attributes.agent_id === "string" ? { agentId: attributes.agent_id } : {}),
-          ...(typeof attributes.conversation_key === "string" ? { conversationKey: attributes.conversation_key } : {}),
-          attributes,
-          ...(isError && typeof status?.message === "string" ? { error: status.message } : {}),
-        });
-      }
-    }
-  }
-
-  return rows;
-}
-
-// On connect, replay the recent window from the durable stream so a reload (or a
-// run that happened while no tab was watching) shows full-fidelity history, not a
-// blank or a Tempo-truncated copy. Tempo/Loki backfill still covers older history.
-const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
-
-/**
- * Start a JetStream consumer for logs or traces: it replays the recent window
- * from the durable OBSERVABILITY stream and then keeps delivering live messages,
- * so a single consumer both backfills (full fidelity) and tails. Replaces the old
- * core `subscribe`, which dropped anything published while no tab was watching.
- */
-async function startLiveSubscription(
-  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
-  scope: ObservabilityScope,
-  stream: "logs" | "traces",
-  state: ObservabilitySocketState,
-): Promise<boolean> {
-  try {
-    const connection = await getNatsConnection();
-    const messages = await readObservabilityStream({
-      connection: connection,
-      stream: stream,
-      accountId: scope.accountId,
-      project: scope.projectSlug,
-      env: scope.environmentSlug,
-      startTime: new Date(Date.now() - OBS_REPLAY_WINDOW_MS).toISOString(),
-    });
-    const natsSub: NatsSubscription = { unsubscribe: () => messages.stop() };
-
-    if (stream === "logs") {
-      state.logsSub = natsSub;
-    } else {
-      state.tracesSub = natsSub;
-    }
-
-    // Relay messages in the background — non-blocking.
-    void relayNatsMessages(socket, messages, stream, state);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Decode and relay NATS messages to the client WS. */
-async function relayNatsMessages(
-  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
-  sub: { [Symbol.asyncIterator](): AsyncIterator<{ data: Uint8Array }> },
-  stream: "logs" | "traces",
-  state: ObservabilitySocketState,
-): Promise<void> {
-  try {
-    for await (const msg of sub) {
-      // Per-message guard: a single malformed payload or a transient send error
-      // must not break the for-await loop and silently kill the live stream for
-      // the rest of the run. Skip the bad message and keep relaying.
-      try {
-        const text = decoder.decode(msg.data);
-        const parsed = parseJson(text);
-        if (!parsed || typeof parsed !== "object") continue;
-
-        if (stream === "logs") {
-          const entry = parsed as ObservabilityLogEntry;
-          const entryLevel = (entry.level as string) as LogLevel;
-          if (LOG_LEVEL_ORDER[entryLevel] === undefined) continue;
-          if (LOG_LEVEL_ORDER[entryLevel] < LOG_LEVEL_ORDER[state.logsMinLevel]) continue;
-          sendObs(socket, { type: "log", entry });
-        } else {
-          const entry = parsed as ObservabilitySpanRow;
-          sendObs(socket, { type: "span", entry });
-        }
-      } catch {
-        // Malformed message or transient send failure — drop it and continue.
-      }
-    }
-  } catch {
-    // Iterator closed (unsubscribe or socket close) — silent exit.
-  }
-}
-
-/** Tear down the NATS subscription for one stream. */
-function cleanupObservabilityStream(
-  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
-  stream: "logs" | "traces",
-): void {
-  const state = obsState.get(socket as Bun.ServerWebSocket<GatewayData>);
-  if (!state) return;
-  if (stream === "logs" && state.logsSub) {
-    state.logsSub.unsubscribe();
-    state.logsSub = null;
-  } else if (stream === "traces" && state.tracesSub) {
-    state.tracesSub.unsubscribe();
-    state.tracesSub = null;
-  }
-}
-
-/** Tear down all subscriptions for an observability socket on close. */
-function cleanupObservabilitySocket(socket: Bun.ServerWebSocket<ObservabilityGatewayData>): void {
-  cleanupObservabilityStream(socket, "logs");
-  cleanupObservabilityStream(socket, "traces");
-  obsState.delete(socket as Bun.ServerWebSocket<GatewayData>);
 }
 
 function isWebSocketRequest(request: Request): boolean {
@@ -1026,24 +389,9 @@ function isWebSocketPath(pathname: string): boolean {
     /^\/v1\/[^/]+\/agents\/[^/]+\/[^/]+\/ws$/.test(pathname);
 }
 
-/** /v1/<project>/<env>/observability/ws */
-export function isObservabilityWebSocketPath(pathname: string): boolean {
-  return /^\/v1\/[^/]+\/[^/]+\/observability\/ws$/.test(pathname);
-}
-
 function isCoreHttpPath(pathname: string): boolean {
-  return pathname === "/" ||
-    pathname === "/async" ||
-    pathname.startsWith("/status/") ||
-    pathname.startsWith("/accounts/") ||
-    pathname.startsWith("/webhooks/") ||
-    pathname.startsWith("/async-tools/") ||
-    pathname.startsWith("/sandbox-jobs/") ||
-    pathname === "/v1" ||
-    pathname.startsWith("/v1/");
+  return pathname === "/v1" || pathname.startsWith("/v1/");
 }
-
-export const isCoreHttpPathForTest = isCoreHttpPath;
 
 function isExecuteMessage(value: object): value is WebSocketClientExecuteMessage {
   const record = value as { type?: unknown; agentId?: unknown };
@@ -1078,7 +426,7 @@ function positiveInt(value: string | undefined, fallback: number): number {
 }
 
 if (import.meta.main) {
-  const configuredCoreUrls = process.env.BROODS_CORE_URLS?.split(",") ?? [];
-  const server = createGatewayServer({ coreBaseUrls: configuredCoreUrls });
+  const coreBaseUrl = process.env.FILTHY_PANTY_CORE_URL ?? process.env.FILTHY_PANTY_BASE_URL ?? "";
+  const server = createGatewayServer({ coreBaseUrl });
   process.stdout.write(`gateway listening on ${server.hostname}:${server.port}\n`);
 }

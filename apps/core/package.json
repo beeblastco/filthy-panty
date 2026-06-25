@@ -1,5 +1,5 @@
 {
-  "name": "@broods/core",
+  "name": "@filthy-panty/core",
   "description": "Serverless multi-account AI agent harness on AWS Lambda — Vercel AI SDK with Google, OpenAI, Bedrock, and Gateway providers + multi-channel integrations (Telegram, Discord, Slack, GitHub, Pancake, Zalo), deployed with SST.",
   "type": "module",
   "private": true,
@@ -22,13 +22,6 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/api-logs": "0.217.0",
-    "@opentelemetry/exporter-logs-otlp-proto": "0.217.0",
-    "@opentelemetry/exporter-trace-otlp-proto": "0.217.0",
-    "@opentelemetry/resources": "^2.7.1",
-    "@opentelemetry/sdk-logs": "0.217.0",
-    "@opentelemetry/sdk-trace-base": "^2.7.1",
     "@ai-sdk/amazon-bedrock": "^4.0.112",
     "@ai-sdk/anthropic": "^3.0.83",
     "@ai-sdk/gateway": "^3.0.123",
@@ -47,7 +40,7 @@
     "@convex-dev/stripe": "^0.1.4",
     "@convex-dev/workos-authkit": "^0.2.6",
     "@daytona/sdk": "^0.175.0",
-    "@broods/convex": "workspace:*",
+    "@filthy-panty/convex": "workspace:*",
     "@kubernetes/client-node": "^1.4.0",
     "@pulumi/aws": "7.30.0",
     "@pulumi/pulumi": "3.228.0",

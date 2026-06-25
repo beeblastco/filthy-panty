@@ -1,14 +1,14 @@
 /**
- * Example: tool approval flow via declarative broods resources.
+ * Example: tool approval flow via declarative filthy-panty resources.
  */
 
 import type { ToolApprovalRequestOutput, ToolSet } from "ai";
-import { BroodsClient } from "broods";
-import { api } from "./broods/_generated/api";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
 type ToolApprovalRequestChunk = ToolApprovalRequestOutput<ToolSet>;
 
-const client = new BroodsClient();
+const client = new FilthyPantyClient();
 
 const conversationKey = `approval-${Date.now()}`;
 

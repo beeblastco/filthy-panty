@@ -7,12 +7,11 @@ import type { ModelMessage, SystemModelMessage, UserModelMessage, JSONValue } fr
 import type { AgentConfig } from "../_shared/storage/index.ts";
 import { getStorage, type AgentRecord } from "../_shared/storage/index.ts";
 import { logError, logInfo } from "../_shared/log.ts";
-import { getObservabilityContext } from "../_shared/otel.ts";
 import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../_shared/runtime-keys.ts";
-import { runAgentLoop, type SubagentParentContext } from "./harness.ts";
+import { runAgentLoop } from "./harness.ts";
 import { createAgentLifecycleEmitter, type AgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
 import { Session } from "./session.ts";
 import {
@@ -79,16 +78,6 @@ export class SubagentCoordinator {
     parentMessages: ModelMessage[],
     parentEphemeralSystem: SystemModelMessage[] = [],
   ): Promise<RunSubagentDispatchResult> => {
-    // Capture the parent's trace/task id now, while the parent's observability
-    // context is still active (this runs synchronously inside the parent's
-    // run_subagent tool call). Each child is its own top-level trace that links
-    // back to the parent. Read here, not in the detached child, because concurrent
-    // children overwrite the module-global observability context.
-    const parentObs = getObservabilityContext();
-    const subagentParent: SubagentParentContext | undefined = parentObs?.traceId
-      ? { parentTraceId: parentObs.traceId, parentTaskId: this.parentSession.eventId }
-      : undefined;
-
     // Resolve all inputs before launching anything. If one task is invalid,
     // the tool call fails without starting a partial batch of child runs.
     const resolvedTasks = await Promise.all(
@@ -118,7 +107,7 @@ export class SubagentCoordinator {
     const dispatches = resolvedTasks.map((task) => {
       // Intentionally not awaited: child agents run concurrently while the
       // parent model can keep streaming or later wait for injected results.
-      this.startTask(task, subagentParent);
+      this.startTask(task);
       return toDispatch(task);
     });
 
@@ -255,8 +244,8 @@ export class SubagentCoordinator {
    * Lambda invocation. Completion or failure is normalized into the coordinator
    * queue so the parent loop can inject it later.
    */
-  private startTask(task: ResolvedSubagentTask, subagentParent?: SubagentParentContext): void {
-    const promise = this.runTask(task, subagentParent)
+  private startTask(task: ResolvedSubagentTask): void {
+    const promise = this.runTask(task)
       .catch((error) => this.completeTask({
         taskId: task.taskId,
         agentId: task.agentId,
@@ -287,7 +276,7 @@ export class SubagentCoordinator {
    * turns write the task prompt and generated child messages to the child
    * conversation while keeping inherited parent context ephemeral.
    */
-  private async runTask(task: ResolvedSubagentTask, subagentParent?: SubagentParentContext): Promise<void> {
+  private async runTask(task: ResolvedSubagentTask): Promise<void> {
     logInfo("Subagent task started", {
       parentEventId: this.parentSession.eventId,
       taskId: task.taskId,
@@ -299,19 +288,12 @@ export class SubagentCoordinator {
     });
 
     // Initialize an isolated child session using the generated conversation key.
-    // Inherit the parent's deployment scope (endpoint/project/environment) so the
-    // child's spans and logs publish to the same live dashboard subscription and
-    // its usage rows are counted in the right environment.
     const childSession = new Session(
       task.eventId,
       task.conversationKey,
       requireParentAccountId(this.parentSession),
       task.agentId,
       task.agentConfig,
-      undefined,
-      this.parentSession.endpointId,
-      this.parentSession.projectSlug,
-      this.parentSession.environmentSlug,
     );
     const promptMessage: UserModelMessage = {
       role: "user",
@@ -337,7 +319,7 @@ export class SubagentCoordinator {
       onApprovalRequired: async () => {
         approvalRequested = true;
       },
-    }, subagentParent ? { subagentParent } : {});
+    });
 
     await stream.consumeStream();
     if (approvalRequested) {
@@ -445,22 +427,12 @@ export class SubagentCoordinator {
   }
 }
 
-export function createEphemeralChildSession(childSession: Session, system: SystemModelMessage[]): Session {
+function createEphemeralChildSession(childSession: Session, system: SystemModelMessage[]): Session {
   return {
     accountId: childSession.accountId,
     agentId: childSession.agentId,
     conversationKey: childSession.conversationKey,
     eventId: childSession.eventId,
-    // Carry the deployment scope through to the child run. runAgentLoop reads
-    // these off the session to stamp project/environment/endpoint_id on the
-    // subtask span and to build the live NATS subject. Omitting them (the prior
-    // bug) left subagent spans with only account_id, so publishSpan early-returned
-    // (no live span) AND the dashboard's project+environment-scoped Tempo backfill
-    // never matched them — subagents were invisible in tracing and a reload didn't
-    // bring them back.
-    endpointId: childSession.endpointId,
-    projectSlug: childSession.projectSlug,
-    environmentSlug: childSession.environmentSlug,
     filesystemNamespace: () => childSession.filesystemNamespace(),
     resolvedWorkspaces: () => childSession.resolvedWorkspaces(),
     statelessSandbox: () => childSession.statelessSandbox(),

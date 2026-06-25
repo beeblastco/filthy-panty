@@ -447,6 +447,45 @@ describe("createTools", () => {
       },
     })).rejects.toThrow("config.tools.bash is not a supported tool");
   });
+
+  it("exposes channel_message only when policy and adapter support intersect", async () => {
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const addReaction = mock(async () => {});
+    const baseContext = createToolContext() as unknown as Record<string, unknown>;
+
+    expect(await createTools({
+      ...baseContext,
+      channel: { actions: { sendText: mock(), sendTyping: mock(), reactToMessage: mock(), addReaction }, policy: {} },
+    } as never, {})).not.toHaveProperty("channel_message");
+
+    const tools = await createTools({
+      ...baseContext,
+      channel: {
+        actions: { sendText: mock(), sendTyping: mock(), reactToMessage: mock(), addReaction },
+        policy: { reactions: true },
+      },
+    } as never, {});
+    expect(tools).toHaveProperty("channel_message");
+    await expect((tools.channel_message as unknown as { execute(input: unknown, options: unknown): Promise<unknown> }).execute({
+      action: "react",
+      emoji: "thumbsup",
+    }, { toolCallId: "call", messages: [] })).resolves.toEqual({ type: "text", value: "Reaction sent" });
+    expect(addReaction).toHaveBeenCalledWith("thumbsup");
+  });
+
+  it("exposes the artifact tool only when the active context has artifact references", async () => {
+    process.env.ARTIFACT_STAGING_BUCKET_NAME = "artifact-staging";
+    const { createTools } = await import("../functions/harness-processing/tools/index.ts");
+    const baseContext = Object.assign(
+      {},
+      createToolContext() as unknown as object,
+      { session: {} },
+    ) as Record<string, unknown>;
+
+    expect(await createTools(baseContext as never, {})).not.toHaveProperty("artifact");
+    expect(await createTools({ ...baseContext, artifactsAvailable: true } as never, {})).toHaveProperty("artifact");
+  });
+
 });
 
 function createToolContext(
@@ -483,6 +522,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): StorageProvider
     crons: {} as never,
     sandboxConfigs: {} as never,
     workspaceConfigs: {} as never,
+    artifacts: {} as never,
     accountTools: {
       async getById(accountId: string, toolId: string) {
         const record = accountTool as { accountId: string; toolId: string };
@@ -496,7 +536,6 @@ function storageWithAccountTool(accountTool: AccountToolRecord): StorageProvider
       remove: mock() as never,
       removeAllForAccount: mock() as never,
     },
-    usage: { async recordTask() {} },
   } as StorageProvider;
 }
 

@@ -4,31 +4,26 @@ GitHub integration allows your agent to react to GitHub events.
 
 ## Configuration
 
-Define a GitHub channel with `defineGitHubChannel` and attach it to an agent:
+To enable GitHub, include the following in your agent configuration:
 
-```ts title="broods/index.ts"
-import {
-  defineAgent,
-  defineGitHubChannel,
-  env,
-} from "broods";
-
-export const github = defineGitHubChannel({
-  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
-  appId: env.GITHUB_APP_ID,
-  privateKey: env.GITHUB_PRIVATE_KEY,
-  allowedRepos: ["owner/repo-1", "owner/repo-2"],
-});
-
-export const myAgent = defineAgent({
-  name: "my-agent",
-  config: {
-    channels: [github],
-  },
-});
+```json
+{
+  "channels": {
+    "github": {
+      "webhookSecret": "your-webhook-secret",
+      "appId": "your-app-id",
+      "privateKey": "your-private-key",
+      "allowedRepos": ["owner/repo-1", "owner/repo-2"],
+      "actions": { "reactions": true }
+    }
+  }
+}
 ```
 
 - `webhookSecret`: GitHub Webhook Secret.
 - `appId`: GitHub App ID.
 - `privateKey`: GitHub App Private Key.
 - `allowedRepos` (optional): An array of full repository names (`owner/repo`) the agent may respond in. Events are matched against the webhook's `repository.full_name`.
+- `actions.reactions` (optional): Enables model-initiated reactions from GitHub's supported reaction set.
+
+GitHub issue and pull-request Markdown links are not treated as inbound attachments. The adapter does not expose an attachment-send action because GitHub has no native issue-attachment upload API.

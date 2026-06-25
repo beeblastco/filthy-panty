@@ -100,6 +100,65 @@ describe("pancake channel adapter", () => {
     });
   });
 
+  it("accepts media-only photo and video messages as guarded attachment candidates", async () => {
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
+    const parsed = await adapter.parse(createPancakeRequest(validPayload({
+      message: {
+        message: "<div></div>",
+        attachments: [
+          {
+            id: "photo-1",
+            type: "photo",
+            url: "https://cdn.example.com/photo.jpg",
+            title: "photo.jpg",
+            mime_type: "image/jpeg",
+          },
+          {
+            id: "video-1",
+            type: "video",
+            url: "https://cdn.example.com/thumbnail.jpg",
+            video_data: { url: "https://video.example.com/video.mp4" },
+            mime_type: "video/mp4",
+          },
+        ],
+      },
+    })));
+
+    expect(parsed.kind).toBe("message");
+    if (parsed.kind !== "message") throw new Error("Expected media-only Pancake message");
+    expect(parsed.message.content).toEqual([]);
+    expect(parsed.message.attachments?.map(({ resolveDownload: _resolve, ...candidate }) => candidate)).toEqual([
+      { id: "photo-1", kind: "image", filename: "photo.jpg", mediaType: "image/jpeg" },
+      { id: "video-1", kind: "video", mediaType: "video/mp4" },
+    ]);
+    expect(await parsed.message.attachments?.[0]?.resolveDownload()).toEqual({
+      url: "https://cdn.example.com/photo.jpg",
+      allowedHosts: ["cdn.example.com"],
+    });
+    expect(await parsed.message.attachments?.[1]?.resolveDownload()).toEqual({
+      url: "https://video.example.com/video.mp4",
+      allowedHosts: ["video.example.com"],
+    });
+  });
+
+  it("ignores unsupported attachment shapes and rejects unsafe media URLs at resolution", async () => {
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
+    const unsupported = await adapter.parse(createPancakeRequest(validPayload({
+      message: { message: " ", attachments: [{ id: "doc-1", type: "document", url: "https://cdn.example.com/a.pdf" }] },
+    })));
+    expect(unsupported).toEqual({ kind: "ignore" });
+    expect(await adapter.parse(createPancakeRequest(validPayload({
+      message: { message: " ", attachments: [null, "bad", { type: "photo", url: 42, title: 7 }] },
+    })))).toEqual({ kind: "ignore" });
+
+    const unsafe = await adapter.parse(createPancakeRequest(validPayload({
+      message: { message: " ", attachments: [{ id: "photo-1", type: "photo", url: "http://127.0.0.1/photo.jpg" }] },
+    })));
+    expect(unsafe.kind).toBe("message");
+    if (unsafe.kind !== "message") throw new Error("Expected candidate to degrade during ingestion");
+    await expect(unsafe.message.attachments![0]!.resolveDownload()).rejects.toThrow("HTTPS URL destination");
+  });
+
   it("ignores non-message events, wrong pages, empty text, and page-originated messages", async () => {
     const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
 

@@ -67,27 +67,6 @@ describe("account management HTTP handler", () => {
     expect(responseJson(response)).toEqual({ error: "Unauthorized" });
   });
 
-  it("accepts scoped Convex service audit events with service auth", async () => {
-    process.env.SERVICE_AUTH_SECRET = "service-secret";
-    setStorageForTests(createFakeStorage({}));
-
-    const response = await handler(createEvent("POST", "/v1/internal/observability-log", {
-      authorization: "Bearer service-secret",
-      "x-account-id": "acct_test",
-    }, {
-      project: "project-one",
-      environment: "development",
-      endpointId: "endpoint-development",
-      eventType: "service.agent.config.updated",
-      message: "Agent configuration updated",
-      agentId: "agent_main",
-      data: { changedFields: ["modelId"] },
-    }));
-
-    expect(response.statusCode).toBe(202);
-    expect(responseJson(response)).toEqual({ accepted: true });
-  });
-
   it("returns create account one-time secret as secret", async () => {
     process.env.ACCOUNT_SIGNUP_RATE_LIMIT_PER_HOUR = "0";
     setStorageForTests(createFakeStorage({
@@ -169,7 +148,7 @@ describe("account management HTTP handler", () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     process.env.CRONS_TABLE_NAME = "crons";
     process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
-    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:harness";
+    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:eu-central-1:123456789012:function:harness";
     process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
     setStorageForTests(createFakeStorage({
       agents: {
@@ -212,7 +191,7 @@ describe("account management HTTP handler", () => {
   it("allows deployment runtime keys on self cron routes", async () => {
     process.env.CRONS_TABLE_NAME = "crons";
     process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
-    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:harness";
+    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:eu-central-1:123456789012:function:harness";
     process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
     setStorageForTests(createFakeStorage({
       crons: {
@@ -268,7 +247,7 @@ describe("account management HTTP handler", () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     process.env.CRONS_TABLE_NAME = "crons";
     process.env.CRON_SCHEDULER_ROLE_ARN = "arn:aws:iam::123456789012:role/scheduler";
-    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:harness";
+    process.env.CRON_SCHEDULER_TARGET_FUNCTION_ARN = "arn:aws:lambda:eu-central-1:123456789012:function:harness";
     process.env.CRON_SCHEDULER_GROUP_NAME = "cron-group";
     setStorageForTests(createFakeStorage({
       agents: {

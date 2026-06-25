@@ -5,6 +5,38 @@
 
 import type { UserContent } from "ai";
 
+export type ChannelMediaKind = "image" | "file" | "video" | "audio" | "gif";
+
+export interface AttachmentDownloadRequest {
+  url: string;
+  headers?: Record<string, string>;
+  allowedHosts: string[];
+}
+
+/** Provider metadata plus a late resolver for short-lived/authenticated media URLs. */
+export interface InboundAttachmentCandidate {
+  id: string;
+  kind: ChannelMediaKind;
+  filename?: string;
+  mediaType?: string;
+  size?: number;
+  resolveDownload(): Promise<AttachmentDownloadRequest>;
+}
+
+export interface OutboundChannelArtifact {
+  bytes: Uint8Array;
+  filename: string;
+  mediaType: string;
+  kind: ChannelMediaKind;
+}
+
+/** Hard provider limits known before an outbound upload starts. */
+export interface OutboundArtifactLimits {
+  maxCount?: number;
+  maxBytesPerArtifact?: number;
+  maxTotalBytes?: number;
+}
+
 export interface ChannelActions {
   sendText(text: string): Promise<void>;
   sendTyping(): Promise<void>;
@@ -19,6 +51,30 @@ export interface ChannelActions {
   // Provider message-length cap for edit/progress streaming (raw chars). The driver
   // rotates into a new message past this; defaults to ~3500 when unset.
   editMaxChars?: number;
+  /** Fixed provider reaction values, when the API exposes an enum rather than arbitrary emoji. */
+  reactionValues?: readonly string[];
+  addReaction?(emoji: string): Promise<void>;
+  artifactLimits?: OutboundArtifactLimits;
+  sendArtifacts?(artifacts: OutboundChannelArtifact[], text?: string): Promise<void>;
+}
+
+export function assertOutboundArtifactLimits(
+  artifacts: readonly OutboundChannelArtifact[],
+  limits: OutboundArtifactLimits | undefined,
+): void {
+  if (!limits) return;
+  if (limits.maxCount !== undefined && artifacts.length > limits.maxCount) {
+    throw new Error(`Channel supports at most ${limits.maxCount} attachments per message`);
+  }
+  const maxBytesPerArtifact = limits.maxBytesPerArtifact;
+  if (maxBytesPerArtifact !== undefined) {
+    const oversized = artifacts.find((artifact) => artifact.bytes.byteLength > maxBytesPerArtifact);
+    if (oversized) throw new Error(`Attachment exceeds the channel's ${maxBytesPerArtifact} byte limit: ${oversized.filename}`);
+  }
+  if (limits.maxTotalBytes !== undefined) {
+    const totalBytes = artifacts.reduce((sum, artifact) => sum + artifact.bytes.byteLength, 0);
+    if (totalBytes > limits.maxTotalBytes) throw new Error(`Attachments exceed the channel's ${limits.maxTotalBytes} byte total limit`);
+  }
 }
 
 export interface ChannelRequest {
@@ -40,6 +96,7 @@ export interface InboundMessage {
   conversationKey: string;
   channelName: string;
   content: UserContent;
+  attachments?: InboundAttachmentCandidate[];
   source: Record<string, unknown>;
 }
 
@@ -83,26 +140,5 @@ export function isOpenAllowList(raw: string | undefined): boolean {
 }
 
 export function formatChannelErrorText(error: string): string {
-  return `⚠️ ${simplifyErrorText(error)}`;
-}
-
-// Provider/runtime errors reach the chat raw and ugly ("Failed after 3 attempts.
-// Last error: Token Plan usage limit reached … (2056)"). Strip the retry wrapper
-// and map the common conditions to one short, actionable line; otherwise pass the
-// cleaned message through so unexpected errors are still legible.
-function simplifyErrorText(raw: string): string {
-  const afterRetry = raw.match(/Last error:\s*(.+)$/is);
-  let message = (afterRetry?.[1] ?? raw).trim();
-  if (/usage limit|quota|insufficient.*credit|purchase credits|upgrade your (token )?plan/i.test(message)) {
-    return "Usage limit reached — add credits or upgrade your plan, then try again.";
-  }
-  if (/rate.?limit|\b429\b|too many requests/i.test(message)) {
-    return "The model is busy right now — please try again in a moment.";
-  }
-  if (/timed? ?out|etimedout|econnreset|network/i.test(message)) {
-    return "The request timed out — please try again.";
-  }
-  message = message.replace(/\s*\(\d{3,}\)\s*$/, "").trim(); // drop trailing provider codes like (2056)
-
-  return message || "Something went wrong while generating a reply — please try again.";
+  return `Error: ${error}`;
 }

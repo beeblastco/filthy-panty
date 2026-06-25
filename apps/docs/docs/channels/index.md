@@ -19,11 +19,19 @@ flowchart TD
   Agent --> Registry["createChannelRegistry(config, scope)"]
   Registry --> Adapter["ChannelAdapter"]
   Adapter --> Auth["authenticate(req)"]
-  Auth --> Parse["parse(req)"]
+  Auth --> Parse["parse provider event"]
   Parse -->|"response / ignore"| ProviderAck["provider response"]
   Parse -->|"message"| Ack["provider ACK"]
   Ack --> After["afterResponse"]
-  After --> Handler["handler.ts<br/>handleChannelRequest"]
+  After --> Candidate["adapter attachment candidates<br/>(Telegram + Slack + Pancake)"]
+  Candidate --> Guard["bounded download<br/>SSRF checks + MIME sniffing"]
+  Guard --> Stage["non-versioned staging bucket<br/>one-day deletion eligibility"]
+  Stage --> Driver["remote driver or managed ephemeral"]
+  Driver --> Record["artifact ID + metadata"]
+  Record --> Workspace{"routed writable workspace?"}
+  Workspace -->|"complex / all"| Copy[".artifacts/artifactId/filename"]
+  Record --> Rehydrate["later supported binary rehydration"]
+  Record --> Handler["handler.ts<br/>handleChannelRequest"]
   Handler --> Session["session.ts"]
   Session --> Harness["harness.ts<br/>model + tools"]
   Harness --> Actions["ChannelActions"]
@@ -32,9 +40,9 @@ flowchart TD
 
 Webhook handling is split deliberately:
 
-- [`functions/harness-processing/integrations.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/integrations.ts) owns routing, account/agent lookup, adapter selection, provider ACKs, and normalized channel events.
-- [`functions/harness-processing/handler.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/handler.ts) owns session setup, command dispatch, agent execution, and final reply handling.
-- [`functions/_shared/channels.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/channels.ts) owns the shared channel contracts.
+- [`functions/harness-processing/integrations.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/integrations.ts) owns routing, account/agent lookup, adapter selection, provider ACKs, and normalized channel events.
+- [`functions/harness-processing/handler.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/handler.ts) owns session setup, command dispatch, agent execution, and final reply handling.
+- [`functions/_shared/channels.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/channels.ts) owns the shared channel contracts.
 - `functions/_shared/<channel>-channel.ts` owns provider-specific authentication, parsing, formatting, and reply API calls.
 
 ---
@@ -43,12 +51,12 @@ Webhook handling is split deliberately:
 
 | Channel | Adapter | Required config | Documentation |
 | --- | --- | --- | --- |
-| `telegram` | [`functions/_shared/telegram-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/telegram-channel.ts) | `botToken`, `webhookSecret`, `allowedChatIds` | [Telegram Details](telegram.md) |
-| `github` | [`functions/_shared/github-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/github-channel.ts) | `webhookSecret`, `appId`, `privateKey` | [GitHub Details](github.md) |
-| `slack` | [`functions/_shared/slack-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/slack-channel.ts) | `botToken`, `signingSecret` | [Slack Details](slack.md) |
-| `discord` | [`functions/_shared/discord-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/discord-channel.ts) | `botToken`, `publicKey` | [Discord Details](discord.md) |
-| `pancake` | [`functions/_shared/pancake-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/pancake-channel.ts) | `pageId`, `pageAccessToken`, `webhookSecret` | [Pancake Details](pancake.md) |
-| `zalo` | [`functions/_shared/zalo-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/zalo-channel.ts) | `botToken`, `webhookSecret`, `allowedUserIds` | [Zalo Details](zalo.md) |
+| `telegram` | [`functions/_shared/telegram-channel.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/telegram-channel.ts) | `botToken`, `webhookSecret`, `allowedChatIds` | [Telegram Details](telegram.md) |
+| `github` | [`functions/_shared/github-channel.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/github-channel.ts) | `webhookSecret`, `appId`, `privateKey` | [GitHub Details](github.md) |
+| `slack` | [`functions/_shared/slack-channel.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/slack-channel.ts) | `botToken`, `signingSecret` | [Slack Details](slack.md) |
+| `discord` | [`functions/_shared/discord-channel.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/discord-channel.ts) | `botToken`, `publicKey` | [Discord Details](discord.md) |
+| `pancake` | [`functions/_shared/pancake-channel.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/pancake-channel.ts) | `pageId`, `pageAccessToken`, `webhookSecret` | [Pancake Details](pancake.md) |
+| `zalo` | [`functions/_shared/zalo-channel.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/zalo-channel.ts) | `botToken`, `webhookSecret`, `allowedUserIds` | [Zalo Details](zalo.md) |
 
 ---
 
@@ -57,7 +65,7 @@ Webhook handling is split deliberately:
 The CLI SDK exposes one constructor per provider. Attach the resulting definitions to one agent; an agent may receive from multiple channel types, while one channel definition cannot be shared by multiple agents.
 
 ```ts
-import { defineAgent, defineGitHubChannel, defineSlackChannel, env } from "broods";
+import { defineAgent, defineGitHubChannel, defineSlackChannel, env } from "filthy-panty";
 
 export const github = defineGitHubChannel({
   appId: env.GITHUB_APP_ID,
@@ -78,7 +86,7 @@ export const support = defineAgent({
 });
 ```
 
-`broods dev` lowers the list to the runtime's keyed `config.channels` shape, syncs referenced environment values, generates `api.channels`, and prints each provider webhook URL. Code-first agent definitions must use channel constructors; keyed channel objects are rejected.
+`filthy-panty dev` lowers the list to the runtime's keyed `config.channels` shape, syncs referenced environment values, generates `api.channels`, and prints each provider webhook URL. Code-first agent definitions must use channel constructors; keyed channel objects are rejected.
 
 Runnable examples live under `packages/demos/channel-*`. Provider registration is explicit: Telegram, Zalo, and Discord demos include a `register` command; other providers use their administration console.
 
@@ -88,12 +96,61 @@ Runnable examples live under `packages/demos/channel-*`. Provider registration i
 
 Every channel gets these behaviors from the shared pipeline, not from the adapter:
 
-- **Bot commands** — a message starting with `/command` runs a command from [`functions/_shared/commands.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/commands.ts) instead of the agent: `/new` (alias `/start`) clears the conversation context, `/help` lists commands, and Discord additionally exposes `/ask`. Commands only see the channel-agnostic `ChannelActions`.
+- **Bot commands** — a message starting with `/command` runs a command from [`functions/_shared/commands.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/commands.ts) instead of the agent: `/new` (alias `/start`) clears the conversation context, `/help` lists commands, and Discord additionally exposes `/ask`. Commands only see the channel-agnostic `ChannelActions`.
 - **Typing + reaction** — an accepted message immediately triggers a fire-and-forget typing indicator and a reaction (👀 on Slack/GitHub, configurable on Telegram, no-op on Discord/Pancake/Zalo).
 - **Tool approval auto-deny** — tools configured with `needsApproval` are automatically denied on channel turns with the reason `Tool approval is only supported through the direct API.`
 - **Error replies** — if processing fails, the channel receives `Error: <message>` as the reply.
 - **Per-channel config scoping** — a webhook run only sees its own channel's config; other channels' credentials are stripped from the runtime agent config.
 - **Deferred replies** — when a turn finishes in the background (detached async tools or sandbox jobs), the final result is pushed back into the originating chat once it settles.
+
+## Attachments And Channel Actions
+
+Attachments arrive through authenticated provider message events; there is no attachment command. Download happens after the provider ACK. The shared downloader accepts only adapter-approved HTTPS hosts, rejects private/reserved DNS results, validates redirects, bounds time and bytes, and checks file signatures. Provider download URLs and credentials are never persisted or sent to the model.
+
+Validated bytes pass through a dedicated, non-versioned staging bucket. A configured remote artifact driver receives a five-minute transfer URL and returns an opaque reference; successful transfers delete staging immediately. Without a driver, staging provides managed ephemeral storage. Falling back to it after a configured driver fails requires explicit `fallback: "managed-ephemeral"`. Remaining objects become eligible for lifecycle deletion after one day; S3 lifecycle processing is asynchronous, so this is not an exact deletion deadline.
+
+Conversation history stores the artifact ID and a filename/type/size/checksum descriptor, not bytes, signed URLs, or provider URLs. A successful optional working copy adds `workspace` and `workspacePath`. The current turn receives bytes only when `config.model.inputCapabilities` permits the MIME type; later turns can explicitly rehydrate the same supported binary from artifact storage. Compaction preserves descriptors, never bytes.
+
+| Provider | Inbound media | Model-callable outbound actions |
+| --- | --- | --- |
+| Telegram | photo, document, video, animation, voice, audio from Bot API updates | reactions and native media sends |
+| Slack | `file_share` files in allowed DM/app-mention events | reactions and external-upload media sends |
+| Discord | not yet supported: the current adapter receives interactions, not Gateway message events | interaction follow-up media sends |
+| Pancake | authenticated webhook photos and videos, including media-only messages | inbox photo/video upload through Pancake content IDs |
+| GitHub | not supported; arbitrary Markdown links are not fetched | reactions only; GitHub has no native issue-attachment upload API |
+| Zalo | not supported; official media hosts/codecs are not fixture-verified | none |
+
+Configure model-initiated actions per agent under `config.channels.<channel>.actions`. Use only the fields implemented by that provider:
+
+```ts
+defineTelegramChannel({
+  // credentials and allowlist omitted
+  actions: { reactions: true, attachments: true },
+  mediaMaxMb: 20,
+});
+
+defineDiscordChannel({
+  // credentials and allowlist omitted
+  actions: { attachments: true },
+});
+
+defineGitHubChannel({
+  // credentials and allowlist omitted
+  actions: { reactions: true },
+});
+
+definePancakeChannel({
+  // credentials omitted
+  actions: { attachments: true },
+  mediaMaxMb: 20,
+});
+```
+
+Inbound media is automatic when the adapter supports it and is independent of channel action policy. Artifact storage is authoritative. With one writable workspace, complex unsupported files may be copied automatically; multiple writable workspaces require `config.artifacts.workspace.name`, and read-only workspaces are skipped. `channel_message` can send a workspace file only when the active provider supports it.
+
+`mediaMaxMb` applies to Telegram, Slack, and Pancake inbound media (20 MiB by default and maximum) as both a per-item and aggregate per-event memory budget. For Telegram it also matches the hosted Bot API download limit; for Slack and Pancake it is a platform safety ceiling, not a universal provider setting. A separate eight-item ceiling is a filthy-panty fan-out/memory guard, not a provider capability claim.
+
+The AI SDK can download some URL parts automatically, but support varies by model and provider. The harness does not delegate authenticated or short-lived channel URLs to that behavior. Set `config.model.inputCapabilities.imageMediaTypes` and `fileMediaTypes` to exact MIME types or top-level wildcards; unsupported artifacts remain descriptor-only instead of failing the turn.
 
 ---
 
@@ -119,13 +176,13 @@ flowchart LR
 
 The handler reads `text-delta` and `tool-call` parts from the agent's `fullStream`: `edit`/`chunk` consume the text and ignore tool calls; `progress` consumes tool calls and ignores the streamed text (the answer arrives whole at the end).
 
-The driver ([`functions/_shared/channel-streaming.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/channel-streaming.ts)) owns accumulation and throttling; channels only provide the `beginMessage`/`editMessage` primitives (and an optional `editMaxChars` cap) for edit/progress modes. Streaming is best-effort — a failed edit/send never aborts the turn, and a structured/object final response always sends as one message. When an edited reply outgrows the channel's `editMaxChars` budget (default ~3500 raw characters; Discord uses 1900, both safely below the provider caps of 4096/2000), the driver freezes the current message at a clean break and continues streaming in a new one (rotation), so long replies are not truncated. **Telegram**, **Slack** (`chat.postMessage`/`chat.update`), and **Discord** (interaction webhook edits) ship edit primitives; other channels stream via `chunk` until they add the two methods.
+The driver ([`functions/_shared/channel-streaming.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/channel-streaming.ts)) owns accumulation and throttling; channels only provide the `beginMessage`/`editMessage` primitives (and an optional `editMaxChars` cap) for edit/progress modes. Streaming is best-effort — a failed edit/send never aborts the turn, and a structured/object final response always sends as one message. When an edited reply outgrows the channel's `editMaxChars` budget (default ~3500 raw characters; Discord uses 1900, both safely below the provider caps of 4096/2000), the driver freezes the current message at a clean break and continues streaming in a new one (rotation), so long replies are not truncated. **Telegram**, **Slack** (`chat.postMessage`/`chat.update`), and **Discord** (interaction webhook edits) ship edit primitives; other channels stream via `chunk` until they add the two methods.
 
 ---
 
 ## Channel Contract
 
-Each channel implements `ChannelAdapter` from [`functions/_shared/channels.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/channels.ts):
+Each channel implements `ChannelAdapter` from [`functions/_shared/channels.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/channels.ts):
 
 | Method | Purpose |
 | --- | --- |
@@ -157,12 +214,12 @@ The normalized `InboundMessage` contains:
 
 ## Add a Channel
 
-1. Add config types to [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/storage/agent-config.ts).
+1. Add config types to [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/storage/agent-config.ts).
 2. Validate the new `config.channels.<channel>` fields in `normalizeChannelsConfig()`.
 3. Create `functions/_shared/<channel>-channel.ts`.
 4. Implement `ChannelAdapter`.
 5. Keep provider-specific reply formatting and send logic inside the channel module.
-6. Import the channel factory in [`functions/harness-processing/integrations.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/integrations.ts).
+6. Import the channel factory in [`functions/harness-processing/integrations.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/integrations.ts).
 7. Add `create<Channel>ChannelFromConfig()` and include it in `createChannelRegistry()`.
 8. Document the webhook URL as `/webhooks/{accountId}/{agentId}/{channel}`.
 9. Update the SDK constructor, [API Reference](/api-reference), and focused tests/examples when the public config changes.

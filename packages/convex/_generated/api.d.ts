@@ -25,7 +25,6 @@ import type * as cliTypes from "../cliTypes.js";
 import type * as conversations from "../conversations.js";
 import type * as cron from "../cron.js";
 import type * as cronPublic from "../cronPublic.js";
-import type * as crons from "../crons.js";
 import type * as deployKeys from "../deployKeys.js";
 import type * as environment from "../environment.js";
 import type * as environmentVariables from "../environmentVariables.js";
@@ -38,14 +37,11 @@ import type * as migrations from "../migrations.js";
 import type * as model_agentConfigCodec from "../model/agentConfigCodec.js";
 import type * as model_agentRuntimeSecrets from "../model/agentRuntimeSecrets.js";
 import type * as model_agentSync from "../model/agentSync.js";
-import type * as model_cascade from "../model/cascade.js";
 import type * as model_environmentValues from "../model/environmentValues.js";
 import type * as model_ownership_environment from "../model/ownership/environment.js";
 import type * as model_ownership_org from "../model/ownership/org.js";
 import type * as model_ownership_project from "../model/ownership/project.js";
 import type * as model_sandboxConfigSync from "../model/sandboxConfigSync.js";
-import type * as modelPricing from "../modelPricing.js";
-import type * as observability from "../observability.js";
 import type * as org from "../org.js";
 import type * as orgLifecycle from "../orgLifecycle.js";
 import type * as orgMembers from "../orgMembers.js";
@@ -55,12 +51,10 @@ import type * as skills from "../skills.js";
 import type * as skillsPublic from "../skillsPublic.js";
 import type * as stripe from "../stripe.js";
 import type * as toolService from "../toolService.js";
-import type * as usage from "../usage.js";
 import type * as user from "../user.js";
 import type * as webhooks from "../webhooks.js";
 import type * as workspaceConfigs from "../workspaceConfigs.js";
 import type * as workspaceFiles from "../workspaceFiles.js";
-import type * as workspaceFilesPublic from "../workspaceFilesPublic.js";
 
 import type {
   ApiFromModules,
@@ -86,7 +80,6 @@ declare const fullApi: ApiFromModules<{
   conversations: typeof conversations;
   cron: typeof cron;
   cronPublic: typeof cronPublic;
-  crons: typeof crons;
   deployKeys: typeof deployKeys;
   environment: typeof environment;
   environmentVariables: typeof environmentVariables;
@@ -99,14 +92,11 @@ declare const fullApi: ApiFromModules<{
   "model/agentConfigCodec": typeof model_agentConfigCodec;
   "model/agentRuntimeSecrets": typeof model_agentRuntimeSecrets;
   "model/agentSync": typeof model_agentSync;
-  "model/cascade": typeof model_cascade;
   "model/environmentValues": typeof model_environmentValues;
   "model/ownership/environment": typeof model_ownership_environment;
   "model/ownership/org": typeof model_ownership_org;
   "model/ownership/project": typeof model_ownership_project;
   "model/sandboxConfigSync": typeof model_sandboxConfigSync;
-  modelPricing: typeof modelPricing;
-  observability: typeof observability;
   org: typeof org;
   orgLifecycle: typeof orgLifecycle;
   orgMembers: typeof orgMembers;
@@ -116,12 +106,10 @@ declare const fullApi: ApiFromModules<{
   skillsPublic: typeof skillsPublic;
   stripe: typeof stripe;
   toolService: typeof toolService;
-  usage: typeof usage;
   user: typeof user;
   webhooks: typeof webhooks;
   workspaceConfigs: typeof workspaceConfigs;
   workspaceFiles: typeof workspaceFiles;
-  workspaceFilesPublic: typeof workspaceFilesPublic;
 }>;
 
 /**

@@ -1,19 +1,19 @@
 /**
  * Codec between the dashboard's flat `agentConfigs` row and the nested
- * broods `AgentConfig` shape that the Config tab exposes for editing.
+ * filthy-panty `AgentConfig` shape that the Config tab exposes for editing.
  *
  * Cherry-coke stores top-level model/runtime settings as columns for fast
  * queries; everything else (workspace, tools, channels, provider settings,
  * hooks, session, skills, subagent) is stashed under `extraConfig`. This
  * file projects both into the unified nested object expected by
- * broods, and inverts the transform on save.
+ * filthy-panty, and inverts the transform on save.
  *
  * Secrets in the nested config can be written as `${ENV_NAME}` placeholders.
  * Use `substituteEnvPlaceholders` to resolve them against the agent's
- * `runtimeVariables` right before pushing the config to broods.
+ * `runtimeVariables` right before pushing the config to filthy-panty.
  */
 
-/** Recognised top-level branches in broods `AgentConfig`. */
+/** Recognised top-level branches in filthy-panty `AgentConfig`. */
 const NESTED_BRANCHES = [
     "agent",
     "model",
@@ -55,7 +55,7 @@ export interface FlatAgentConfig {
     extraConfig?: Record<string, unknown>;
 }
 
-/** Nested broods `AgentConfig` shape rendered for the Config tab. */
+/** Nested filthy-panty `AgentConfig` shape rendered for the Config tab. */
 export type NestedAgentConfig = Record<string, unknown>;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -105,7 +105,7 @@ function assertNoUnsupportedKeys(value: Record<string, unknown>, keys: readonly 
     }
 }
 
-/** Project a flat dashboard row into the nested broods shape. */
+/** Project a flat dashboard row into the nested filthy-panty shape. */
 export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
     const extra = isPlainObject(flat.extraConfig) ? flat.extraConfig : {};
 
@@ -160,8 +160,6 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
         ...(pruneEmpty(tools) ? { tools: pruneEmpty(tools) } : {}),
         ...(extra.skills ? { skills: extra.skills } : {}),
         ...(extra.subagent ? { subagent: extra.subagent } : {}),
-        // Top-level public-endpoint opt-in carried in extraConfig (issue #65).
-        ...(typeof extra.publicAccess === "boolean" ? { publicAccess: extra.publicAccess } : {}),
     };
 
     return nested;
@@ -288,8 +286,6 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
         ) continue;
         if (nested[branch] !== undefined) extra[branch] = nested[branch];
     }
-    // Preserve the top-level public-endpoint opt-in inside extraConfig (issue #65).
-    if (typeof nested.publicAccess === "boolean") extra.publicAccess = nested.publicAccess;
     patch.extraConfig = extra;
 
     return patch;

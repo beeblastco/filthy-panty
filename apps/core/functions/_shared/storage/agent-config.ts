@@ -51,11 +51,7 @@ export interface AgentConfig {
   tools?: AgentToolsConfig;
   skills?: AgentSkillsConfig;
   subagent?: AgentSubagentConfig;
-  // Opt-in flag for the public runtime endpoint (SSE/WebSocket via the
-  // environment runtime key). Off by default: when not `true` the deployment
-  // (public-key) request path is refused. Internal callers (account/admin
-  // secret, cron, async worker) and channel webhooks are never gated by this.
-  publicAccess?: boolean;
+  artifacts?: AgentArtifactsConfig;
   [key: string]: unknown;
 }
 
@@ -101,6 +97,7 @@ export const MODEL_CONFIG_SETTING_KEYS = [
   "seed",
   "maxRetries",
   "timeout",
+  "inputCapabilities",
 ] as const;
 
 export interface AgentSkillsConfig {
@@ -117,11 +114,46 @@ export interface AgentSubagentConfig {
   [key: string]: unknown;
 }
 
+export interface AgentArtifactsConfig {
+  driver?: AgentArtifactDriverConfig;
+  fallback?: "reject" | "managed-ephemeral";
+  workspace?: AgentArtifactWorkspaceConfig;
+  processing?: AgentArtifactProcessingConfig;
+}
+
+export interface AgentArtifactWorkspaceConfig {
+  name?: string;
+  materialize?: "never" | "complex" | "all";
+}
+
+export interface AgentArtifactProcessingConfig {
+  audio?: "reject" | "workspace";
+  archives?: "reject" | "workspace";
+  unsupportedFiles?: "descriptor" | "workspace";
+}
+
+export type AgentArtifactDriverConfig = AgentRemoteArtifactDriverConfig;
+
+export interface AgentRemoteArtifactDriverConfig {
+  name: string;
+  description?: string;
+  mode: "remote";
+  endpoint: string;
+  signingSecret: string;
+  allowedHosts: string[];
+}
+
 export interface AgentModelConfig extends Omit<CallSettings, "abortSignal" | "headers"> {
   provider?: AccountModelProviderName;
   modelId?: string;
   providerOptions?: AgentModelProviderOptions;
   output?: AgentModelOutputConfig;
+  inputCapabilities?: AgentModelInputCapabilities;
+}
+
+export interface AgentModelInputCapabilities {
+  imageMediaTypes?: string[];
+  fileMediaTypes?: string[];
 }
 
 export type AgentModelOutputConfig =
@@ -177,8 +209,7 @@ export interface AgentSessionCompactionConfig {
 }
 
 export interface AgentHooksConfig {
-  /** Outbound event webhooks. An agent may register several independent endpoints. */
-  webhooks?: AgentWebhookHookConfig[];
+  webhook?: AgentWebhookHookConfig;
   [key: string]: unknown;
 }
 
@@ -234,12 +265,31 @@ export interface AgentChannelStreamingConfig {
   [key: string]: unknown;
 }
 
+/** Per-agent policy for model-initiated channel actions. Provider support is adapter-defined. */
+export interface AgentChannelActionsConfig {
+  reactions?: boolean;
+  attachments?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AgentReactionActionsConfig {
+  reactions?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AgentAttachmentActionsConfig {
+  attachments?: boolean;
+  [key: string]: unknown;
+}
+
 export interface AgentTelegramChannelConfig {
   botToken?: string;
   webhookSecret?: string;
   allowedChatIds?: number[];
   reactionEmoji?: string;
   streaming?: AgentChannelStreamingConfig;
+  actions?: AgentChannelActionsConfig;
+  mediaMaxMb?: number;
   [key: string]: unknown;
 }
 
@@ -248,6 +298,7 @@ export interface AgentGitHubChannelConfig {
   appId?: string;
   privateKey?: string;
   allowedRepos?: string[];
+  actions?: AgentReactionActionsConfig;
   [key: string]: unknown;
 }
 
@@ -256,6 +307,8 @@ export interface AgentSlackChannelConfig {
   signingSecret?: string;
   allowedChannelIds?: string[];
   streaming?: AgentChannelStreamingConfig;
+  actions?: AgentChannelActionsConfig;
+  mediaMaxMb?: number;
   [key: string]: unknown;
 }
 
@@ -264,6 +317,7 @@ export interface AgentDiscordChannelConfig {
   publicKey?: string;
   allowedGuildIds?: string[];
   streaming?: AgentChannelStreamingConfig;
+  actions?: AgentAttachmentActionsConfig;
   [key: string]: unknown;
 }
 
@@ -274,6 +328,8 @@ export interface AgentPancakeChannelConfig {
   senderId?: string;
   options?: Record<string, unknown>;
   streaming?: AgentChannelStreamingConfig;
+  actions?: AgentAttachmentActionsConfig;
+  mediaMaxMb?: number;
   [key: string]: unknown;
 }
 
@@ -307,7 +363,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     tools,
     skills,
     subagent,
-    publicAccess,
+    artifacts,
   } = config;
 
   return normalizeAgentConfig({
@@ -321,7 +377,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     ...(tools !== undefined ? { tools } : {}),
     ...(skills !== undefined ? { skills } : {}),
     ...(subagent !== undefined ? { subagent } : {}),
-    ...(publicAccess !== undefined ? { publicAccess } : {}),
+    ...(artifacts !== undefined ? { artifacts } : {}),
   });
 }
 
@@ -362,7 +418,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeToolsConfig(config.tools);
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
-  assertOptionalBoolean(config.publicAccess, "config.publicAccess");
+  normalizeArtifactsConfig(config.artifacts);
 
   return config as AgentConfig;
 }
@@ -445,6 +501,24 @@ function normalizeModelConfig(value: unknown): void {
     throw new Error("config.model.providerOptions must be an object");
   }
   normalizeModelOutputConfig(config.output);
+  normalizeModelInputCapabilities(config.inputCapabilities);
+}
+
+function normalizeModelInputCapabilities(value: unknown): void {
+  if (value === undefined) return;
+  if (!isPlainObject(value)) throw new Error("config.model.inputCapabilities must be an object");
+  assertKnownKeys(value, "config.model.inputCapabilities", ["imageMediaTypes", "fileMediaTypes"]);
+  validateMediaTypeCapabilities(value.imageMediaTypes, "config.model.inputCapabilities.imageMediaTypes");
+  validateMediaTypeCapabilities(value.fileMediaTypes, "config.model.inputCapabilities.fileMediaTypes");
+}
+
+function validateMediaTypeCapabilities(value: unknown, path: string): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.length > 32 || !value.every((entry) =>
+    typeof entry === "string" && /^[a-z0-9!#$&^_.+-]+\/(?:[a-z0-9!#$&^_.+-]+|\*)$/.test(entry)
+  )) {
+    throw new Error(`${path} must contain at most 32 exact MIME types or top-level wildcards`);
+  }
 }
 
 function normalizeModelOutputConfig(value: unknown): void {
@@ -628,44 +702,40 @@ function normalizeHooksConfig(value: unknown): void {
   }
 
   const config = value as Record<string, unknown>;
-  if (config.webhooks !== undefined) {
-    if (!Array.isArray(config.webhooks)) {
-      throw new Error("config.hooks.webhooks must be an array");
-    }
-    config.webhooks.forEach((webhook, index) =>
-      normalizeWebhookHookConfig(webhook, `config.hooks.webhooks[${index}]`),
-    );
-  }
+  normalizeWebhookHookConfig(config.webhook);
 }
 
-function normalizeWebhookHookConfig(value: unknown, path: string): void {
+function normalizeWebhookHookConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
   if (!isPlainObject(value)) {
-    throw new Error(`${path} must be an object`);
+    throw new Error("config.hooks.webhook must be an object");
   }
 
   const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, `${path}.enabled`);
-  assertOptionalNonEmptyString(config.url, `${path}.url`);
-  assertOptionalNonEmptyString(config.secret, `${path}.secret`);
+  assertOptionalBoolean(config.enabled, "config.hooks.webhook.enabled");
+  assertOptionalNonEmptyString(config.url, "config.hooks.webhook.url");
+  assertOptionalNonEmptyString(config.secret, "config.hooks.webhook.secret");
   if (config.events !== undefined) {
     if (!Array.isArray(config.events) || !config.events.every((event) =>
       typeof event === "string" && AGENT_LIFECYCLE_EVENT_NAMES.includes(event as AgentLifecycleEventName)
     )) {
-      throw new Error(`${path}.events must be an array of: ${AGENT_LIFECYCLE_EVENT_NAMES.join(", ")}`);
+      throw new Error(`config.hooks.webhook.events must be an array of: ${AGENT_LIFECYCLE_EVENT_NAMES.join(", ")}`);
     }
   }
 
   if (config.enabled === true) {
     if (typeof config.url !== "string" || config.url.trim().length === 0) {
-      throw new Error(`${path}.url is required when ${path}.enabled is true`);
+      throw new Error("config.hooks.webhook.url is required when config.hooks.webhook.enabled is true");
     }
     if (typeof config.secret !== "string" || config.secret.trim().length === 0) {
-      throw new Error(`${path}.secret is required when ${path}.enabled is true`);
+      throw new Error("config.hooks.webhook.secret is required when config.hooks.webhook.enabled is true");
     }
   }
 
   if (typeof config.url === "string" && config.url.trim().length > 0) {
-    assertPublicHttpsUrl(config.url, `${path}.url`);
+    assertPublicHttpsUrl(config.url, "config.hooks.webhook.url");
   }
 }
 
@@ -708,6 +778,77 @@ function normalizeSubagentConfig(value: unknown): void {
   assertOptionalStringArray(config.allowed, "config.subagent.allowed");
   assertOptionalEnum(config.context, "config.subagent.context", ["new", "inherited"]);
   assertOptionalEnum(config.mode, "config.subagent.mode", ["ephemeral", "persistent"]);
+}
+
+function normalizeArtifactsConfig(value: unknown): void {
+  if (value == null) return;
+  if (!isPlainObject(value)) throw new Error("config.artifacts must be an object");
+  const config = value as Record<string, unknown>;
+  assertKnownKeys(config, "config.artifacts", ["driver", "fallback", "workspace", "processing"]);
+  assertOptionalEnum(config.fallback, "config.artifacts.fallback", ["reject", "managed-ephemeral"]);
+  if (config.fallback !== undefined && config.driver === undefined) {
+    throw new Error("config.artifacts.fallback requires config.artifacts.driver");
+  }
+  if (config.workspace !== undefined) {
+    if (!isPlainObject(config.workspace)) throw new Error("config.artifacts.workspace must be an object");
+    const workspace = config.workspace as Record<string, unknown>;
+    assertKnownKeys(workspace, "config.artifacts.workspace", ["name", "materialize"]);
+    if (workspace.name !== undefined) normalizeRequiredString(workspace.name, "config.artifacts.workspace.name");
+    assertOptionalEnum(workspace.materialize, "config.artifacts.workspace.materialize", ["never", "complex", "all"]);
+  }
+  if (config.processing !== undefined) {
+    if (!isPlainObject(config.processing)) throw new Error("config.artifacts.processing must be an object");
+    const processing = config.processing as Record<string, unknown>;
+    assertKnownKeys(processing, "config.artifacts.processing", ["audio", "archives", "unsupportedFiles"]);
+    assertOptionalEnum(processing.audio, "config.artifacts.processing.audio", ["reject", "workspace"]);
+    assertOptionalEnum(processing.archives, "config.artifacts.processing.archives", ["reject", "workspace"]);
+    assertOptionalEnum(processing.unsupportedFiles, "config.artifacts.processing.unsupportedFiles", ["descriptor", "workspace"]);
+  }
+  if (config.driver === undefined) return;
+  if (!isPlainObject(config.driver)) throw new Error("config.artifacts.driver must be an object");
+
+  const driver = config.driver as Record<string, unknown>;
+  if (driver.mode === "uploaded") {
+    throw new Error("Uploaded artifact drivers are not supported; use a remote artifact driver");
+  }
+  normalizeRequiredString(driver.name, "config.artifacts.driver.name");
+  assertOptionalString(driver.description, "config.artifacts.driver.description");
+  if (driver.mode === "remote") {
+    assertKnownKeys(driver, "config.artifacts.driver", ["name", "description", "mode", "endpoint", "signingSecret", "allowedHosts"]);
+    const endpoint = normalizeRequiredString(driver.endpoint, "config.artifacts.driver.endpoint");
+    normalizeRequiredString(driver.signingSecret, "config.artifacts.driver.signingSecret");
+    const allowedHosts = normalizeArtifactDriverHosts(driver.allowedHosts);
+    const url = assertPublicHttpsUrl(endpoint, "config.artifacts.driver.endpoint");
+    if (url.username || url.password || url.port || url.hash) {
+      throw new Error("config.artifacts.driver.endpoint must not include credentials, a custom port, or a fragment");
+    }
+    if (!allowedHosts.includes(url.hostname.toLowerCase())) {
+      throw new Error("config.artifacts.driver.endpoint hostname must be present in config.artifacts.driver.allowedHosts");
+    }
+    return;
+  }
+  throw new Error("config.artifacts.driver.mode must be remote");
+}
+
+function normalizeArtifactDriverHosts(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0 || !value.every((entry) => typeof entry === "string")) {
+    throw new Error("config.artifacts.driver.allowedHosts must be a non-empty array of DNS hostnames");
+  }
+  const hosts = value.map((entry) => entry.toLowerCase());
+  for (const host of hosts) {
+    if (host.includes(":") || host.includes("/") || host.includes("*") ||
+      !host.split(".").every((label) => /^(?!-)[a-z0-9-]{1,63}(?<!-)$/.test(label))) {
+      throw new Error("config.artifacts.driver.allowedHosts must contain DNS hostnames without schemes, ports, paths, or wildcards");
+    }
+    assertPublicHttpsUrl(`https://${host}`, "config.artifacts.driver.allowedHosts entry");
+  }
+  return hosts;
+}
+
+function assertKnownKeys(value: Record<string, unknown>, path: string, keys: readonly string[]): void {
+  for (const key of Object.keys(value)) {
+    if (!keys.includes(key)) throw new Error(`${path}.${key} is not supported`);
+  }
 }
 
 function normalizeToolConfig(toolName: string, value: unknown): void {
@@ -875,6 +1016,8 @@ function normalizeTelegramConfig(value: unknown): void {
   assertOptionalNumberArray(config.allowedChatIds, "config.channels.telegram.allowedChatIds");
   assertOptionalString(config.reactionEmoji, "config.channels.telegram.reactionEmoji");
   normalizeChannelStreaming(config.streaming, "config.channels.telegram.streaming");
+  normalizeChannelActions(config.actions, "config.channels.telegram.actions");
+  normalizeMediaMaxMb(config.mediaMaxMb, "config.channels.telegram.mediaMaxMb");
 }
 
 function normalizeGitHubConfig(value: unknown): void {
@@ -885,6 +1028,7 @@ function normalizeGitHubConfig(value: unknown): void {
   assertOptionalString(config.appId, "config.channels.github.appId");
   assertOptionalString(config.privateKey, "config.channels.github.privateKey");
   assertOptionalStringArray(config.allowedRepos, "config.channels.github.allowedRepos");
+  normalizeChannelActions(config.actions, "config.channels.github.actions", ["reactions"]);
 }
 
 function normalizeSlackConfig(value: unknown): void {
@@ -895,6 +1039,8 @@ function normalizeSlackConfig(value: unknown): void {
   assertOptionalString(config.signingSecret, "config.channels.slack.signingSecret");
   assertOptionalStringArray(config.allowedChannelIds, "config.channels.slack.allowedChannelIds");
   normalizeChannelStreaming(config.streaming, "config.channels.slack.streaming");
+  normalizeChannelActions(config.actions, "config.channels.slack.actions");
+  normalizeMediaMaxMb(config.mediaMaxMb, "config.channels.slack.mediaMaxMb");
 }
 
 function normalizeDiscordConfig(value: unknown): void {
@@ -905,6 +1051,7 @@ function normalizeDiscordConfig(value: unknown): void {
   assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
   assertOptionalStringArray(config.allowedGuildIds, "config.channels.discord.allowedGuildIds");
   normalizeChannelStreaming(config.streaming, "config.channels.discord.streaming");
+  normalizeChannelActions(config.actions, "config.channels.discord.actions", ["attachments"]);
 }
 
 function normalizePancakeConfig(value: unknown): void {
@@ -921,6 +1068,8 @@ function normalizePancakeConfig(value: unknown): void {
   const options = isPlainObject(config.options) ? config.options : {};
   assertOptionalStringArray(options.ignoreTagIds, "config.channels.pancake.options.ignoreTagIds");
   normalizeChannelStreaming(config.streaming, "config.channels.pancake.streaming");
+  normalizeChannelActions(config.actions, "config.channels.pancake.actions", ["attachments"]);
+  normalizeMediaMaxMb(config.mediaMaxMb, "config.channels.pancake.mediaMaxMb");
 }
 
 function normalizeZaloConfig(value: unknown): void {
@@ -937,6 +1086,30 @@ function normalizeZaloConfig(value: unknown): void {
     }
   }
   normalizeChannelStreaming(config.streaming, "config.channels.zalo.streaming");
+}
+
+function normalizeChannelActions(
+  value: unknown,
+  path: string,
+  names: readonly ("reactions" | "attachments")[] = ["reactions", "attachments"],
+): void {
+  if (value === undefined) return;
+  if (!isPlainObject(value)) throw new Error(`${path} must be an object`);
+  for (const known of ["reactions", "attachments"] as const) {
+    if (!names.includes(known) && value[known] !== undefined) {
+      throw new Error(`${path}.${known} is not supported`);
+    }
+  }
+  for (const name of names) {
+    assertOptionalBoolean(value[name], `${path}.${name}`);
+  }
+}
+
+function normalizeMediaMaxMb(value: unknown, path: string): void {
+  if (value === undefined) return;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 1 || value > 20) {
+    throw new Error(`${path} must be a number from 1 to 20`);
+  }
 }
 
 function normalizeChannelStreaming(value: unknown, path: string): void {

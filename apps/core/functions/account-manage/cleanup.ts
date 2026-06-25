@@ -10,7 +10,7 @@ import {
   type WriteRequest,
 } from "@aws-sdk/client-dynamodb";
 import type { AccountRecord, SandboxConfig } from "../_shared/storage/index.ts";
-import { getStorage } from "../_shared/storage/index.ts";
+import { artifactStagingAccountPrefix, getStorage } from "../_shared/storage/index.ts";
 import { deleteS3Prefix as deleteBunS3Prefix } from "../_shared/s3.ts";
 import { workspaceNamespacePrefix } from "../_shared/sandbox.ts";
 import { dynamo } from "../_shared/storage/dynamo/client.ts";
@@ -31,6 +31,8 @@ export interface AccountCleanupSummary {
   asyncAgentResultDeleted: number;
   asyncToolResultDeleted: number;
   filesystemObjectsDeleted: number;
+  artifactRecordsDeleted: number;
+  artifactStagingObjectsDeleted: number;
   reservedSandboxesReleased: number;
 }
 
@@ -52,12 +54,16 @@ export async function deleteAccountRuntimeData(account: AccountRecord): Promise<
     asyncAgentResultDeleted,
     asyncToolResultDeleted,
     filesystemObjectsDeleted,
+    artifactRecordsDeleted,
+    artifactStagingObjectsDeleted,
   ] = await Promise.all([
     deleteConversations(accountPrefix),
     deleteProcessedEvents(accountPrefix),
     deleteAsyncAgentResult(accountPrefix),
     deleteAsyncToolResult(accountPrefix),
     deleteFilesystemNamespaces(filesystemNamespaces),
+    deleteArtifactRecords(account.accountId),
+    deleteArtifactStagingObjects(account.accountId),
   ]);
 
   // Remove the account's sandbox + workspace config records.
@@ -72,6 +78,8 @@ export async function deleteAccountRuntimeData(account: AccountRecord): Promise<
     asyncAgentResultDeleted,
     asyncToolResultDeleted,
     filesystemObjectsDeleted,
+    artifactRecordsDeleted,
+    artifactStagingObjectsDeleted,
     reservedSandboxesReleased,
   };
 }
@@ -312,6 +320,20 @@ async function deleteFilesystemNamespaces(namespaces: string[]): Promise<number>
   }
 
   return deleted;
+}
+
+async function deleteArtifactStagingObjects(accountId: string): Promise<number> {
+  const bucketName = optionalEnv("ARTIFACT_STAGING_BUCKET_NAME");
+  if (!bucketName) return 0;
+
+  return deleteS3Prefix(bucketName, artifactStagingAccountPrefix(accountId));
+}
+
+async function deleteArtifactRecords(accountId: string): Promise<number> {
+  const storage = getStorage();
+  if (storage.kind === "dynamodb" && !optionalEnv("ARTIFACTS_TABLE_NAME")) return 0;
+
+  return storage.artifacts.removeAllForAccount(accountId);
 }
 
 async function deleteS3Prefix(bucketName: string, prefix: string): Promise<number> {

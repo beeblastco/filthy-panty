@@ -70,6 +70,31 @@ describe("discord channel adapter", () => {
     expect(parsed.message.conversationKey).toBe("discord:guild-1:channel-1");
     expect(parsed.message.source.commandToken).toBe("/new");
   });
+
+  it("preserves every primitive slash-command option", async () => {
+    const adapter = createDiscordChannel("bot-token", "public-key", new Set(["guild-1"]));
+    const parsed = await adapter.parse(createRequest({
+      id: "interaction-options",
+      type: 2,
+      token: "token-options",
+      application_id: "app-1",
+      guild_id: "guild-1",
+      channel_id: "channel-1",
+      data: {
+        name: "ask",
+        options: [
+          { name: "prompt", value: "inspect" },
+          { name: "format", value: "brief" },
+        ],
+      },
+      member: { user: { id: "user-1" } },
+    }));
+
+    expect(parsed.kind).toBe("message");
+    if (parsed.kind !== "message") throw new Error("Expected interaction to be accepted");
+    expect(parsed.message.content).toEqual([{ type: "text", text: "inspect brief" }]);
+  });
+
 });
 
 function createRequest(payload: Record<string, unknown>) {

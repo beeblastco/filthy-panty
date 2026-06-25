@@ -53,18 +53,43 @@ export async function readS3Bytes(bucket: string, key: string): Promise<Uint8Arr
   return body.transformToByteArray();
 }
 
+export async function readS3BytesBounded(bucket: string, key: string, maxBytes: number): Promise<Uint8Array> {
+  const head = await awsClient().send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+  if (head.ContentLength !== undefined && head.ContentLength > maxBytes) {
+    throw new Error(`S3 object exceeds the ${maxBytes} byte limit`);
+  }
+
+  const result = await awsClient().send(new GetObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    Range: `bytes=0-${maxBytes}`,
+  }));
+  if (!result.Body) {
+    throw new Error(`S3 object has no body: ${key}`);
+  }
+  const bytes = await result.Body.transformToByteArray();
+  if (bytes.byteLength > maxBytes) {
+    throw new Error(`S3 object exceeds the ${maxBytes} byte limit`);
+  }
+
+  return bytes;
+}
+
 export async function writeS3Object(
   bucket: string,
   key: string,
   body: string | Uint8Array,
-  options: { contentType?: string; executable?: boolean } = {},
+  options: { contentType?: string; executable?: boolean; metadata?: Record<string, string> } = {},
 ): Promise<number> {
   const size = typeof body === "string" ? body.length : body.byteLength;
   logInfo("s3.write start", { bucket, key, contentType: options.contentType, size });
   try {
     await putS3Object(bucket, key, body, {
       contentType: options.contentType,
-      metadata: posixMetadata(key.endsWith("/") ? "directory" : "file", options.executable === true),
+      metadata: {
+        ...posixMetadata(key.endsWith("/") ? "directory" : "file", options.executable === true),
+        ...options.metadata,
+      },
     });
     logInfo("s3.write success", { bucket, key, result: size });
     return size;

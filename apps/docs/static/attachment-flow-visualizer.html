@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-flow'; base-uri 'none'; form-action 'none'">
+  <title>Attachment and Artifact Flow</title>
+  <style nonce="flow">
+    :root {
+      --paper: #f3efe4;
+      --ink: #172027;
+      --muted: #657078;
+      --line: #9da7ac;
+      --blue: #dff2ff;
+      --green: #dcf4df;
+      --yellow: #fff0b5;
+      --orange: #ffe1cf;
+      --red: #ffe1dd;
+      --dark: #202a31;
+      font-family: "Avenir Next Condensed", "Franklin Gothic Medium", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(rgba(23, 32, 39, .045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(23, 32, 39, .045) 1px, transparent 1px),
+        var(--paper);
+      background-size: 24px 24px;
+    }
+
+    header { padding: 30px clamp(18px, 5vw, 70px); color: #fff; background: var(--dark); border-bottom: 6px solid #d7ff43; }
+    header p { max-width: 800px; margin: 10px 0 0; color: #cbd3d7; font: 15px/1.5 Georgia, serif; }
+    h1 { margin: 0; font-size: clamp(34px, 6vw, 70px); line-height: .95; letter-spacing: -.04em; text-transform: uppercase; }
+    main { width: min(1240px, calc(100% - 32px)); margin: 24px auto 60px; }
+    h2 { margin: 0 0 14px; font-size: 19px; letter-spacing: .05em; text-transform: uppercase; }
+    h3 { margin: 0 0 5px; font-size: 15px; text-transform: uppercase; }
+    p { margin: 0; }
+
+    .notice { margin-bottom: 24px; padding: 14px 16px; border: 2px solid #9b6400; background: var(--yellow); font: 14px/1.45 Georgia, serif; }
+    .section { margin-top: 26px; padding: 20px; border: 2px solid var(--ink); background: rgba(255,255,255,.72); box-shadow: 7px 7px 0 rgba(23,32,39,.14); }
+    .chart { display: grid; gap: 12px; align-items: stretch; }
+    .three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    .node { position: relative; min-height: 112px; padding: 14px; border: 2px solid var(--ink); background: #fff; }
+    .node p { color: #45515a; font: 13px/1.4 Georgia, serif; }
+    .transport { background: var(--blue); }
+    .storage { background: var(--green); }
+    .working { background: var(--yellow); }
+    .limited { background: var(--orange); }
+    .missing { background: var(--red); }
+    .arrow { display: grid; place-items: center; min-height: 34px; color: var(--muted); font-size: 25px; font-weight: 900; }
+    .down::after { content: "↓"; }
+    .right::after { content: "→"; }
+    .label { display: inline-block; margin-bottom: 8px; padding: 3px 7px; color: #fff; background: var(--dark); font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+    .pill { display: inline-block; margin: 8px 5px 0 0; padding: 3px 6px; border: 1px solid currentColor; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+
+    .pipeline { display: grid; grid-template-columns: 1fr 42px 1fr 42px 1fr 42px 1fr; align-items: center; }
+    .branch { display: grid; grid-template-columns: 1fr 52px 1fr; align-items: center; margin-top: 14px; }
+    .artifact-stack { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 10px; }
+    .artifact { min-width: 72px; padding: 7px; border: 1px solid var(--ink); background: #fff; font: 700 11px ui-monospace, monospace; }
+
+    .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 16px; color: var(--muted); font-size: 11px; }
+    .legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 5px; border: 1px solid var(--ink); vertical-align: -2px; background: var(--swatch); }
+
+    details { margin-top: 12px; border: 1px solid var(--line); background: #fff; }
+    summary { cursor: pointer; padding: 11px 13px; font-weight: 800; text-transform: uppercase; }
+    details p, details ul { margin: 0; padding: 0 14px 14px; font: 13px/1.5 Georgia, serif; }
+    details ul { padding-left: 32px; }
+    code { font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: #fff; background: var(--dark); text-transform: uppercase; }
+    td { background: rgba(255,255,255,.75); }
+    .status { font-weight: 900; text-transform: uppercase; }
+    .ok { color: #147044; } .partial { color: #9b5300; } .no { color: #b03229; }
+
+    .scope { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .scope .node { min-height: 98px; }
+
+    @media (max-width: 900px) {
+      .pipeline, .branch { grid-template-columns: 1fr; }
+      .pipeline .right, .branch .right { min-height: 36px; transform: rotate(90deg); }
+      .three, .four, .scope { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 580px) { .three, .four, .two, .scope { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Attachment → artifact → model</h1>
+    <p>One diagram of custody, persistence, workspace copies, multiple files, direct API behavior, and later access. The channel provider is transport; artifact storage is the source of truth.</p>
+  </header>
+
+  <main>
+    <div class="notice"><strong>Deployment status:</strong> the implementation passes local checks, but Convex codegen is still required before production deployment.</div>
+
+    <section class="section">
+      <h2>1. Where attachments enter</h2>
+      <div class="chart three">
+        <article class="node transport">
+          <span class="label">Durable flow implemented</span>
+          <h3>Telegram / Slack / Pancake</h3>
+          <p>The server automatically reads authenticated channel attachments. There is no attachment command.</p>
+        </article>
+        <article class="node limited">
+          <span class="label">Current turn only</span>
+          <h3>POST SSE / async / WebSocket</h3>
+          <p>User events accept inline base64 or data-URL <code>image</code> and <code>file</code> parts. HTTP media URLs are rejected.</p>
+        </article>
+        <article class="node missing">
+          <span class="label">Not implemented</span>
+          <h3>Direct artifact upload/reference API</h3>
+          <p>Direct inline bytes are not yet promoted into durable artifact storage, materialized, or available for later rehydration.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>2. Channel attachment custody</h2>
+      <div class="pipeline">
+        <article class="node transport"><span class="label">Temporary authority</span><h3>Channel provider</h3><p>Telegram, Slack, or Pancake exposes a temporary media location.</p></article>
+        <div class="arrow right" aria-hidden="true"></div>
+        <article class="node"><span class="label">Exactly once</span><h3>Guarded download</h3><p>DNS pinned, redirects checked, credentials scoped, timeout and byte limits enforced.</p></article>
+        <div class="arrow right" aria-hidden="true"></div>
+        <article class="node"><span class="label">Trust boundary</span><h3>Validate</h3><p>Safe filename, MIME sniffing, active-content rejection, size and SHA-256.</p></article>
+        <div class="arrow right" aria-hidden="true"></div>
+        <article class="node working"><span class="label">Transfer only</span><h3>Private staging S3</h3><p>Short-lived handoff copy. It is deleted after remote storage succeeds.</p></article>
+      </div>
+
+      <div class="branch">
+        <article class="node storage">
+          <span class="label">Configured on the agent</span>
+          <h3>Developer remote artifact driver</h3>
+          <p>Core sends a signed <code>store</code> lifecycle request. The developer stores bytes in their S3, R2, GCS, database, or service and returns an opaque reference.</p>
+        </article>
+        <div class="arrow right" aria-hidden="true"></div>
+        <article class="node storage">
+          <span class="label">No driver configured</span>
+          <h3>Managed ephemeral artifact storage</h3>
+          <p>The private staging object remains the source of truth, but is eligible for deletion after one day. This is temporary, not durable storage.</p>
+        </article>
+      </div>
+
+      <details>
+        <summary>Where exactly does the driver sit?</summary>
+        <p>After shared validation and staging, before the artifact becomes <code>ready</code>. It never receives the channel provider URL or channel token. Later, core calls the same driver’s <code>resolve</code> operation to obtain a fresh short-lived read capability, downloads through the guarded client, and verifies the original size and SHA-256.</p>
+      </details>
+    </section>
+
+    <section class="section">
+      <h2>3. One message can create many artifacts</h2>
+      <div class="chart two">
+        <article class="node">
+          <span class="label">Per attachment</span>
+          <h3>Artifact control records</h3>
+          <p>Each accepted file gets its own artifact ID, state, filename, MIME, size, checksum, driver ID, and opaque storage reference.</p>
+          <div class="artifact-stack">
+            <span class="artifact">artifact A</span><span class="artifact">artifact B</span><span class="artifact">artifact C</span><span class="artifact">… up to 8</span>
+          </div>
+        </article>
+        <article class="node">
+          <span class="label">Model limits</span>
+          <h3>Multiple model inputs</h3>
+          <p>All supported current-turn parts can be projected. On later turns, multiple distinct artifacts can be rehydrated, each at most once, within the shared 20 MiB invocation budget.</p>
+          <span class="pill">8 inbound items max</span><span class="pill">20 MiB aggregate</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>4. After storage: workspace, history, and model are separate</h2>
+      <div class="chart three">
+        <article class="node working">
+          <span class="label">Optional working copy</span>
+          <h3>Writable workspace</h3>
+          <p>Core copies from artifact storage, never from the channel provider, into <code>.artifacts/&lt;artifactId&gt;/&lt;filename&gt;</code>. It does not extract or execute the file.</p>
+        </article>
+        <article class="node">
+          <span class="label">Persistent metadata only</span>
+          <h3>Conversation history</h3>
+          <p>Stores artifact ID, type, size, checksum, filename, and optional workspace path. No bytes, provider URL, signed URL, or opaque driver reference.</p>
+        </article>
+        <article class="node transport">
+          <span class="label">Request-local bytes</span>
+          <h3>Model projection</h3>
+          <p>Current turn receives each explicitly supported MIME. Later turns use the scoped artifact tool to reload and integrity-check selected artifacts.</p>
+        </article>
+      </div>
+
+      <div class="branch">
+        <article class="node">
+          <h3>No workspace or read-only workspace</h3>
+          <p>Nothing is lost. Bytes remain in the remote driver or managed ephemeral S3. Native model-supported files can still be projected; complex processing remains unavailable.</p>
+        </article>
+        <div class="arrow right" aria-hidden="true"></div>
+        <article class="node">
+          <h3>Multiple writable workspaces</h3>
+          <p>No ambiguous write occurs. The agent must configure the artifact workspace name; otherwise the artifact remains stored without a workspace copy.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>5. Scope and driver revision behavior</h2>
+      <div class="scope">
+        <article class="node"><span class="label">Account scoped</span><h3>Driver config</h3><p>Stored in an agent’s encrypted configuration and used only by that agent runtime.</p></article>
+        <article class="node"><span class="label">Agent referenced</span><h3>Workspace</h3><p>The workspace record is account-owned and may be shared by agents referencing the same workspace ID.</p></article>
+        <article class="node"><span class="label">Conversation scoped</span><h3>Artifact access</h3><p>Reads require the same account and conversation. Knowing another artifact ID is insufficient.</p></article>
+        <article class="node limited"><span class="label">Current limitation</span><h3>No driver revision</h3><p>The record stores only driver name plus opaque reference, not an immutable endpoint/config revision.</p></article>
+      </div>
+      <details open>
+        <summary>What happens when driver configuration changes?</summary>
+        <ul>
+          <li><strong>Same name, compatible backend:</strong> later reads continue if the service can resolve old opaque references.</li>
+          <li><strong>Name removed or renamed:</strong> historical artifacts become unavailable because core cannot select their driver.</li>
+          <li><strong>Same name, different backend:</strong> an old opaque reference may be sent to the wrong service. This is why driver identity should become an immutable resource ID plus revision.</li>
+          <li><strong>Ingress retry with a different name:</strong> now fails closed rather than silently moving the existing artifact.</li>
+        </ul>
+      </details>
+    </section>
+
+    <section class="section">
+      <h2>6. Current scenarios</h2>
+      <table>
+        <thead><tr><th>Input</th><th>Status</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>Channel image/file/video</td><td class="status ok">Durable flow</td><td>Validated, stored through driver or managed ephemeral, descriptor persisted, capability-aware projection.</td></tr>
+          <tr><td>Several channel attachments</td><td class="status ok">Supported</td><td>Independent artifact records and partial failure handling; up to eight items and 20 MiB aggregate.</td></tr>
+          <tr><td>POST SSE / async / WebSocket inline image/file</td><td class="status partial">Current turn only</td><td>Passed to the model and removed from history; not yet stored as an artifact.</td></tr>
+          <tr><td>Remote URL in direct API</td><td class="status no">Rejected</td><td>Prevents arbitrary server-side URL fetching. A future authenticated artifact import API must own that boundary.</td></tr>
+          <tr><td>No writable workspace</td><td class="status ok">Artifact retained</td><td>Remote or managed storage remains source of truth; native projection still works where supported.</td></tr>
+          <tr><td>ZIP, OCR, transcription, extraction</td><td class="status partial">Deferred processing</td><td>May materialize, but no automatic extraction or execution occurs.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <div class="legend">
+      <span style="--swatch:var(--blue)">Transport/model boundary</span>
+      <span style="--swatch:var(--green)">Artifact source of truth</span>
+      <span style="--swatch:var(--yellow)">Temporary or working copy</span>
+      <span style="--swatch:var(--orange)">Partial/current-turn behavior</span>
+      <span style="--swatch:var(--red)">Not implemented</span>
+    </div>
+  </main>
+</body>
+</html>

@@ -3,8 +3,8 @@
  * Cover webhook auth, allow-list filtering, and inbound message normalization here.
  */
 
-import { describe, expect, it } from "bun:test";
-import { createTelegramChannel } from "../functions/_shared/telegram-channel.ts";
+import { describe, expect, it, mock } from "bun:test";
+import { createTelegramChannel, resolveTelegramFileDownload } from "../functions/_shared/telegram-channel.ts";
 
 describe("telegram channel adapter", () => {
   it("authenticates matching webhook secrets and rejects mismatches", () => {
@@ -32,6 +32,77 @@ describe("telegram channel adapter", () => {
       update_id: 1,
       message: createMessage({ text: undefined }),
     }))).toEqual({ kind: "ignore" });
+  });
+
+  it("accepts attachment-only updates without exposing bot-token URLs", async () => {
+    const adapter = createTelegramChannel("bot-token", "secret", new Set([123]), "👀");
+    const parsed = await adapter.parse(createRequest({
+      update_id: 2,
+      message: {
+        ...createMessage({ text: undefined }),
+        document: { file_id: "file-1", file_name: "report.pdf", mime_type: "application/pdf", file_size: 123 },
+      },
+    }));
+
+    expect(parsed.kind).toBe("message");
+    if (parsed.kind !== "message") throw new Error("Expected attachment message");
+    expect(parsed.message.content).toEqual([]);
+    expect(parsed.message.attachments?.map(({ resolveDownload: _resolve, ...item }) => item)).toEqual([{
+      id: "file-1",
+      kind: "file",
+      filename: "report.pdf",
+      mediaType: "application/pdf",
+      size: 123,
+    }]);
+    expect(JSON.stringify(parsed.message.source)).not.toContain("bot-token");
+  });
+
+  it("preserves media captions through the Telegram transport parser", async () => {
+    const adapter = createTelegramChannel("bot-token", "secret", new Set([123]), "👀");
+    const parsed = await adapter.parse(createRequest({
+      update_id: 3,
+      message: {
+        ...createMessage({ text: undefined }),
+        caption: "Please inspect this",
+        caption_entities: [],
+        photo: [{ file_id: "small" }, { file_id: "large", file_size: 321 }],
+      },
+    }));
+
+    expect(parsed.kind).toBe("message");
+    if (parsed.kind !== "message") throw new Error("Expected captioned photo message");
+    expect(parsed.message.content).toBe("Please inspect this");
+    expect(parsed.message.attachments?.map(({ resolveDownload: _resolve, ...item }) => item)).toEqual([{
+      id: "large",
+      kind: "image",
+      size: 321,
+    }]);
+  });
+
+  it("resolves getFile through an exact-host bounded transport", async () => {
+    const fetchHttps = mock(async (_url: URL, _init: RequestInit, options: { allowedHosts: string[] }) => {
+      expect(options.allowedHosts).toEqual(["api.telegram.org"]);
+      return Response.json({ ok: true, result: { file_path: "documents/report.pdf" } });
+    });
+
+    await expect(resolveTelegramFileDownload("bot-token", "file-1", fetchHttps as never)).resolves.toEqual({
+      url: "https://api.telegram.org/file/botbot-token/documents/report.pdf",
+      allowedHosts: ["api.telegram.org"],
+    });
+  });
+
+  it("rejects oversized metadata and cross-host redirects without leaking the token", async () => {
+    const oversized = mock(async () => new Response("{}", { headers: { "content-length": "65537" } }));
+    await expect(resolveTelegramFileDownload("private-token", "file-1", oversized as never))
+      .rejects.toThrow(/^Telegram getFile failed$/);
+
+    const redirected = mock(async () => new Response(null, {
+      status: 302,
+      headers: { location: "https://attacker.example/getFile" },
+    }));
+    await expect(resolveTelegramFileDownload("private-token", "file-1", redirected as never))
+      .rejects.toThrow(/^Telegram getFile failed$/);
+    expect(redirected).toHaveBeenCalledTimes(1);
   });
 
   it("ignores chats outside the allow list", async () => {

@@ -6,7 +6,7 @@
  *
  * The encryption helper at the bottom uses Web Crypto (`crypto.subtle`)
  * because Convex mutations run in a V8 isolate without `node:crypto`.
- * Output shape matches broods's `EncryptedAgentConfig` so the
+ * Output shape matches filthy-panty's `EncryptedAgentConfig` so the
  * harness can decrypt with `decodeStoredAgentConfig`.
  */
 
@@ -81,7 +81,7 @@ function assertNoUnsupportedKeys(value: Record<string, unknown>, keys: readonly 
     }
 }
 
-/** Project a flat dashboard row into the nested broods shape. */
+/** Project a flat dashboard row into the nested filthy-panty shape. */
 export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
     const extra = isPlainObject(flat.extraConfig) ? flat.extraConfig : {};
 
@@ -133,9 +133,6 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
         ...(pruneEmpty(tools) ? { tools: pruneEmpty(tools) } : {}),
         ...(extra.skills ? { skills: extra.skills } : {}),
         ...(extra.subagent ? { subagent: extra.subagent } : {}),
-        // Top-level scalar carried in extraConfig so it flows through every
-        // flat-row builder unchanged; surfaced as nested `publicAccess` (issue #65).
-        ...(typeof extra.publicAccess === "boolean" ? { publicAccess: extra.publicAccess } : {}),
     };
 }
 
@@ -164,7 +161,7 @@ export function substituteEnvPlaceholders<T>(
 
 /**
  * Inverse of {@link toNestedAgentConfig}. Pulls known fields back out of a
- * nested broods AgentConfig so the canvas's flat `agentConfigs` row
+ * nested filthy-panty AgentConfig so the canvas's flat `agentConfigs` row
  * can mirror what the API caller wrote. Anything we don't have a flat
  * column for is preserved in `extraConfig`.
  */
@@ -240,8 +237,6 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
         ) continue;
         if (nested[branch] !== undefined) extra[branch] = nested[branch];
     }
-    // Preserve the top-level public-endpoint opt-in inside extraConfig (issue #65).
-    if (typeof nested.publicAccess === "boolean") extra.publicAccess = nested.publicAccess;
     patch.extraConfig = extra;
     return patch;
 }
@@ -304,7 +299,7 @@ export async function decryptAgentConfigBlob(
 
 /**
  * AES-256-GCM encrypt the JSON-serialised config with a key derived from
- * SHA-256(secret). Matches broods's `encryptAgentConfig` so the harness
+ * SHA-256(secret). Matches filthy-panty's `encryptAgentConfig` so the harness
  * can decrypt with `decodeStoredAgentConfig` from the convex storage adapter.
  */
 export async function encryptAgentConfigBlob(

@@ -1,5 +1,5 @@
 /**
- * CLI manifest sync for code-defined Broods resources.
+ * CLI manifest sync for code-defined BeeBlast resources.
  *
  * Authenticates with the org Bearer secret and writes desired-state resources
  * into the SaaS project/environment model before syncing runtime agent rows.
@@ -10,7 +10,6 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { CliManifestResource, GeneratedIds } from "./cliTypes";
 import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { ensureEnvironmentDeployment } from "./agentDeployments";
-import { scheduleServiceLog } from "./observability";
 import {
     ensureAgentsRowForConfig,
     pushEncryptedConfigToAgentRow,
@@ -62,7 +61,7 @@ const idsValidator = v.object({
 /**
  * Non-fatal deploy advisories returned to the CLI. `missingEnv` lists env var
  * names referenced via `env.NAME` in agent config but not yet stored for the
- * environment, so the operator can run `broods env set <NAME>`.
+ * environment, so the operator can run `filthy-panty env set <NAME>`.
  */
 const warningsValidator = v.object({
     missingEnv: v.array(v.string()),
@@ -160,7 +159,7 @@ export const syncManifestBySecretHash = internalMutation({
     handler: async (ctx, args) => {
         const { secretHash, manifest, prune } = args;
         const account = await accountFromSecretHash(ctx, secretHash);
-        if (!account) throw new Error("Invalid Broods token");
+        if (!account) throw new Error("Invalid BeeBlast token");
         assertSupportedWorkspaceSandboxMounts(manifest.resources);
 
         const projectDoc = await ensureProject(ctx, account, manifest.project);
@@ -229,8 +228,8 @@ export const syncManifestBySecretHash = internalMutation({
 
 /**
  * Ensure the synced environment has a runtime API key (`fp_agent_…`) so the CLI
- * can write `BROODS_API_KEY` into `.env.local`. Returns the stored plaintext
- * so reconnecting clients do not need to rotate the key.
+ * can write `FILTHY_PANTY_API_KEY` into `.env.local`. Returns the plaintext only
+ * when freshly minted (reveal-once); otherwise just the masked hint/endpoint.
  */
 export const ensureRuntimeKeyBySecretHash = internalMutation({
     args: {
@@ -238,10 +237,6 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
         project: v.string(),
         environment: v.string(),
         rotate: v.optional(v.boolean()),
-        auditSync: v.optional(v.object({
-            resourceCount: v.number(),
-            prune: v.boolean(),
-        })),
     },
     returns: v.union(v.null(), v.object({
         accountId: v.id("accounts"),
@@ -249,7 +244,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
         projectSlug: v.string(),
         environmentSlug: v.string(),
         keyHint: v.string(),
-        apiKey: v.string(),
+        apiKey: v.union(v.string(), v.null()),
     })),
     handler: async (ctx, args) => {
         const account = await accountFromSecretHash(ctx, args.secretHash);
@@ -266,18 +261,6 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
             environmentSlug: environmentDoc.name.toLowerCase(),
             rotate: args.rotate === true,
         });
-        if (args.auditSync) {
-            await scheduleServiceLog(ctx, {
-                projectId: projectDoc._id,
-                environmentId: environmentDoc._id,
-                eventType: "service.manifest.synced",
-                message: "CLI manifest synchronized",
-                data: {
-                    resourceCount: args.auditSync.resourceCount,
-                    prune: args.auditSync.prune,
-                },
-            });
-        }
 
         return {
             accountId: account._id,
@@ -305,7 +288,7 @@ export const recordExternalResourcesBySecretHash = internalMutation({
     returns: v.null(),
     handler: async (ctx, args) => {
         const account = await accountFromSecretHash(ctx, args.secretHash);
-        if (!account) throw new Error("Invalid Broods token");
+        if (!account) throw new Error("Invalid BeeBlast token");
         const projectDoc = await ensureProject(ctx, account, args.project);
         const environmentDoc = await ensureEnvironment(ctx, projectDoc, args.environment);
         const existing = await ctx.db
@@ -368,7 +351,7 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
     returns: v.null(),
     handler: async (ctx, args) => {
         const account = await accountFromSecretHash(ctx, args.secretHash);
-        if (!account) throw new Error("Invalid Broods token");
+        if (!account) throw new Error("Invalid BeeBlast token");
         const resolved = await getProjectEnvironment(ctx, account, args.project, args.environment);
         if (!resolved) throw new Error("Project or environment not found");
         const authId = await authIdForAccount(ctx, account);
@@ -419,7 +402,7 @@ export const deleteResourceBySecretHash = internalMutation({
     handler: async (ctx, args) => {
         const { secretHash, project, environment, kind, name } = args;
         const account = await accountFromSecretHash(ctx, secretHash);
-        if (!account) throw new Error("Invalid Broods token");
+        if (!account) throw new Error("Invalid BeeBlast token");
         const resolved = await getProjectEnvironment(ctx, account, project, environment);
         if (!resolved) throw new Error("Project/environment not found");
         const normalizedName = resourceName(name);
@@ -449,7 +432,7 @@ export const setEnvBySecretHash = internalMutation({
     handler: async (ctx, args) => {
         const { secretHash, project, environment, name, value } = args;
         const account = await accountFromSecretHash(ctx, secretHash);
-        if (!account) throw new Error("Invalid Broods token");
+        if (!account) throw new Error("Invalid BeeBlast token");
         const projectDoc = await ensureProject(ctx, account, project);
         const environmentDoc = await ensureEnvironment(ctx, projectDoc, environment);
         const normalizedName = envName(name);
@@ -518,7 +501,7 @@ export const listEnvBySecretHash = internalQuery({
     handler: async (ctx, args) => {
         const { secretHash, project, environment } = args;
         const account = await accountFromSecretHash(ctx, secretHash);
-        if (!account) throw new Error("Invalid Broods token");
+        if (!account) throw new Error("Invalid BeeBlast token");
         const resolved = await getProjectEnvironment(ctx, account, project, environment);
         if (!resolved) return [];
 
@@ -555,7 +538,7 @@ export const getEnvBySecretHash = internalMutation({
     handler: async (ctx, args) => {
         const { secretHash, project, environment, name } = args;
         const account = await accountFromSecretHash(ctx, secretHash);
-        if (!account) throw new Error("Invalid Broods token");
+        if (!account) throw new Error("Invalid BeeBlast token");
         const resolved = await getProjectEnvironment(ctx, account, project, environment);
         if (!resolved) return null;
         const normalizedName = envName(name);
@@ -612,7 +595,7 @@ export const removeEnvBySecretHash = internalMutation({
     handler: async (ctx, args) => {
         const { secretHash, project, environment, name } = args;
         const account = await accountFromSecretHash(ctx, secretHash);
-        if (!account) throw new Error("Invalid Broods token");
+        if (!account) throw new Error("Invalid BeeBlast token");
         const resolved = await getProjectEnvironment(ctx, account, project, environment);
         if (!resolved) throw new Error("Project/environment not found");
         const normalizedName = envName(name);
@@ -917,7 +900,7 @@ async function syncSandboxResources(
     const sandboxes = resources.filter((entry) => entry.kind === "sandbox");
     if (sandboxes.length === 0) return ids;
 
-    // sandboxConfigs is a shared SaaS table owned by broods: the blob is
+    // sandboxConfigs is a shared SaaS table owned by filthy-panty: the blob is
     // stored encrypted at rest (envVars/options may carry provider secrets).
     const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
     if (!secret) {
@@ -1262,30 +1245,12 @@ async function syncCanvasLayoutForManifest(
     const desiredEdges = new Map<string, CanvasEdge>();
     const nextById = new Map(existingNodes.map((node) => [node.id, node]));
     const nodeIdByKindName = new Map<string, string>();
-    const columnX = {
-        agent: 80,
-        sandbox: 340,
-        workspace: 600,
-        skill: 860,
-    } as const;
-    const rowY = {
-        agent: 80,
-        sandbox: 80,
-        workspace: 80,
-        skill: 80,
-    };
-    const nextPosition = (kind: keyof typeof columnX) => {
-        const position = { x: columnX[kind], y: rowY[kind] };
-        rowY[kind] += 132;
-
-        return position;
-    };
 
     const ordered = [...desiredResources].sort((a, b) => {
         const rank = { agent: 0, sandbox: 1, workspace: 2, skill: 3 } as const;
         return rank[a.kind] - rank[b.kind] || a.name.localeCompare(b.name);
     });
-    ordered.forEach((resource) => {
+    ordered.forEach((resource, index) => {
         if (resource.kind === "agent") {
             const config = agentConfigByName.get(resource.name);
             if (!config) return;
@@ -1295,7 +1260,7 @@ async function syncCanvasLayoutForManifest(
                 preferred: existingByAgentConfigId.get(config._id),
                 kind: "agent",
                 name: resource.name,
-                position: nextPosition("agent"),
+                position: { x: 80, y: 80 + index * 180 },
                 data: {
                     label: resource.name,
                     status: "idle",
@@ -1316,7 +1281,7 @@ async function syncCanvasLayoutForManifest(
                 preferred: existingById.get(canvasNodeId("skill", resource.name)),
                 kind: "skill",
                 name: resource.name,
-                position: nextPosition("skill"),
+                position: { x: 760, y: 80 + index * 180 },
                 data: {
                     label: resource.name,
                     status: "idle",
@@ -1344,7 +1309,10 @@ async function syncCanvasLayoutForManifest(
             preferred: existingByResourceId.get(resourceId),
             kind: resource.kind,
             name: resource.name,
-            position: nextPosition(resource.kind),
+            position: {
+                x: resource.kind === "sandbox" ? 420 : 760,
+                y: 80 + index * 180,
+            },
             data: {
                 label: resource.name,
                 status: "idle",
@@ -1764,7 +1732,7 @@ async function resourcesForEnvironment(
         .filter((entry) => entry.kind === "tool")
         .map((entry) => [entry.externalId, entry.name]));
 
-    // sandboxConfigs is stored encrypted (broods contract); decrypt back
+    // sandboxConfigs is stored encrypted (filthy-panty contract); decrypt back
     // into the manifest shape the CLI expects.
     const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
     const sandboxResources: CliResource[] = await Promise.all(

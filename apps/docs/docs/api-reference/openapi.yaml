@@ -1,16 +1,11 @@
 openapi: 3.1.0
 info:
-  title: Broods API Reference
+  title: BeeBlast API Reference
   description: |
-    Complete API reference for Broods. Two surfaces:
+    Complete API reference for BeeBlast. Two surfaces:
 
     - **Direct API** — account-authenticated agent runtime endpoint (sync SSE, async jobs, status polling, external tool completion)
     - **Account Management** — tenant configuration (accounts, agents, skills, secrets)
-
-    > **For daily development, use the `broods` CLI and TypeScript SDK.** The CLI handles tenant configuration (agents, sandboxes, workspaces, skills, crons, tools) automatically via `broods dev` and `broods deploy`. You do not need to call these account-management endpoints manually. This reference is for:
-    > - Runtime invocation (`/`, `/async`, `/status/{eventId}`) from the TypeScript SDK, curl, or Python client
-    > - Advanced integrations that need direct account-management access
-    > - Admin operations using `AdminAccountSecret`
 
     Every `/accounts/me/...` sub-resource (agents, skills, crons, tools, sandboxes, workspaces, rotate-secret) is also reachable by admins as `/accounts/{accountId}/...` with the `AdminAccountSecret` bearer token; behavior and shapes are identical.
   version: 0.1.0
@@ -23,7 +18,7 @@ servers:
         default: your-function-url
         description: Your deployed Function URL ID
       region:
-        default: eu-west-1
+        default: us-east-1
         description: AWS deployment region
 
 security:
@@ -165,17 +160,6 @@ paths:
 
                     event: 0
                     data: {"type":"finish","finishReason":"stop"}
-        '403':
-          description: Agent has not opted into public access (secure by default)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              examples:
-                publicAccessDisabled:
-                  value:
-                    error: "Agent agent_... is not publicly accessible. Enable public access (publicAccess: true) and redeploy, or reach it through an internal endpoint or channel webhook."
-                    code: public_access_disabled
         '404':
           description: Direct API disabled (ENABLE_DIRECT_API=false)
         '401':
@@ -227,18 +211,7 @@ paths:
               examples:
                 accepted:
                   value:
-                    statusUrl: https://your-function-url.lambda-url.eu-west-1.on.aws/status/async-unique-id?agentId=agent_abc123
-        '403':
-          description: Agent has not opted into public access (secure by default)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              examples:
-                publicAccessDisabled:
-                  value:
-                    error: "Agent agent_... is not publicly accessible. Enable public access (publicAccess: true) and redeploy, or reach it through an internal endpoint or channel webhook."
-                    code: public_access_disabled
+                    statusUrl: https://your-function-url.lambda-url.us-east-1.on.aws/status/async-unique-id?agentId=agent_abc123
         '404':
           description: Direct API disabled (ENABLE_DIRECT_API=false)
         '401':
@@ -1140,74 +1113,6 @@ paths:
       responses:
         '200': { description: Deleted }
 
-  /accounts/me/workspaces/{workspaceId}/files:
-    get:
-      tags: [Workspaces]
-      summary: List workspace files or create a download URL
-      description: Lists the authoritative S3 namespace mounted by the workspace. When `path` is supplied, returns a short-lived download URL for that file.
-      security: [{ BearerAuth: [] }]
-      parameters:
-        - { name: workspaceId, in: path, required: true, schema: { type: string } }
-        - { name: path, in: query, required: false, schema: { type: string } }
-      responses:
-        '200': { description: Workspace file list or download URL }
-        '404': { description: Workspace or file not found }
-    post:
-      tags: [Workspaces]
-      summary: Upload a workspace file
-      description: Uploads or replaces one file. Dashboard-proxied uploads are limited to 512 KiB so the base64 request remains within Convex action limits.
-      security: [{ BearerAuth: [] }]
-      parameters:
-        - { name: workspaceId, in: path, required: true, schema: { type: string } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [path, contentBase64]
-              properties:
-                path: { type: string }
-                contentBase64: { type: string, format: byte }
-                contentType: { type: string }
-      responses:
-        '201': { description: File uploaded }
-    patch:
-      tags: [Workspaces]
-      summary: Rename a workspace file or folder
-      security: [{ BearerAuth: [] }]
-      parameters:
-        - { name: workspaceId, in: path, required: true, schema: { type: string } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [path, newPath]
-              properties:
-                path: { type: string }
-                newPath: { type: string }
-      responses:
-        '200': { description: File or folder renamed }
-    delete:
-      tags: [Workspaces]
-      summary: Delete a workspace file or folder
-      security: [{ BearerAuth: [] }]
-      parameters:
-        - { name: workspaceId, in: path, required: true, schema: { type: string } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [path]
-              properties:
-                path: { type: string }
-      responses:
-        '200': { description: File or folder deleted }
-
   /accounts/me/tools:
     post:
       tags: [Tools]
@@ -1731,8 +1636,10 @@ components:
           example: image
         image:
           type: string
-          description: Base64-encoded image data, URL, or File reference
-        mimeType:
+          description: >-
+            Inline base64 or data-URL image bytes for this invocation only. HTTP(S)
+            URLs are rejected, and direct API media is not persisted as an artifact.
+        mediaType:
           type: string
           description: MIME type of the image (e.g., `image/png`, `image/jpeg`)
 
@@ -1747,8 +1654,10 @@ components:
           example: file
         data:
           type: string
-          description: Base64-encoded file data, URL, or File reference
-        mimeType:
+          description: >-
+            Inline base64 or data-URL file bytes for this invocation only. HTTP(S)
+            URLs are rejected, and direct API media is not persisted as an artifact.
+        mediaType:
           type: string
           description: MIME type of the file
         filename:
@@ -2187,9 +2096,6 @@ components:
           $ref: '#/components/schemas/SkillsConfig'
         subagent:
           $ref: '#/components/schemas/SubagentConfig'
-        publicAccess:
-          type: boolean
-          description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the environment runtime key). Off by default — secured. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
         sandbox:
           type: string
           description: Id of the agent-level sandbox config (POST /accounts/me/sandboxes). Powers stateless bash and is the default sandbox for workspaces that don't set their own.
@@ -2214,6 +2120,8 @@ components:
           $ref: '#/components/schemas/ToolsConfig'
         channels:
           $ref: '#/components/schemas/ChannelsConfig'
+        artifacts:
+          $ref: '#/components/schemas/ArtifactsConfig'
 
     ProviderConfig:
       type: object
@@ -2321,6 +2229,87 @@ components:
         providerOptions:
           type: object
           description: Vercel AI SDK provider-specific options
+        inputCapabilities:
+          type: object
+          description: >
+            Explicit MIME types that the selected model/provider accepts as AI SDK
+            image or file parts. Omitted media remains descriptor-only; channel URLs
+            are never delegated to AI SDK automatic download behavior.
+          properties:
+            imageMediaTypes:
+              type: array
+              maxItems: 32
+              items:
+                type: string
+                description: Exact MIME type or top-level wildcard such as `image/*`.
+            fileMediaTypes:
+              type: array
+              maxItems: 32
+              items:
+                type: string
+                description: Exact MIME type or top-level wildcard such as `application/*`.
+
+    ArtifactsConfig:
+      type: object
+      description: >
+        Agent-level artifact storage, workspace materialization, and processing policy.
+        Channel action flags do not control artifact processing.
+      properties:
+        driver:
+          $ref: '#/components/schemas/RemoteArtifactDriverConfig'
+        fallback:
+          type: string
+          enum: [reject, managed-ephemeral]
+          description: When a remote driver is configured, this explicitly permits short-lived managed storage after driver failure. Without a driver, managed ephemeral storage is the default data plane.
+        workspace:
+          type: object
+          properties:
+            name:
+              type: string
+              description: Agent-facing writable workspace name. Required when more than one writable workspace is attached.
+            materialize:
+              type: string
+              enum: [never, complex, all]
+              default: complex
+        processing:
+          type: object
+          properties:
+            audio:
+              type: string
+              enum: [reject, workspace]
+              default: reject
+            archives:
+              type: string
+              enum: [reject, workspace]
+              default: workspace
+            unsupportedFiles:
+              type: string
+              enum: [descriptor, workspace]
+              default: workspace
+
+    RemoteArtifactDriverConfig:
+      type: object
+      required: [name, mode, endpoint, signingSecret, allowedHosts]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        mode:
+          type: string
+          const: remote
+        endpoint:
+          type: string
+          format: uri
+          description: Public HTTPS lifecycle endpoint on port 443; its exact hostname must be in `allowedHosts`.
+        signingSecret:
+          type: string
+          description: Secret used to authenticate signed lifecycle requests.
+        allowedHosts:
+          type: array
+          minItems: 1
+          items:
+            type: string
 
     OutputConfig:
       type: object
@@ -2365,25 +2354,22 @@ components:
       type: object
       description: Lifecycle hooks publish stable agent runtime events. Delivery is best-effort.
       properties:
-        webhooks:
-          type: array
-          description: Outbound event webhooks. An agent may register several; every enabled entry whose events allow-list matches is delivered independently.
-          items:
-            type: object
-            properties:
-              enabled:
-                type: boolean
-              url:
+        webhook:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            url:
+              type: string
+              description: HTTPS endpoint for event JSON
+            secret:
+              type: string
+              description: HMAC signing secret for `X-Webhook-Signature`
+            events:
+              type: array
+              items:
                 type: string
-                description: HTTPS endpoint for event JSON
-              secret:
-                type: string
-                description: HMAC signing secret for `X-Webhook-Signature`
-              events:
-                type: array
-                items:
-                  type: string
-                description: Optional allow-list; omitted means all events
+              description: Optional allow-list; omitted means all events
 
     SkillsConfig:
       type: object
@@ -2623,6 +2609,28 @@ components:
         mode:
           type: string
           enum: [edit, chunk, progress, off]
+    ChannelActionsConfig:
+      type: object
+      description: >
+        Per-agent policy for model-initiated channel actions. Actions are opt-in and
+        also require adapter support; unsupported operations are not exposed.
+      properties:
+        reactions:
+          type: boolean
+        attachments:
+          type: boolean
+    ChannelReactionActionsConfig:
+      type: object
+      description: Per-agent policy for model-initiated reactions on a channel whose adapter supports them.
+      properties:
+        reactions:
+          type: boolean
+    ChannelAttachmentActionsConfig:
+      type: object
+      description: Per-agent policy for model-initiated file sends on a channel whose adapter supports them.
+      properties:
+        attachments:
+          type: boolean
     ChannelsConfig:
       type: object
       description: Channel webhook configuration. Webhook URLs follow the pattern `/webhooks/{accountId}/{agentId}/{channel}`.
@@ -2642,6 +2650,13 @@ components:
               type: string
             streaming:
               $ref: '#/components/schemas/ChannelStreamingConfig'
+            actions:
+              $ref: '#/components/schemas/ChannelActionsConfig'
+            mediaMaxMb:
+              type: number
+              description: Per-item and aggregate per-event inbound media budget in MiB. Defaults to 20.
+              minimum: 1
+              maximum: 20
         github:
           type: object
           properties:
@@ -2657,6 +2672,8 @@ components:
               items:
                 type: string
               description: Repository slugs (`owner/repo`)
+            actions:
+              $ref: '#/components/schemas/ChannelReactionActionsConfig'
         slack:
           type: object
           properties:
@@ -2670,6 +2687,13 @@ components:
                 type: string
             streaming:
               $ref: '#/components/schemas/ChannelStreamingConfig'
+            actions:
+              $ref: '#/components/schemas/ChannelActionsConfig'
+            mediaMaxMb:
+              type: number
+              description: Per-item and aggregate per-event inbound media budget in MiB. Defaults to 20.
+              minimum: 1
+              maximum: 20
         discord:
           type: object
           properties:
@@ -2683,9 +2707,11 @@ components:
                 type: string
             streaming:
               $ref: '#/components/schemas/ChannelStreamingConfig'
+            actions:
+              $ref: '#/components/schemas/ChannelAttachmentActionsConfig'
         pancake:
           type: object
-          description: Pancake sends no signature header; the webhook URL must carry `?secret=<webhookSecret>`, checked on every request.
+          description: Pancake text plus automatic inbound photo/video. Pancake sends no signature header; the webhook URL must carry `?secret=<webhookSecret>`, checked on every request.
           properties:
             pageId:
               type: string
@@ -2697,6 +2723,13 @@ components:
             senderId:
               type: string
               description: Optional staff user ID for replies
+            actions:
+              $ref: '#/components/schemas/ChannelAttachmentActionsConfig'
+            mediaMaxMb:
+              type: number
+              description: Per-item and aggregate inbound photo/video budget in MiB. Defaults to 20.
+              minimum: 1
+              maximum: 20
             options:
               type: object
               description: Optional Pancake adapter settings.
@@ -2708,7 +2741,7 @@ components:
                   description: Conversation tag IDs that mark human handoff; tagged conversations are ignored.
         zalo:
           type: object
-          description: Official Zalo Bot API webhook channel for direct text messages.
+          description: Official Zalo Bot API webhook channel for direct text messages. Media is not currently supported.
           properties:
             botToken:
               type: string

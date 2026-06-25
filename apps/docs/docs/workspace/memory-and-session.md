@@ -43,59 +43,37 @@ Workspaces are account-scoped records. Any agent or conversation that references
 
 ```mermaid
 flowchart LR
-  Define["defineWorkspace({ name: \"notes\" })"] --> A["Agent A config<br/>notes → ws_notes"]
-  Define --> B["Agent B config<br/>notes → ws_notes"]
+  Create["POST /accounts/me/workspaces<br/>ws_notes"] --> A["Agent A config<br/>notes → ws_notes"]
+  Create --> B["Agent B config<br/>notes → ws_notes"]
   A --> Files["shared files<br/>MEMORY.md / TASKS.md / project files"]
   B --> Files
 ```
 
-Create a workspace in `broods/index.ts`, then reference it from the agent:
+Create a workspace, then reference it from the agent:
 
-```ts
-import { defineWorkspace, defineAgent, defineSandbox } from "broods";
+```jsonc
+// POST /accounts/me/workspaces
+{ "name": "notes", "config": { "storage": { "provider": "s3" }, "harness": { "enabled": true } } }
 
-export const notes = defineWorkspace({
-  name: "notes",
-  config: {
-    storage: { provider: "s3" },
-    harness: { enabled: true },
-  },
-});
-
-export const myAgent = defineAgent({
-  name: "my-agent",
-  config: {
-    sandbox: lambdaSandbox,
-    workspaces: [notes],
-  },
-});
+// agent config
+{
+  "sandbox": "sb_default",
+  "workspaces": [{ "name": "notes", "workspaceId": "ws_notes" }]
+}
 ```
 
 Agents can expose multiple named workspaces. The first entry is the default when a tool call
 omits the optional `workspace` argument:
 
-```ts
-import { defineWorkspace, defineAgent, defineSandbox } from "broods";
-
-export const personal = defineWorkspace({ name: "personal", config: { storage: { provider: "s3" } } });
-export const team = defineWorkspace({ name: "team", config: { storage: { provider: "s3" } } });
-export const docs = defineWorkspace({ name: "docs", config: { storage: { provider: "s3" } } });
-export const lockedDown = defineSandbox({
-  name: "locked-down",
-  config: { provider: "lambda", network: { mode: "deny-all" }, permissionMode: "ask" },
-});
-
-export const myAgent = defineAgent({
-  name: "my-agent",
-  config: {
-    sandbox: lambdaSandbox,
-    workspaces: [
-      personal,                                    // inherit agent sandbox
-      { workspace: team, sandbox: lockedDown },    // per-workspace override
-      { workspace: docs, sandbox: null },          // read-only S3 access
-    ],
-  },
-});
+```jsonc
+{
+  "sandbox": "sb_default",
+  "workspaces": [
+    { "name": "personal", "workspaceId": "ws_personal" },
+    { "name": "team", "workspaceId": "ws_team", "sandbox": "sb_locked_down" },
+    { "name": "docs", "workspaceId": "ws_docs", "sandbox": null }
+  ]
+}
 ```
 
 ```mermaid
@@ -109,11 +87,10 @@ flowchart LR
 
 ## Runtime Behavior
 
-[`Session`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/session.ts) owns the runtime path:
+[`Session`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/session.ts) owns the runtime path:
 
 - `claim()` deduplicates an inbound event in `ProcessedEvents`.
 - `acquireConversationLease()` serializes work per conversation.
-- `enqueuePendingIngress()` / `takePendingIngress()` buffer channel messages that arrive while a turn is already running, so the lease holder drains and answers them **in order after** its current reply instead of dropping them. Applies to every channel (they all route through `handleChannelRequest`).
 - `appendIngressEvents()` persists incoming user, assistant, tool, and persisted system messages.
 - `createTurnContext()` loads conversation entries, builds system prompt parts, runs compaction when configured, and prunes model-visible messages.
 - `resolvedWorkspaces()` (backed by `resolveAgentRuntime()` in
@@ -122,34 +99,32 @@ flowchart LR
   `normalizeFilesystemNamespace()`.
 - `filesystemNamespace()` returns the default workspace namespace for existing single-workspace callers.
 
-The namespace helper is in [`functions/_shared/runtime-keys.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/runtime-keys.ts). The config interface and validation live in [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/storage/agent-config.ts).
+The namespace helper is in [`functions/_shared/runtime-keys.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/runtime-keys.ts). The config interface and validation live in [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/storage/agent-config.ts).
 
 ## Configure It
 
 Create a workspace with automatic `MEMORY.md` loading and default MEMORY/TASKS harness instructions:
 
-```ts
-import { defineWorkspace } from "broods";
-
-export const notes = defineWorkspace({
-  name: "notes",
-  config: {
-    storage: { provider: "s3" },
-    harness: { enabled: true },
-  },
-});
+```jsonc
+{
+  "name": "notes",
+  "config": {
+    "storage": { "provider": "s3" },
+    "harness": { "enabled": true }
+  }
+}
 ```
 
 Disable only the MEMORY/TASKS harness instructions while still loading an existing `MEMORY.md`:
 
-```ts
-export const notesBare = defineWorkspace({
-  name: "notes",
-  config: {
-    storage: { provider: "s3" },
-    harness: { enabled: false },
-  },
-});
+```jsonc
+{
+  "name": "notes",
+  "config": {
+    "storage": { "provider": "s3" },
+    "harness": { "enabled": false }
+  }
+}
 ```
 
 Remove a workspace reference from the agent config to disable that workspace's mounted

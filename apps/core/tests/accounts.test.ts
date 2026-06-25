@@ -110,57 +110,51 @@ describe("agent config", () => {
   it("validates lifecycle webhook hook config", () => {
     expect(normalizeAgentConfig({
       hooks: {
-        webhooks: [{
+        webhook: {
           enabled: true,
           url: "https://hooks.example/agent-events",
           secret: "hook-secret",
           events: ["agent.started", "tool.result", "subagent.task.finished"],
-        }],
+        },
       },
     })).toMatchObject({
       hooks: {
-        webhooks: [{
+        webhook: {
           enabled: true,
           events: ["agent.started", "tool.result", "subagent.task.finished"],
-        }],
+        },
       },
     });
 
     expect(() => normalizeAgentConfig({
       hooks: {
-        webhooks: "not-an-array",
-      },
-    })).toThrow("config.hooks.webhooks must be an array");
-
-    expect(() => normalizeAgentConfig({
-      hooks: {
-        webhooks: [{
+        webhook: {
           enabled: true,
           secret: "hook-secret",
-        }],
+        },
       },
-    })).toThrow("config.hooks.webhooks[0].url is required when config.hooks.webhooks[0].enabled is true");
+    })).toThrow("config.hooks.webhook.url is required when config.hooks.webhook.enabled is true");
 
     expect(() => normalizeAgentConfig({
       hooks: {
-        webhooks: [{
+        webhook: {
           enabled: true,
           url: "http://hooks.example/agent-events",
           secret: "hook-secret",
-        }],
+        },
       },
-    })).toThrow("config.hooks.webhooks[0].url must use https");
+    })).toThrow("config.hooks.webhook.url must use https");
 
     expect(() => normalizeAgentConfig({
       hooks: {
-        webhooks: [{
+        webhook: {
           enabled: true,
           url: "https://hooks.example/agent-events",
           secret: "hook-secret",
           events: ["unknown.event"],
-        }],
+        },
       },
-    })).toThrow("config.hooks.webhooks[0].events must be an array of:");
+    })).toThrow("config.hooks.webhook.events must be an array of:");
   });
 
   it("validates agent model config", () => {
@@ -643,6 +637,8 @@ describe("agent config", () => {
           pageId: "page-1",
           pageAccessToken: "page-token",
           senderId: "sender-1",
+          actions: { attachments: true },
+          mediaMaxMb: 12,
           options: {
             mode: "retail",
             ignoreTagIds: ["order-tag", "pending-tag"],
@@ -655,6 +651,8 @@ describe("agent config", () => {
           pageId: "page-1",
           pageAccessToken: "page-token",
           senderId: "sender-1",
+          actions: { attachments: true },
+          mediaMaxMb: 12,
           options: {
             mode: "retail",
             ignoreTagIds: ["order-tag", "pending-tag"],
@@ -692,6 +690,17 @@ describe("agent config", () => {
         },
       },
     })).toThrow("config.channels.pancake.options.ignoreTagIds must be an array of strings");
+
+    expect(() => normalizeAgentConfig({
+      channels: { pancake: { actions: { reactions: true } } },
+    })).toThrow("config.channels.pancake.actions.reactions is not supported");
+
+    expect(() => normalizeAgentConfig({
+      channels: { pancake: { mediaMaxMb: 21 } },
+    })).toThrow("config.channels.pancake.mediaMaxMb must be a number from 1 to 20");
+    expect(() => normalizeAgentConfig({
+      channels: { pancake: { mediaMaxMb: 0.5 } },
+    })).toThrow("config.channels.pancake.mediaMaxMb must be a number from 1 to 20");
 
     expect(normalizeAgentConfig({
       channels: {
@@ -801,12 +810,12 @@ describe("agent config", () => {
         },
       },
       hooks: {
-        webhooks: [{
+        webhook: {
           enabled: true,
           url: "https://hooks.example/agent-events",
           secret: "hook-secret",
           events: ["agent.finished"],
-        }],
+        },
       },
       tools: {
         tavilySearch: { maxResults: 3 },
@@ -859,12 +868,12 @@ describe("agent config", () => {
         },
       },
       hooks: {
-        webhooks: [{
+        webhook: {
           enabled: true,
           url: "https://hooks.example/agent-events",
           secret: "hook-secret",
           events: ["agent.finished"],
-        }],
+        },
       },
       tools: {
         tavilySearch: { maxResults: 3 },

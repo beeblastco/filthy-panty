@@ -127,6 +127,61 @@ describe("slack channel adapter", () => {
     });
   });
 
+  it("accepts file_share messages and keeps bearer credentials out of source", async () => {
+    const adapter = createSlackChannel("bot-token", "signing-secret", null);
+    const parsed = await adapter.parse(createEventRequest({
+      type: "event_callback",
+      event_id: "evt-file",
+      team_id: "T1",
+      event: {
+        type: "message",
+        subtype: "file_share",
+        channel: "D1",
+        channel_type: "im",
+        user: "U1",
+        ts: "1713916800.000004",
+        files: [{ id: "F1", name: "photo.png", mimetype: "image/png", size: 10, url_private_download: "https://files.slack.com/file" }],
+      },
+    }));
+
+    expect(parsed.kind).toBe("message");
+    if (parsed.kind !== "message") throw new Error("Expected file share");
+    expect(parsed.message.attachments?.[0]).toMatchObject({ id: "F1", kind: "image", filename: "photo.png" });
+    expect(JSON.stringify(parsed.message.source)).not.toContain("bot-token");
+  });
+
+  it("degrades inaccessible and external files without resolving arbitrary URLs", async () => {
+    const adapter = createSlackChannel("bot-token", "signing-secret", null);
+    const parsed = await adapter.parse(createEventRequest({
+      type: "event_callback",
+      event_id: "evt-inaccessible",
+      team_id: "T1",
+      event: {
+        type: "message",
+        subtype: "file_share",
+        channel: "D1",
+        channel_type: "im",
+        user: "U1",
+        ts: "1713916800.000005",
+        files: [
+          { id: "F1", name: "missing.pdf", mimetype: "application/pdf" },
+          { id: "F2", name: "external.pdf", mimetype: "application/pdf", mode: "external", url_private: "https://attacker.example/file" },
+        ],
+      },
+    }));
+
+    expect(parsed.kind).toBe("message");
+    if (parsed.kind !== "message") throw new Error("Expected inaccessible file share");
+    expect(parsed.message.content).toEqual([]);
+    expect(parsed.message.attachments?.map(({ resolveDownload: _resolve, ...item }) => item)).toEqual([
+      { id: "F1", kind: "file", filename: "missing.pdf", mediaType: "application/pdf" },
+      { id: "F2", kind: "file", filename: "external.pdf", mediaType: "application/pdf" },
+    ]);
+    for (const attachment of parsed.message.attachments ?? []) {
+      await expect(attachment.resolveDownload()).rejects.toThrow("Slack file is not downloadable");
+    }
+  });
+
   it("normalizes slash commands and carries the command token in source", async () => {
     const adapter = createSlackChannel("bot-token", "signing-secret", new Set(["C1"]));
 

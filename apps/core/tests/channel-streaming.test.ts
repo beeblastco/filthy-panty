@@ -71,112 +71,21 @@ describe("createChannelStreamWriter", () => {
     ]);
   });
 
-  it("progress mode shows the status, then the answer takes over the same message", async () => {
+  it("progress mode previews tool activity then swaps in the final answer", async () => {
     const { actions, calls } = recordingActions(true);
     const writer = createChannelStreamWriter(actions, "progress", 0);
 
-    await writer.reasoning!("thinking about it");
-    await writer.progress!("search");           // status: reasoning + tool, in one preview
-    await writer.push("Here is ");               // answer takes over the SAME message
-    await writer.push("the answer.");
+    await writer.push("streamed assistant text"); // progress mode ignores text deltas
+    await writer.progress!("search");
+    await writer.progress!("read");
     await writer.finish("Here is the answer.");
 
-    // One live preview for the whole turn — never a message per block.
-    expect(calls.filter(([op]) => op === "beginMessage").length).toBe(1);
-    expect(calls.some(([op]) => op === "sendText")).toBe(false);
-    // The status (header + reasoning + tool) was shown while the model worked…
-    expect(calls.some((c) => c[2]?.includes("⏳ Working…") && c[2]?.includes("💭 thinking about it") && c[2]?.includes("• search"))).toBe(true);
-    // …then the same message finalized in place to the answer, with no status left.
-    expect(calls.at(-1)).toEqual(["editMessage", "m1", "Here is the answer."]);
-  });
-
-  it("progress mode ends on the final answer, dropping the working status (subagent dispatch case)", async () => {
-    const { actions, calls } = recordingActions(true);
-    const writer = createChannelStreamWriter(actions, "progress", 0);
-
-    await writer.reasoning!("delegating research");
-    await writer.progress!("run_subagent: Research ZeroFS");
-    await writer.push("I'll dispatch a research task.");
-    await writer.finish("ZeroFS is a filesystem.");
-
-    // Single preview; the working status and pre-tool text are transient, the final
-    // answer wins in place.
-    expect(calls.filter(([op]) => op === "beginMessage").length).toBe(1);
-    expect(calls.at(-1)).toEqual(["editMessage", "m1", "ZeroFS is a filesystem."]);
-  });
-
-  it("progress mode finalizes a paused turn to the model's narration, not the work status", async () => {
-    const { actions, calls } = recordingActions(true);
-    const writer = createChannelStreamWriter(actions, "progress", 0);
-
-    // The model narrates, then dispatches an async subagent and the turn pauses, so
-    // finish() runs with no authoritative final text (onFinalText never fired).
-    await writer.reasoning!("let me delegate");
-    await writer.push("I'll wait for the subagents to finish.");
-    await writer.progress!("run_subagent: research");
-    await writer.finish();
-
-    // The preview lands on the narration, not a stuck "Working…" status.
-    expect(calls.filter(([op]) => op === "beginMessage").length).toBe(1);
-    expect(calls.at(-1)).toEqual(["editMessage", "m1", "I'll wait for the subagents to finish."]);
-  });
-
-  it("progress mode drops back to the status when a new tool runs after text", async () => {
-    const { actions, calls } = recordingActions(true);
-    const writer = createChannelStreamWriter(actions, "progress", 0);
-
-    await writer.push("Step one narration");     // answer view
-    await writer.progress!("bash: ls");           // new step -> status view, prior text reset
-    await writer.finish("Final answer.");
-
-    expect(calls.filter(([op]) => op === "beginMessage").length).toBe(1);
-    // After the tool call the preview returned to the status, not the step-one text.
-    expect(calls.some((c) => c[2]?.includes("⏳ Working…") && c[2]?.includes("• bash: ls"))).toBe(true);
-    expect(calls.at(-1)).toEqual(["editMessage", "m1", "Final answer."]);
-  });
-
-  it("progress mode collapses reasoning to one compact line", async () => {
-    const { actions, calls } = recordingActions(true);
-    const writer = createChannelStreamWriter(actions, "progress", 0);
-
-    await writer.reasoning!("Thinking about");
-    await writer.reasoning!(" the labs\nand dates"); // newlines collapse to one line
-    await writer.push("Answer text");
-    await writer.finish("Answer text");
-
-    expect(calls.some((call) => call[2]?.includes("💭 Thinking about the labs and dates"))).toBe(true);
-    expect(calls.at(-1)).toEqual(["editMessage", "m1", "Answer text"]);
-  });
-
-  it("progress mode streams a plain text answer as one clean message, reconciled on finish", async () => {
-    const { actions, calls } = recordingActions(true);
-    const writer = createChannelStreamWriter(actions, "progress", 0);
-
-    await writer.push("first token");
-    await writer.push(" more tokens");
-    // No stepFinish: the text block is still open, so finish() reconciles it to the
-    // authoritative final text in place.
-    await writer.finish("first token more tokens.");
-
-    expect(calls[0]).toEqual(["beginMessage", "m1", "first token"]); // no work header for a text-only turn
-    expect(calls.at(-1)).toEqual(["editMessage", "m1", "first token more tokens."]);
-    expect(calls.filter(([op]) => op === "beginMessage").length).toBe(1); // single message
-  });
-
-  it("chunk mode flushes unfinished text at each model step", async () => {
-    const { actions, calls } = recordingActions(false);
-    const writer = createChannelStreamWriter(actions, "chunk", 0);
-
-    await writer.push("step one without a paragraph");
-    await writer.stepFinish!();
-    await writer.push("step two");
-    await writer.stepFinish!();
-    await writer.finish("ignored authoritative accumulation");
-
-    expect(calls).toEqual([
-      ["sendText", "step one without a paragraph"],
-      ["sendText", "step two"],
-    ]);
+    const first = calls[0]!;
+    expect(first[0]).toBe("beginMessage");
+    expect(first[2]).toContain("⏳ Working…");
+    expect(first[2]).toContain("• search");
+    expect(calls.some(([op]) => op === "sendText")).toBe(false);     // text never streamed
+    expect(calls.at(-1)).toEqual(["editMessage", "m1", "Here is the answer."]); // final swap
   });
 
   it("chunk mode keeps a code fence whole instead of splitting on its inner blank line", async () => {

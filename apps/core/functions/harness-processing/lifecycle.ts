@@ -30,18 +30,15 @@ export function createAgentLifecycleEmitter(
   session: Pick<Session, "accountId" | "agentId" | "eventId" | "conversationKey">,
   agentConfig: AgentConfig,
 ): AgentLifecycleEmitter {
-  // An agent can register several outbound webhooks; keep only deliverable ones
-  // (enabled with both a URL and a signing secret).
-  const webhooks = (agentConfig.hooks?.webhooks ?? []).filter(
-    (webhook) => webhook?.enabled && webhook.url && webhook.secret,
-  );
+  const webhook = agentConfig.hooks?.webhook;
+  const subscribedEvents = webhook?.events ? new Set(webhook.events) : null;
 
   return {
     async emit(type, payload = {}) {
-      // A webhook with no events allow-list receives every event; otherwise only
-      // the events it subscribed to.
-      const targets = webhooks.filter((webhook) => !webhook.events || webhook.events.includes(type));
-      if (targets.length === 0) {
+      if (!webhook?.enabled || !webhook.url || !webhook.secret) {
+        return;
+      }
+      if (subscribedEvents && !subscribedEvents.has(type)) {
         return;
       }
 
@@ -55,21 +52,15 @@ export function createAgentLifecycleEmitter(
         payload,
       } satisfies AgentLifecycleEvent;
 
-      await Promise.all(targets.map(async (webhook) => {
-        if (!webhook.url || !webhook.secret) {
-          return;
-        }
-        try {
-          await fireWebhook({ url: webhook.url, secret: webhook.secret }, event);
-        } catch (err) {
-          logError("Lifecycle webhook delivery failed", {
-            eventType: type,
-            eventId: session.eventId,
-            url: webhook.url,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }));
+      try {
+        await fireWebhook({ url: webhook.url, secret: webhook.secret }, event);
+      } catch (err) {
+        logError("Lifecycle webhook delivery failed", {
+          eventType: type,
+          eventId: session.eventId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     },
   };
 }

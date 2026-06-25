@@ -4,7 +4,6 @@
  */
 
 import type { LambdaFunctionURLEvent } from "aws-lambda";
-import { context as otelContextApi } from "@opentelemetry/api";
 import { resolveBearerAuth, type AuthContext } from "../_shared/auth.ts";
 import {
     AgentSkillAuthorizationError,
@@ -54,19 +53,6 @@ import {
 } from "./cron.ts";
 import { createAccountTool, updateAccountTool } from "./account-tools.ts";
 import { logError, logInfo, logWarn } from "../_shared/log.ts";
-import {
-    forceFlushOtel,
-    getObservabilityContext,
-    mintTraceId,
-    setObservabilityContext,
-} from "../_shared/otel.ts";
-import {
-    deleteWorkspacePath,
-    listWorkspaceFiles,
-    renameWorkspacePath,
-    uploadWorkspaceFile,
-    workspaceFileDownloadUrl,
-} from "./workspace-files.ts";
 
 export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResponse> {
     const method = event.requestContext.http.method;
@@ -102,14 +88,6 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
             return errorResponse(401, "Unauthorized");
         }
 
-        if (method === "POST" && rawPath === "/v1/internal/observability-log") {
-            if (auth.kind !== "account" || auth.viaServiceToken !== true) {
-                return errorResponse(403, "Forbidden");
-            }
-
-            return await handleInternalObservabilityLog(auth.account.accountId, event);
-        }
-
         if (method === "GET" && rawPath === "/accounts/me") {
             const account = requireAccountAuth(auth);
             return jsonResponse(200, { account: toPublicAccount(account) });
@@ -134,17 +112,13 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         const selfAgentMatch = rawPath.match(/^\/accounts\/me\/agents\/([^/]+)$/);
         if (selfAgentCollection || selfAgentMatch?.[1]) {
             const account = requireAccountAuth(auth);
-            return await withAgentObservability(
-                account.accountId,
-                selfAgentMatch?.[1] ? decodeURIComponent(selfAgentMatch[1]) : undefined,
-                () => handleAgentRoute(method, account.accountId, selfAgentMatch?.[1], event),
-            );
+            return await handleAgentRoute(method, account.accountId, selfAgentMatch?.[1], event);
         }
 
         const selfSkillCollection = rawPath === "/accounts/me/skills";
         const selfSkillMatch = rawPath.match(/^\/accounts\/me\/skills\/([^/]+)$/);
         if (selfSkillCollection || selfSkillMatch?.[1]) {
-            // The Convex CLI sync (`broods dev`) pushes skill manifests with the
+            // The Convex CLI sync (`filthy-panty dev`) pushes skill manifests with the
             // account-scoped service token. Deployment runtime keys are intentionally
             // excluded: they can run agents, not mutate account skill bundles.
             const account = requireAccountAuth(auth, { allowServiceToken: true });
@@ -176,17 +150,6 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         if (selfSandboxCollection || selfSandboxMatch?.[1]) {
             const account = requireAccountAuth(auth);
             return await handleSandboxRoute(method, account.accountId, selfSandboxMatch?.[1], event);
-        }
-
-        const selfWorkspaceFilesMatch = rawPath.match(/^\/accounts\/me\/workspaces\/([^/]+)\/files$/);
-        if (selfWorkspaceFilesMatch?.[1]) {
-            const account = requireAccountAuth(auth, { allowServiceToken: true });
-            return await handleWorkspaceFilesRoute(
-                method,
-                account.accountId,
-                decodeURIComponent(selfWorkspaceFilesMatch[1]),
-                event,
-            );
         }
 
         const selfWorkspaceCollection = rawPath === "/accounts/me/workspaces";
@@ -235,12 +198,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
 
         const adminAgentMatch = rawPath.match(/^\/accounts\/([^/]+)\/agents(?:\/([^/]+))?$/);
         if (adminAgentMatch?.[1]) {
-            const accountId = decodeURIComponent(adminAgentMatch[1]);
-            return await withAgentObservability(
-                accountId,
-                adminAgentMatch[2] ? decodeURIComponent(adminAgentMatch[2]) : undefined,
-                () => handleAgentRoute(method, accountId, adminAgentMatch[2], event),
-            );
+            return await handleAgentRoute(method, decodeURIComponent(adminAgentMatch[1]), adminAgentMatch[2], event);
         }
 
         const adminSkillMatch = rawPath.match(/^\/accounts\/([^/]+)\/skills(?:\/([^/]+))?$/);
@@ -261,16 +219,6 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         const adminSandboxMatch = rawPath.match(/^\/accounts\/([^/]+)\/sandboxes(?:\/([^/]+))?$/);
         if (adminSandboxMatch?.[1]) {
             return await handleSandboxRoute(method, decodeURIComponent(adminSandboxMatch[1]), adminSandboxMatch[2], event);
-        }
-
-        const adminWorkspaceFilesMatch = rawPath.match(/^\/accounts\/([^/]+)\/workspaces\/([^/]+)\/files$/);
-        if (adminWorkspaceFilesMatch?.[1] && adminWorkspaceFilesMatch[2]) {
-            return await handleWorkspaceFilesRoute(
-                method,
-                decodeURIComponent(adminWorkspaceFilesMatch[1]),
-                decodeURIComponent(adminWorkspaceFilesMatch[2]),
-                event,
-            );
         }
 
         const adminWorkspaceMatch = rawPath.match(/^\/accounts\/([^/]+)\/workspaces(?:\/([^/]+))?$/);
@@ -294,128 +242,6 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
         }
         return errorResponseForError(err);
     }
-}
-
-async function withAgentObservability<T>(
-    accountId: string,
-    agentId: string | undefined,
-    operation: () => Promise<T>,
-): Promise<T> {
-    if (!agentId) return operation();
-    const deployment = await getStorage().agentDeployments.getByAgentId?.(accountId, agentId);
-    if (!deployment) return operation();
-
-    return withObservabilityScope({
-        accountId: accountId,
-        project: deployment.projectSlug,
-        environment: deployment.environmentSlug,
-        endpointId: deployment.endpointId,
-        agentId: agentId,
-        conversationKey: `service:account-manage:${agentId}`,
-    }, operation);
-}
-
-async function withObservabilityScope<T>(
-    scope: {
-        accountId: string;
-        project: string;
-        environment: string;
-        endpointId: string;
-        agentId: string;
-        conversationKey: string;
-    },
-    operation: () => Promise<T>,
-): Promise<T> {
-    const previous = getObservabilityContext();
-    setObservabilityContext({
-        ...scope,
-        traceId: mintTraceId(),
-        otelContext: otelContextApi.active(),
-        secretValues: [],
-    });
-
-    try {
-        return await operation();
-    } finally {
-        await forceFlushOtel();
-        setObservabilityContext(previous);
-    }
-}
-
-async function handleInternalObservabilityLog(
-    accountId: string,
-    event: LambdaFunctionURLEvent,
-): Promise<LambdaResponse> {
-    const body = parseJsonBody(event) as Record<string, unknown>;
-    const project = requiredLogField(body, "project");
-    const environment = requiredLogField(body, "environment");
-    const endpointId = requiredLogField(body, "endpointId");
-    const eventType = requiredLogField(body, "eventType");
-    const message = requiredLogField(body, "message");
-    const agentId = typeof body.agentId === "string" ? body.agentId : "service";
-    const data = body.data && typeof body.data === "object" && !Array.isArray(body.data)
-        ? body.data as Record<string, unknown>
-        : {};
-
-    return withObservabilityScope({
-        accountId: accountId,
-        project: project,
-        environment: environment,
-        endpointId: endpointId,
-        agentId: agentId,
-        conversationKey: `service:convex:${eventType}`,
-    }, async () => {
-        logInfo(message, {
-            ...data,
-            eventType: eventType,
-            source: "convex",
-        });
-
-        return jsonResponse(202, { accepted: true });
-    });
-}
-
-function requiredLogField(body: Record<string, unknown>, field: string): string {
-    const value = body[field];
-    if (typeof value !== "string" || !value.trim()) {
-        throw new Error(`${field} is required`);
-    }
-
-    return value;
-}
-
-async function handleWorkspaceFilesRoute(
-    method: string,
-    accountId: string,
-    workspaceId: string,
-    event: LambdaFunctionURLEvent,
-): Promise<LambdaResponse> {
-    const workspace = await getStorage().workspaceConfigs.getById(accountId, workspaceId);
-    if (!workspace) return errorResponse(404, "Workspace not found");
-
-    if (method === "GET") {
-        const path = event.queryStringParameters?.path;
-        if (path) {
-            return jsonResponse(200, { url: await workspaceFileDownloadUrl(accountId, workspaceId, path) });
-        }
-        return jsonResponse(200, { files: await listWorkspaceFiles(accountId, workspaceId) });
-    }
-    if (method === "POST") {
-        const file = await uploadWorkspaceFile(accountId, workspaceId, parseJsonBody(event) as never);
-        return jsonResponse(201, { file: file });
-    }
-    if (method === "PATCH") {
-        const body = parseJsonBody(event) as { path?: unknown; newPath?: unknown };
-        const renamed = await renameWorkspacePath(accountId, workspaceId, body.path, body.newPath);
-        return jsonResponse(200, { renamed: renamed });
-    }
-    if (method === "DELETE") {
-        const body = parseJsonBody(event) as { path?: unknown };
-        const deleted = await deleteWorkspacePath(accountId, workspaceId, body.path);
-        return jsonResponse(200, { deleted: deleted });
-    }
-
-    return errorResponse(405, "Method not allowed", { allowedMethods: ["GET", "POST", "PATCH", "DELETE"] });
 }
 
 async function handleCronRoute(

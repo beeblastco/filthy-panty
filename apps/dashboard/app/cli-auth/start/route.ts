@@ -1,9 +1,9 @@
 /**
- * Authenticated browser bridge for `broods login`.
+ * Authenticated browser bridge for `filthy-panty login`.
  */
 
 import { withAuth } from "@workos-inc/authkit-nextjs";
-import { api } from "@broods/convex/_generated/api";
+import { api } from "@filthy-panty/convex/_generated/api";
 import { ConvexHttpClient } from "convex/browser";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -28,7 +28,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
         const client = new ConvexHttpClient(convexUrl);
         client.setAuth(auth.accessToken);
-        const { code } = await createLoginCodeWithRetry(client);
+        const { code } = await client.mutation(api.cliAuth.createLoginCode, {});
         const target = new URL(callback);
         target.searchParams.set("code", code);
         target.searchParams.set("state", state);
@@ -37,35 +37,8 @@ export async function GET(request: NextRequest): Promise<Response> {
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
 
-        return text(`broods CLI login failed: ${message}`, 500);
+        return text(`filthy-panty CLI login failed: ${message}`, 500);
     }
-}
-
-async function createLoginCodeWithRetry(client: ConvexHttpClient): Promise<{ code: string }> {
-    let lastError: unknown;
-    for (let attempt = 0; attempt < 4; attempt++) {
-        try {
-            return await client.mutation(api.cliAuth.createLoginCode, {});
-        } catch (error) {
-            lastError = error;
-            if (!isRetryableLoginRace(error) || attempt === 3) {
-                throw error;
-            }
-            await wait(350 * (attempt + 1));
-        }
-    }
-
-    throw lastError;
-}
-
-function isRetryableLoginRace(error: unknown): boolean {
-    const message = error instanceof Error ? error.message : String(error);
-
-    return /User not found/i.test(message);
-}
-
-function wait(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isLocalCallback(value: string): boolean {

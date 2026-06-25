@@ -118,9 +118,6 @@ export function SandboxResourceDetailsTab({
     onUpdateNodeData: UpdateNodeData;
 }) {
     const config: Record<string, unknown> = isRecord(data.config) ? data.config : SANDBOX_DEFAULT_CONFIG;
-    // Egress policy. Core models this as `network.mode` (allow-all/deny-all/restricted),
-    // which is what code-synced sandboxes carry — not a flat `internet` boolean.
-    const network: { mode?: string } = isRecord(config.network) ? (config.network as { mode?: string }) : {};
 
     function setConfig(patch: Record<string, unknown>) {
         onUpdateNodeData({ config: { ...config, ...patch } });
@@ -166,17 +163,8 @@ export function SandboxResourceDetailsTab({
                 <ToggleRow
                     label="Internet"
                     description="Allow public network access from the sandbox."
-                    checked={network.mode === "allow-all" || network.mode === "restricted"}
-                    onCheckedChange={(internet) =>
-                        setConfig({
-                            network: {
-                                ...network,
-                                // Preserve an existing `restricted` policy when toggling on;
-                                // otherwise map the binary switch onto core's egress modes.
-                                mode: internet ? (network.mode === "restricted" ? "restricted" : "allow-all") : "deny-all",
-                            },
-                        })
-                    }
+                    checked={config.internet === true}
+                    onCheckedChange={(internet) => setConfig({ internet: internet ? true : undefined })}
                 />
                 <ToggleRow
                     label="Persistent"

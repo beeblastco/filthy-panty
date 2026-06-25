@@ -1,5 +1,5 @@
 /**
- * Example: a reserved (persistent) Kubernetes coding sandbox via declarative broods resources.
+ * Example: a reserved (persistent) Kubernetes coding sandbox via declarative filthy-panty resources.
  *
  * Demonstrates the `persistent: true` lifecycle on the `kubernetes` provider — a
  * long-lived sandbox per workspace with a home PVC (installed packages + code
@@ -7,11 +7,11 @@
  * detached background job observed with the auto-registered `async_status` tool.
  */
 
-import { BroodsClient } from "broods";
-import { api } from "./broods/_generated/api";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-// Create a client to connect to the Broods API.
-const client = new BroodsClient();
+// Create a client to connect to the Filthy Panty API.
+const client = new FilthyPantyClient();
 
 // Stream the response from the agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.reservedAgent, {

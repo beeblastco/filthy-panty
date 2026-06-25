@@ -1,6 +1,6 @@
 {
-  "name": "@broods/docs",
-  "description": "Broods developer documentation site (Docusaurus).",
+  "name": "@filthy-panty/docs",
+  "description": "BeeBlast developer documentation site (Docusaurus).",
   "type": "module",
   "private": true,
   "scripts": {

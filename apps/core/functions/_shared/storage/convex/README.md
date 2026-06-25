@@ -1,11 +1,11 @@
-# broods-convex-adapter
+# filthy-panty-convex-adapter
 
-Private Convex `StorageProvider` adapter for [broods](https://github.com/beeblastco/broods).
+Private Convex `StorageProvider` adapter for [filthy-panty](https://github.com/beeblastco/filthy-panty).
 
 This repo is mounted as a git submodule at `functions/_shared/storage/convex/`
-inside `broods`. Community / open-source builds skip submodule init and
+inside `filthy-panty`. Community / open-source builds skip submodule init and
 run with the DynamoDB provider only. SaaS deployments init the submodule and
-get the Convex provider that talks to the `convex-broods` deployment.
+get the Convex provider that talks to the `convex-filthy-cherry` deployment.
 
 ## Files
 

@@ -22,7 +22,7 @@ export function getStorage(): StorageProvider {
     const { convexStorageProvider } = require("./convex/index.ts");
     if (!convexStorageProvider) {
       throw new Error(
-        "STORAGE_PROVIDER=convex requires the broods-convex-adapter submodule. " +
+        "STORAGE_PROVIDER=convex requires the filthy-panty-convex-adapter submodule. " +
           "Run `git submodule update --init --recursive` (SaaS deployments only).",
       );
     }
@@ -47,7 +47,7 @@ export function setStorageForTests(provider: StorageProvider | null): void {
   cached = provider;
 }
 
-export type { StorageProvider, UsageTaskInput, UsageStore } from "./types.ts";
+export type { StorageProvider } from "./types.ts";
 export { getDedupeStore } from "./dedupe.ts";
 export {
   applyCronPatch,
@@ -104,6 +104,9 @@ export {
   type AgentConfig,
   type AgentBehaviorConfig,
   type AgentChannelsConfig,
+  type AgentChannelActionsConfig,
+  type AgentAttachmentActionsConfig,
+  type AgentReactionActionsConfig,
   type AgentDiscordChannelConfig,
   type AgentGitHubChannelConfig,
   type AgentHooksConfig,
@@ -164,3 +167,18 @@ export {
   type PublicAccountToolRecord,
   type UpdateAccountToolInput,
 } from "./account-tools.ts";
+export {
+  ARTIFACT_KINDS,
+  ARTIFACT_STATES,
+  MANAGED_ARTIFACT_REF_PREFIX,
+  artifactStagingAccountPrefix,
+  createArtifactId,
+  normalizeArtifactExternalRef,
+  normalizeCreateArtifactInput,
+  normalizeUpdateArtifactInput,
+  type ArtifactKind,
+  type ArtifactRecord,
+  type ArtifactState,
+  type CreateArtifactInput,
+  type UpdateArtifactInput,
+} from "./artifacts.ts";

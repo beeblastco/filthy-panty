@@ -49,9 +49,13 @@ import {
   isRuntimeVariable,
   type RuntimeVariable,
 } from "@/app/lib/runtimeVariables";
+import {
+  getRememberedDeploymentApiKey,
+  rememberDeploymentCredential,
+} from "@/app/lib/deploymentCredentials";
 import { includesSkillRef } from "@/app/lib/skillRefs";
-import { api } from "@broods/convex/_generated/api";
-import type { Id } from "@broods/convex/_generated/dataModel";
+import { api } from "@filthy-panty/convex/_generated/api";
+import type { Id } from "@filthy-panty/convex/_generated/dataModel";
 import { useStore, type Node } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
 import { X } from "lucide-react";
@@ -272,7 +276,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
 
   // The environment's runtime API key (shared by every agent in it). The agent
   // itself is selected per request by its Agent ID. Created on demand here or on
-  // the first `broods deploy`.
+  // the first `filthy-panty deploy`.
   const activeDeployment =
     useQuery(
       api.agentDeployments.getForEnvironment,
@@ -280,12 +284,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         ? { projectId: projectId, environmentId: environmentId }
         : "skip",
     ) ?? undefined;
-  const revealedDeploymentApiKey = useQuery(
-    api.agentDeployments.revealKeyForEnvironment,
-    isAgent && projectId && environmentId
-      ? { projectId: projectId, environmentId: environmentId }
-      : "skip",
-  );
 
   const toolService = useQuery(
     api.toolService.getByNode,
@@ -333,17 +331,16 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     setActiveTab("details");
   }
 
-  // Clear a freshly generated key when the active deployment changes. The
-  // authoritative stored key is recovered reactively from Convex below.
+  // Restore the remembered deployment key when the active deployment changes.
   const deploymentKeySync = activeDeployment?.endpointId ?? "";
   const [syncedDeploymentKey, setSyncedDeploymentKey] =
     useState(deploymentKeySync);
   if (deploymentKeySync !== syncedDeploymentKey) {
     setSyncedDeploymentKey(deploymentKeySync);
-    setDeploymentApiKey(undefined);
+    setDeploymentApiKey(
+      getRememberedDeploymentApiKey(activeDeployment?.endpointId),
+    );
   }
-  const resolvedDeploymentApiKey =
-    deploymentApiKey ?? revealedDeploymentApiKey ?? undefined;
 
   // Jump to the settings tab when the parent bumps the delete-request token.
   const [prevDeleteToken, setPrevDeleteToken] = useState(deleteRequestToken);
@@ -547,7 +544,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     });
   }
 
-  // Resource owned by a broods/ project. Agents read the authoritative
+  // Resource owned by a filthypanty/ project. Agents read the authoritative
   // `managedBy` from their config row; workspaces/sandboxes read it from the live
   // `resourceOwnership` query keyed by the row `_id` (the node's `resourceId`),
   // not the cached `managedBy` on canvas node data which can be stale or missing.
@@ -572,7 +569,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       resourceOwnership === undefined);
 
   // Warn when a dashboard-owned node is named the same as a code-managed resource
-  // of the same kind: the next `broods deploy` resolves by (environment,
+  // of the same kind: the next `filthy-panty deploy` resolves by (environment,
   // name) and would adopt + overwrite this resource with the code definition.
   const cliManagedNames = useQuery(
     api.canvas.cliManagedResourceNames,
@@ -625,6 +622,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
           ? await rotateDeployment({ projectId: projectId, environmentId: environmentId })
           : await ensureDeployment({ projectId: projectId, environmentId: environmentId });
         if (result?.rawApiKey) {
+          rememberDeploymentCredential({
+            endpointId: result.endpointId,
+            apiKey: result.rawApiKey,
+            projectSlug: result.projectSlug,
+            environmentSlug: result.environmentSlug,
+          });
           setDeploymentApiKey(result.rawApiKey);
         }
       } finally {
@@ -656,22 +659,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
           ...currentExtra,
           tools: Object.keys(nextTools).length > 0 ? nextTools : undefined,
         },
-      });
-    },
-    [agentConfigId, agentConfig, updateConfig],
-  );
-
-  // Public-endpoint opt-in (issue #65). Stored as a top-level scalar in
-  // extraConfig so it rides through the codec to the harness; off by default.
-  const handleUpdatePublicAccess = useCallback(
-    async (enabled: boolean) => {
-      if (!agentConfigId || !agentConfig) return;
-
-      const currentExtra =
-        (agentConfig.extraConfig as Record<string, unknown>) ?? {};
-      await updateConfig({
-        configId: agentConfigId,
-        extraConfig: { ...currentExtra, publicAccess: enabled },
       });
     },
     [agentConfigId, agentConfig, updateConfig],
@@ -784,7 +771,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       {isCliManaged && (
         <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
           <p className="text-sm text-amber-600 dark:text-amber-400">
-            Managed by broods packages, edits sync on deploy, delete is locked.
+            Managed by filthypanty packages, edits sync on deploy, delete is locked.
           </p>
         </div>
       )}
@@ -837,7 +824,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 key={`${agentConfigId ?? "agent-details"}-${selectedProvider}-${agentConfig?.modelId ?? ""}`}
                 agentConfig={agentConfig}
                 activeDeployment={activeDeployment}
-                deploymentApiKey={resolvedDeploymentApiKey}
+                deploymentApiKey={deploymentApiKey}
                 editName={editName}
                 setEditName={setEditName}
                 onSaveName={handleSaveName}
@@ -851,7 +838,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 onUpdateToolConfig={handleUpdateToolConfig}
                 onUpdateChannelConfig={handleUpdateChannelConfig}
                 onUpdateModelReasoning={handleUpdateModelReasoning}
-                onUpdatePublicAccess={handleUpdatePublicAccess}
               />
             ) : isTool && node ? (
               <ToolDetailsTab
@@ -924,11 +910,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               value="files"
               className="flex flex-col overflow-hidden"
             >
-              <WorkspaceFilesTab
-                projectId={projectId}
-                nodeId={node.id}
-                workspaceId={resourceId}
-              />
+              <WorkspaceFilesTab projectId={projectId} nodeId={node.id} />
             </TabsContent>
           )}
 
@@ -999,7 +981,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               {isAgent ? (
                 <TestTab
                   activeDeployment={activeDeployment}
-                  deploymentApiKey={resolvedDeploymentApiKey}
+                  deploymentApiKey={deploymentApiKey}
                   agentId={agentConfigId ?? ""}
                   nodeColor={nodeData?.properties?.color}
                 />

@@ -23,20 +23,28 @@ flowchart LR
 
 | Tool | File | External dependency | Config key |
 | --- | --- | --- | --- |
-| `tavilySearch` | [`functions/harness-processing/tools/tavily.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK search | `config.tools.tavilySearch` |
-| `tavilyExtract` | [`functions/harness-processing/tools/tavily.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK extract | `config.tools.tavilyExtract` |
-| `googleSearch` | [`functions/harness-processing/tools/google-search.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/google-search.tool.ts) | Google provider-defined tool | `config.tools.googleSearch` |
-| `handoffs` | [`functions/harness-processing/tools/handoffs.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/handoffs.tool.ts) | Pancake tags + Zalo staff ping | `config.tools.handoffs` (`pancake.scenarioTagIds.{order,pending}`, `zalo.{botToken,notifyUserIds}`) |
-| `async_status` | [`functions/harness-processing/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/async-status.tool.ts) | — (auto-registered, see below) | — |
+| `tavilySearch` | [`functions/harness-processing/tools/tavily.tool.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK search | `config.tools.tavilySearch` |
+| `tavilyExtract` | [`functions/harness-processing/tools/tavily.tool.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/tavily.tool.ts) | Tavily AI SDK extract | `config.tools.tavilyExtract` |
+| `googleSearch` | [`functions/harness-processing/tools/google-search.tool.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/google-search.tool.ts) | Google provider-defined tool | `config.tools.googleSearch` |
+| `handoffs` | [`functions/harness-processing/tools/handoffs.tool.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/handoffs.tool.ts) | Pancake tags + Zalo staff ping | `config.tools.handoffs` (`pancake.scenarioTagIds.{order,pending}`, `zalo.{botToken,notifyUserIds}`) |
+| `async_status` | [`functions/harness-processing/tools/async-status.tool.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/async-status.tool.ts) | — (auto-registered, see below) | — |
+| `channel_message` | [`functions/harness-processing/tools/channel-message.tool.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/channel-message.tool.ts) | Active channel adapter (auto-registered) | Adapter support intersected with `config.channels.<channel>.actions` |
+| `artifact` | [`functions/harness-processing/tools/artifact.tool.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/artifact.tool.ts) | Scoped artifact service (auto-registered) | Active account conversation |
 | Uploaded custom tool | S3 bundle + account tool metadata | Kubernetes tool runner | `config.tools.<toolId>` |
 
 `async_status` is not configured directly: it is registered automatically whenever any `config.tools` entry has `async: true` or a workspace has a persistent sandbox. It is the model-facing polling surface for the async lifecycle described below (`statusId` + actions `status`/`logs`/`stop`).
+
+`channel_message` is also outside `config.tools`: it exists only during a channel turn when per-agent `config.channels.<channel>.actions` policy intersects with actions implemented by the active adapter API. Policy booleans do not advertise generic channel capabilities. Attachment sends require an attached workspace and read a workspace-relative file. Uploaded custom tools remain isolated and never receive channel credentials or filesystem-bucket access.
+
+`artifact` is a read-only, conversation-scoped model tool, not an attachment command or storage driver. It returns metadata or bounded text/JSON, and `rehydrate` can provide an explicitly model-supported image/file to the next model step. Raw execution results and persisted history contain metadata only; binary tool content, signed URLs, provider URLs, and opaque driver references are never persisted or exposed. A materialized descriptor may include a workspace working-copy path.
+
+AI SDK multimodal tool results remain marked experimental. The generic guide still names OpenAI and Anthropic, while the installed Google and Bedrock adapters also serialize supported image/file tool-result content and MiniMax uses the Anthropic-compatible adapter. Core therefore does not hard-code a provider allowlist: rehydration requires an exact `model.inputCapabilities` MIME declaration, and the selected provider/model remains responsible for accepting that MIME. See [AI SDK tool calling](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#multi-modal-tool-results).
 
 Sandbox tools come from a referenced `sandbox` (+ `workspaces`) — see [Workspace & Sandbox](workspace/index.md). Skills use `config.skills`; see [Skills](skills.md). Subagents use `config.subagent`.
 
 ## Runtime Behavior
 
-`functions/harness-processing/harness.ts` resolves the configured model and calls `createTools()` from [`functions/harness-processing/tools/index.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/index.ts).
+`functions/harness-processing/harness.ts` resolves the configured model and calls `createTools()` from [`functions/harness-processing/tools/index.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/index.ts).
 
 Tool registry path:
 
@@ -75,7 +83,7 @@ sequenceDiagram
 
 ### Resident Worker
 
-The long-lived Node worker ([`custom-tool-worker.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/custom-tool-worker.ts)) is started inside the persistent pod on first use:
+The long-lived Node worker ([`custom-tool-worker.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/custom-tool-worker.ts)) is started inside the persistent pod on first use:
 
 ```text
 harness-processing -> exec into pod -> warm worker (unix-socket HTTP) -> cached module -> execute(ctx,input)
@@ -188,128 +196,118 @@ For sync direct API callers, approval requests are streamed as SSE and persisted
 
 > TODO: Add channel webhook support for completing tool approval requests when channel-safe approval UX is available.
 
-## Code-First Configuration
+## Agent Config
 
-Use `config.tools` inside `defineAgent` for built-in tools:
+Use `config.tools` for built-in and uploaded tools:
 
-```ts title="broods/index.ts"
-import { defineAgent, env } from "broods";
-
-export const myAgent = defineAgent({
-  name: "my-agent",
-  config: {
-    provider: { openai: { apiKey: env.OPENAI_API_KEY } },
-    model: { provider: "openai", modelId: "gpt-5.5" },
-    tools: {
-      tavilySearch: {
-        enabled: true,
-        apiKey: env.TAVILY_API_KEY,
-        searchDepth: "advanced",
-        maxResults: 5,
-      },
-      tavilyExtract: { enabled: true, apiKey: env.TAVILY_API_KEY },
-      googleSearch: { enabled: true },
+```json
+{
+  "tools": {
+    "tavilySearch": {
+      "enabled": true,
+      "async": true,
+      "needsApproval": true,
+      "apiKey": "...",
+      "maxResults": 5
     },
-  },
-});
+    "tavilyExtract": {
+      "enabled": true,
+      "apiKey": "..."
+    },
+    "googleSearch": {
+      "enabled": true
+    },
+    "tool_abc123": {
+      "enabled": true,
+      "async": true,
+      "needsApproval": false,
+      "config": {}
+    }
+  }
+}
 ```
-
-For uploaded custom tools, use `defineTool` and reference it by name in the agent config:
-
-```ts title="broods/index.ts"
-import { defineAgent, defineTool, env } from "broods";
-
-export const analyze = defineTool({
-  name: "analyze",
-  config: {
-    path: "tools/analyze.ts",
-    description: "Analyze structured data.",
-    inputSchema: {
-      type: "object",
-      properties: { data: { type: "array" } },
-      required: ["data"],
-    },
-  },
-});
-
-export const myAgent = defineAgent({
-  name: "my-agent",
-  config: {
-    tools: {
-      [analyze.name]: {
-        enabled: true,
-        async: true,
-        needsApproval: false,
-      },
-    },
-  },
-});
-```
-
-The CLI bundles the tool source into ESM, hashes it, and uploads it on sync. Agent references are rewritten to the deployed tool ID automatically.
 
 Omitting a tool disables it. Setting `enabled: false` also disables it. Set `needsApproval: true` when the tool should require the AI SDK approval flow before execution.
 Set `async: true` when a local `execute` tool may take long enough that the parent agent should keep working while the result is produced.
 For uploaded tools, `config` is merged over the upload-time `defaultConfig` and passed to `ctx.config`. Uploaded tool code always runs in Kubernetes; the platform decides whether to wait or detach from the request path.
 
-See [`packages/demos/tool-custom-async-sse`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-async-sse) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`packages/demos/tool-custom-stream`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-stream) covers the streaming variant. Uploaded tools continue to execute in the isolated Kubernetes worker, including when their agent is reached through a channel.
+See [`packages/demos/tool-custom-async-sse`](https://github.com/beeblastco/filthy-panty/tree/dev/packages/demos/tool-custom-async-sse) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`packages/demos/tool-custom-stream`](https://github.com/beeblastco/filthy-panty/tree/dev/packages/demos/tool-custom-stream) covers the streaming variant. Uploaded tools continue to execute in the isolated Kubernetes worker, including when their agent is reached through a channel.
 
 The full config field reference lives in the [API Reference](/api-reference) under `AgentConfig.tools`.
 
 ## Upload a Custom Tool
 
-With the CLI, point `defineTool()` at a TypeScript or JavaScript entrypoint under `broods/`. The CLI bundles it as self-contained Node ESM, rejects source or output over 1 MB, hashes the compiled bundle, and uploads it through manifest sync. Agent references are rewritten to the deployed tool ID.
+With the CLI, point `defineTool()` at a TypeScript or JavaScript entrypoint under `filthypanty/`. The CLI bundles it as self-contained Node ESM, rejects source or output over 1 MB, hashes the compiled bundle, and uploads it through manifest sync. Agent references are rewritten to the deployed tool ID.
 
-```ts title="broods/tools/my-tool.ts"
+The raw account-management API does not run a build step. When calling it directly, provide an already-bundled JavaScript module whose default export is a tool definition object or factory:
+
+```ts
 export default {
-  name: "my_tool",
-  description: "A custom tool that does something useful.",
-  inputSchema: {
-    type: "object",
-    properties: { query: { type: "string" } },
-    required: ["query"],
-  },
+  name: "test_async",
+  description: "Test async tool.",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
   async execute(ctx, input) {
-    return { type: "text", value: `Result for ${input.query}` };
+    return { type: "text", value: "done" };
   },
 };
 ```
 
-```ts title="broods/index.ts"
-import { defineAgent, defineTool } from "broods";
-import { api } from "./_generated/api";
+Upload it through account-manage:
 
-export const myTool = defineTool({
-  name: "my_tool",
-  config: {
-    path: "tools/my-tool.ts",
-    description: "A custom tool.",
-    inputSchema: {
-      type: "object",
-      properties: { query: { type: "string" } },
-      required: ["query"],
-    },
-  },
-});
-
-export const myAgent = defineAgent({
-  name: "my-agent",
-  config: {
-    tools: {
-      [myTool.name]: { enabled: true, async: true },
-    },
-  },
-});
+```http
+POST /accounts/me/tools
+Authorization: Bearer <account-secret>
+Content-Type: application/json
 ```
 
-The raw account-management API does not run a build step. When calling it directly, provide an already-bundled JavaScript module. See the [API Reference](/api-reference) `POST /accounts/me/tools` for the raw shape.
+```json
+{
+  "name": "test_async",
+  "description": "Test async tool.",
+  "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+  "bundle": "export default { name: \"test_async\", async execute() { return { type: \"text\", value: \"done\" }; } };",
+  "defaultConfig": {}
+}
+```
 
-Tool management endpoints (raw API):
+Use the returned `toolId` as the `config.tools` key. The model still sees the uploaded `name`.
+
+Tool management endpoints:
 
 - `GET /accounts/me/tools`
 - `GET /accounts/me/tools/{toolId}`
 - `PATCH /accounts/me/tools/{toolId}`
 - `DELETE /accounts/me/tools/{toolId}`
+
+MVP limits: raw API uploads must already be bundled JavaScript, server-side `npm install` is not supported, and shared multi-pod dependency caches are future work. The CLI performs local dependency bundling instead. The platform runs the resulting bundle in a warm sandbox and reuses the bundle cache between calls for the same account/tool.
+
+## Artifact Drivers Are Not Tools
+
+Artifact drivers are deterministic storage lifecycle handlers, not model-callable tools. Configure one under `config.artifacts.driver`; do not register it under `config.tools` or give it channel credentials.
+
+The code-first SDK exposes one deployable mode:
+
+- `defineRemoteArtifactDriver()` points to developer-hosted HTTPS. Core signs the driver protocol, restricts endpoint/resolve hosts, and currently invokes `store`, read-time `resolve`, and compensating `delete` when a post-store control-record commit fails. The developer owns the runtime, durable bytes, retention, and storage credentials.
+- Uploaded artifact-driver code is not part of the deployable SDK/config surface. A future uploaded mode requires a dedicated hardened runner and must not reuse the model-invoked custom-tool runner unchanged.
+
+Implement the remote endpoint with `createArtifactDriverHandler()` from `filthy-panty/artifacts`. It exposes exact `POST <basePath>/{store,resolve,delete}` routes, validates the bounded raw body, timestamp window, body digest, HMAC signature, and idempotency key, then calls typed lifecycle handlers. `delete` is required because core uses it to compensate when remote storage succeeds but the control-record commit loses a race. `claimNonce` must atomically persist each nonce until the supplied expiry; use a shared database or cache in multi-instance production deployments.
+
+The signature is lowercase hex HMAC-SHA256 over this newline-delimited canonical value:
+
+```text
+v1
+<unix-seconds>
+<nonce>
+POST
+<pathname-and-query>
+<lowercase-sha256-of-raw-body>
+```
+
+Core sends `Idempotency-Key`, `X-Filthy-Panty-Timestamp`, `X-Filthy-Panty-Nonce`, `X-Filthy-Panty-Content-Sha256`, and `X-Filthy-Panty-Signature: v1=<hex>`. The SDK helper performs timing-safe signature comparison and requires the idempotency key to equal the JSON `invocationId`. See the [Telegram channel demo](https://github.com/beeblastco/filthy-panty/tree/dev/packages/demos/channel-telegram) for a complete driver wired to channel ingestion.
+
+Every inbound file first passes the shared bounded downloader and MIME validation, then enters a dedicated non-versioned staging bucket. Remote `store` receives a short-lived transfer URL and returns an opaque `externalRef`; the transfer object is deleted immediately on success. The one-day lifecycle is a cleanup fallback and means eligible for asynchronous deletion, not guaranteed deletion at exactly 24 hours.
+
+Conversation history keeps only `artifactId` plus normalized metadata and an optional verified workspace working-copy path. It does not contain bytes, provider URLs, signed URLs, staging keys, or `externalRef`. The conversation-scoped `artifact` tool can rehydrate supported binary content from artifact storage for one model step; its converted media output and raw result are removed before history persistence. No public artifact lifecycle endpoints exist. Account deletion removes core metadata and managed staging objects, but it never deletes remote bytes; the customer-owned driver remains responsible for remote retention and deletion.
 
 ## Add a Built-In Tool
 
@@ -317,9 +315,9 @@ Tool management endpoints (raw API):
 2. Add the standard file header docstring.
 3. Export a default tool factory, or named factories when one provider module exposes several tools.
 4. Keep the model-facing schema and external service call in that tool file.
-5. Import the factory in [`functions/harness-processing/tools/index.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/harness-processing/tools/index.ts).
+5. Import the factory in [`functions/harness-processing/tools/index.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/harness-processing/tools/index.ts).
 6. Add the factory to the static `toolFactories` map with the exact model-facing tool name.
-7. Add config validation in [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/functions/_shared/storage/agent-config.ts) only for options the account can set.
+7. Add config validation in [`functions/_shared/storage/agent-config.ts`](https://github.com/beeblastco/filthy-panty/blob/dev/apps/core/functions/_shared/storage/agent-config.ts) only for options the account can set.
 8. Optionally set `config.tools.<name>.async: true` for slow local `execute` tools. Built-in async tools always run in the current Lambda; uploaded async tools are waited on for SSE and detached automatically for `/async`, channels, and NATS.
 9. Update the [API Reference](/api-reference) `AgentConfig.tools` schema, and focused tests/examples when the public config shape changes.
 

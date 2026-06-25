@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createDiscordChannel } from "../functions/_shared/discord-channel.ts";
 import { createPancakeChannel } from "../functions/_shared/pancake-channel.ts";
 import { createSlackChannel } from "../functions/_shared/slack-channel.ts";
+import { createTelegramChannel } from "../functions/_shared/telegram-channel.ts";
 import { createZaloChannel } from "../functions/_shared/zalo-channel.ts";
 
 type FetchInput = string | URL | Request;
@@ -173,6 +174,22 @@ describe("discord channel actions", () => {
       })),
     ).toThrow("Invalid Discord source payload");
   });
+
+  it("rejects more than Discord's documented ten attachments before building a request", async () => {
+    const fetchMock = installFetchMock();
+    const actions = createDiscordChannel("bot-token", "public-key", null).actions(
+      createMessage({ applicationId: "app-1", interactionToken: "interaction-token", interactionId: "interaction-1" }),
+    );
+    const artifacts = Array.from({ length: 11 }, (_, index) => ({
+      bytes: new Uint8Array([index]),
+      filename: `${index}.txt`,
+      mediaType: "text/plain",
+      kind: "file" as const,
+    }));
+
+    await expect(actions.sendArtifacts!(artifacts)).rejects.toThrow("at most 10 attachments");
+    expect(fetchMock.calls).toHaveLength(0);
+  });
 });
 
 describe("slack channel actions", () => {
@@ -309,6 +326,55 @@ describe("slack channel actions", () => {
       "Slack reactions.add failed (403): missing_scope",
     );
   });
+
+  it("checks every stage of Slack's external upload flow", async () => {
+    const fetchMock = installFetchMock();
+    const actions = createSlackChannel("bot-token", "signing-secret", null).actions(
+      createMessage({ teamId: "T1", channelId: "C1" }),
+    );
+    const artifact = { bytes: new Uint8Array([1, 2, 3]), filename: "file.bin", mediaType: "application/octet-stream", kind: "file" as const };
+
+    fetchMock.responses.push(jsonResponse({ ok: true, upload_url: "https://upload.slack.test/file", file_id: "F1" }));
+    fetchMock.responses.push(new Response("upload failed", { status: 500 }));
+    await expect(actions.sendArtifacts!([artifact])).rejects.toThrow("Slack file upload failed (500)");
+
+    fetchMock.responses.push(jsonResponse({ ok: true, upload_url: "https://upload.slack.test/file", file_id: "F1" }));
+    fetchMock.responses.push(new Response("OK", { status: 200 }));
+    fetchMock.responses.push(jsonResponse({ ok: true, files: [] }));
+    await expect(actions.sendArtifacts!([artifact])).rejects.toThrow("incomplete file list");
+  });
+
+  it("rejects oversized Slack artifacts before requesting an upload URL", async () => {
+    const fetchMock = installFetchMock();
+    const actions = createSlackChannel("bot-token", "signing-secret", null).actions(
+      createMessage({ teamId: "T1", channelId: "C1" }),
+    );
+    const artifact = {
+      bytes: new Uint8Array(20 * 1024 * 1024 + 1),
+      filename: "large.bin",
+      mediaType: "application/octet-stream",
+      kind: "file" as const,
+    };
+
+    await expect(actions.sendArtifacts!([artifact])).rejects.toThrow("20971520 byte limit");
+    expect(fetchMock.calls).toHaveLength(0);
+  });
+});
+
+describe("telegram channel actions", () => {
+  it("requires a successful Telegram API response body for attachment sends", async () => {
+    const fetchMock = installFetchMock();
+    const actions = createTelegramChannel("bot-token", "secret", new Set([123]), "eyes").actions(
+      createMessage({ chatId: 123, messageId: "123:1", threadId: "telegram:123" }),
+    );
+    const artifact = { bytes: new Uint8Array([1]), filename: "file.bin", mediaType: "application/octet-stream", kind: "file" as const };
+
+    fetchMock.responses.push(jsonResponse({ ok: false, description: "file rejected" }));
+    await expect(actions.sendArtifacts!([artifact])).rejects.toThrow("Telegram sendDocument failed (200): file rejected");
+
+    fetchMock.responses.push(new Response("not json", { status: 200 }));
+    await expect(actions.sendArtifacts!([artifact])).rejects.toThrow("returned an invalid response");
+  });
 });
 
 describe("pancake channel actions", () => {
@@ -363,6 +429,78 @@ describe("pancake channel actions", () => {
       message_id: "comment-1",
       message: "hello comment",
     });
+  });
+
+  it("uploads inbox photos and sends the returned content id before a separate caption", async () => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      jsonResponse({ success: true, id: "content-1", attachment_type: "PHOTO" }),
+      jsonResponse({ success: true, id: "media-message" }),
+      jsonResponse({ success: true, id: "caption-message" }),
+    );
+    const actions = createPancakeChannel("page-1", "page-token", "hook-secret", "sender-1").actions(
+      createMessage({ pageId: "page-1", conversationId: "conversation-1", messageId: "message-1", messageType: "INBOX" }),
+    );
+
+    await actions.sendArtifacts!([{
+      bytes: new Uint8Array([0xff, 0xd8, 0xff]),
+      filename: "photo.jpg",
+      mediaType: "image/jpeg",
+      kind: "image",
+    }], "A caption");
+
+    expect(fetchMock.calls).toHaveLength(3);
+    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+      "https://pages.fm/api/public_api/v1/pages/page-1/upload_contents?page_access_token=page-token",
+    );
+    const form = fetchMock.calls[0]!.init?.body as FormData;
+    expect(form).toBeInstanceOf(FormData);
+    expect((form.get("file") as File).name).toBe("photo.jpg");
+    expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toEqual({
+      action: "reply_inbox",
+      content_ids: ["content-1"],
+      sender_id: "sender-1",
+    });
+    expect(JSON.parse(String(fetchMock.calls[2]!.init?.body))).toEqual({
+      action: "reply_inbox",
+      message: "A caption",
+      sender_id: "sender-1",
+    });
+  });
+
+  it("limits Pancake media safely and does not expose ambiguous comment uploads", async () => {
+    const fetchMock = installFetchMock();
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
+    const inbox = adapter.actions(createMessage({
+      pageId: "page-1", conversationId: "conversation-1", messageId: "message-1", messageType: "INBOX",
+    }));
+    await expect(inbox.sendArtifacts!([{
+      bytes: new Uint8Array(15 * 1024 * 1024 + 1),
+      filename: "video.mp4",
+      mediaType: "video/mp4",
+      kind: "video",
+    }])).rejects.toThrow("15 MiB");
+    await expect(inbox.sendArtifacts!([{
+      bytes: new Uint8Array([1]), filename: "file.pdf", mediaType: "application/pdf", kind: "file",
+    }])).rejects.toThrow("photo and video only");
+    expect(fetchMock.calls).toHaveLength(0);
+
+    const comment = adapter.actions(createMessage({
+      pageId: "page-1", conversationId: "conversation-1", messageId: "comment-1", messageType: "COMMENT",
+    }));
+    expect(comment.sendArtifacts).toBeUndefined();
+  });
+
+  it("requires a successful Pancake upload response with a content id", async () => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(jsonResponse({ success: true }));
+    const actions = createPancakeChannel("page-1", "page-token", "hook-secret").actions(createMessage({
+      pageId: "page-1", conversationId: "conversation-1", messageId: "message-1", messageType: "INBOX",
+    }));
+    await expect(actions.sendArtifacts!([{
+      bytes: new Uint8Array([0xff, 0xd8, 0xff]), filename: "photo.jpg", mediaType: "image/jpeg", kind: "image",
+    }])).rejects.toThrow("Pancake upload content failed");
+    expect(fetchMock.calls).toHaveLength(1);
   });
 
   it("throws on Pancake API failures and rejects invalid source payloads", async () => {

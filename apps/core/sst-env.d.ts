@@ -6,83 +6,20 @@
 
 declare module "sst" {
   export interface Resource {
-    "AccountConfig": {
-      "name": string
-      "type": "sst.aws.Dynamo"
+    "AccountConfigEncryptionSecret": {
+      "type": "sst.sst.Secret"
+      "value": string
     }
-    "AccountManage": {
-      "name": string
-      "type": "sst.aws.Function"
-      "url": string
+    "AdminAccountSecret": {
+      "type": "sst.sst.Secret"
+      "value": string
     }
-    "AccountSignupRateLimit": {
-      "name": string
-      "type": "sst.aws.Dynamo"
+    "KubernetesSandboxKubeconfig": {
+      "type": "sst.sst.Secret"
+      "value": string
     }
-    "AccountTool": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "AgentConfig": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "AsyncAgentResult": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "AsyncToolResult": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "Conversations": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "Cron": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "Filesystem": {
-      "name": string
-      "type": "sst.aws.Bucket"
-    }
-    "HarnessProcessing": {
-      "name": string
-      "type": "sst.aws.Function"
-      "url": string
-    }
-    "MicrovmArtifacts": {
-      "name": string
-      "type": "sst.aws.Bucket"
-    }
-    "PersistentSandboxInstance": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "ProcessedEvents": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "SandboxConfig": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "Skills": {
-      "name": string
-      "type": "sst.aws.Bucket"
-    }
-    "ToolBundles": {
-      "name": string
-      "type": "sst.aws.Bucket"
-    }
-    "Usage": {
-      "name": string
-      "type": "sst.aws.Dynamo"
-    }
-    "WorkspaceConfig": {
-      "name": string
-      "type": "sst.aws.Dynamo"
+    "SandboxNetwork": {
+      "type": "sst.aws.Vpc"
     }
   }
 }

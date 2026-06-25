@@ -1,14 +1,14 @@
 /**
- * Example: async local tool flow via declarative broods resources.
+ * Example: async local tool flow via declarative filthy-panty resources.
  *
  * The test_async tool simulates a long-running operation (5s delay).
  * The agent is configured to call it when asked.
  */
 
-import { BroodsClient } from "broods";
-import { api } from "./broods/_generated/api";
+import { FilthyPantyClient } from "filthy-panty";
+import { api } from "./filthypanty/_generated/api";
 
-const client = new BroodsClient();
+const client = new FilthyPantyClient();
 
 console.log("--- SSE stream (async tool will take ~5s) ---\n");
 

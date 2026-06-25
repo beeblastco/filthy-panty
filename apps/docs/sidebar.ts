@@ -24,23 +24,6 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Reference',
-      collapsed: false,
-      items: [
-        {
-          type: 'doc',
-          id: 'resources',
-          label: 'Resources & Config',
-        },
-        {
-          type: 'doc',
-          id: 'sdk',
-          label: 'SDK & API',
-        },
-      ],
-    },
-    {
-      type: 'category',
       label: 'Features',
       collapsed: false,
       items: [
@@ -91,11 +74,6 @@ const sidebars: SidebarsConfig = {
                   type: 'doc',
                   id: 'workspace/sandbox/kubernetes',
                   label: 'Kubernetes',
-                },
-                {
-                  type: 'doc',
-                  id: 'workspace/sandbox/vercel',
-                  label: 'Vercel',
                 },
               ],
             },
@@ -184,11 +162,6 @@ const sidebars: SidebarsConfig = {
           type: 'doc',
           id: 'ci-cd',
           label: 'CI/CD',
-        },
-        {
-          type: 'doc',
-          id: 'operations',
-          label: 'Operations',
         },
       ],
     },

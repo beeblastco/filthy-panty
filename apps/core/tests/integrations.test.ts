@@ -45,19 +45,9 @@ const TEST_AGENT = {
   agentId: "agent_test",
   name: "Test agent",
   status: "active" as const,
-  // Opted into the public endpoint so the deployment (runtime-key) path is allowed.
-  config: { ...TEST_ACCOUNT.config, publicAccess: true },
+  config: TEST_ACCOUNT.config,
   createdAt: "2026-04-24T00:00:00.000Z",
   updatedAt: "2026-04-24T00:00:00.000Z",
-};
-
-// A second agent that has NOT opted into the public endpoint, used to assert the
-// secure-by-default gate on the deployment (runtime-key) path.
-const TEST_AGENT_PRIVATE = {
-  ...TEST_AGENT,
-  agentId: "agent_private",
-  name: "Private agent",
-  config: TEST_ACCOUNT.config,
 };
 
 describe("direct API ingress", () => {
@@ -217,37 +207,6 @@ describe("direct API ingress", () => {
     });
 
     expect(response.statusCode).toBe(401);
-  });
-
-  it("refuses the public runtime key for an agent that has not opted into public access", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      agentId: "agent_private",
-      eventId: "one",
-      conversationKey: "chat_1",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer fp_agent_test",
-    }, {
-      rawPath: "/v1/demo/agents/development/env-endpoint",
-      addDefaultAgentId: false,
-    }), createHandlers(), {
-      authResolver: async (headers) =>
-        headers.authorization === "Bearer fp_agent_test"
-          ? {
-            kind: "deployment",
-            account: TEST_ACCOUNT,
-            endpointId: "env-endpoint",
-            projectSlug: "demo",
-            environmentSlug: "development",
-          }
-          : null,
-    });
-
-    expect(response.statusCode).toBe(403);
-    expect(responseJson(response).code).toBe("public_access_disabled");
   });
 
   it("returns 404 for direct sync and async POST when direct API is disabled", async () => {
@@ -455,6 +414,53 @@ describe("direct API ingress", () => {
     expect(responseJson(response)).toEqual({ error: "Only system-role events may set persist" });
   });
 
+  it("rejects remote media URLs at the direct API boundary", async () => {
+    const response = await routeIncomingEvent(createEvent({
+      eventId: "remote-media",
+      conversationKey: "alpha",
+      events: [{
+        role: "user",
+        content: [{ type: "image", image: "https://127.0.0.1/latest/meta-data" }],
+      }],
+    }, { authorization: "Bearer secret" }), createHandlers());
+
+    expect(response.statusCode).toBe(400);
+    expect(responseJson(response)).toEqual({
+      error: "Direct API remote media URLs are not supported; send inline data or use an authenticated channel attachment",
+    });
+  });
+
+  it("accepts inline image and file data for direct SSE and WebSocket turns", async () => {
+    const handledEvents: DirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(createEvent({
+      agentId: "agent_test",
+      eventId: "inline-media",
+      conversationKey: "alpha",
+      connectionId: "connection-1",
+      events: [{
+        role: "user",
+        content: [
+          { type: "image", image: "iVBORw0KGgo=", mediaType: "image/png" },
+          { type: "file", data: "JVBERi0xLjcK", mediaType: "application/pdf", filename: "report.pdf" },
+        ],
+      }],
+    }, { authorization: "Bearer secret" }), createHandlers({
+      handleDirectRequest: async (event) => {
+        handledEvents.push(event);
+        return { statusCode: 200, body: "ok" };
+      },
+    }));
+
+    expect(response.statusCode).toBe(200);
+    expect(handledEvents[0]).toMatchObject({
+      connectionId: "connection-1",
+      events: [{ role: "user", content: [
+        { type: "image", image: "iVBORw0KGgo=", mediaType: "image/png" },
+        { type: "file", data: "JVBERi0xLjcK", mediaType: "application/pdf", filename: "report.pdf" },
+      ] }],
+    });
+  });
+
   it("rejects persisted system events", async () => {
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
@@ -528,7 +534,6 @@ describe("direct API ingress", () => {
       },
       sandbox: "sb_1",
       workspaces: [{ name: "notes", workspaceId: "ws_a" }],
-      publicAccess: true,
     });
     expect(directEvent.publicEventId).toBe("one");
     expect(directEvent.conversationKey).toBe("acct:acct_test:agent:agent_test:api:alpha");
@@ -752,53 +757,6 @@ describe("direct API ingress", () => {
     expect(handledEvents[0]?.statusUrl).toBe("https://example.lambda-url.aws/status/one?agentId=agent_test");
   });
 
-  it("routes scoped async direct API requests with an env-scoped runtime key", async () => {
-    const handledEvents: AsyncDirectInboundEvent[] = [];
-    const response = await routeIncomingEvent(createEvent({
-      agentId: "agent_test",
-      eventId: "one",
-      conversationKey: "alpha",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer fp_agent_test",
-      host: "gateway.broods.app",
-      "x-forwarded-proto": "https",
-    }, {
-      rawPath: "/v1/demo/agents/development/env-endpoint/async",
-      addDefaultAgentId: false,
-    }), createHandlers({
-      handleAsyncRequest: async (event) => {
-        handledEvents.push(event);
-        return {
-          statusCode: 202,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ statusUrl: event.statusUrl }),
-        };
-      },
-    }), {
-      authResolver: async (headers) =>
-        headers.authorization === "Bearer fp_agent_test"
-          ? {
-            kind: "deployment",
-            account: TEST_ACCOUNT,
-            endpointId: "env-endpoint",
-            projectSlug: "demo",
-            environmentSlug: "development",
-          }
-          : null,
-    });
-
-    expect(response.statusCode).toBe(202);
-    expect(handledEvents).toHaveLength(1);
-    expect(handledEvents[0]?.endpointId).toBe("env-endpoint");
-    expect(handledEvents[0]?.projectSlug).toBe("demo");
-    expect(handledEvents[0]?.environmentSlug).toBe("development");
-    expect(handledEvents[0]?.statusUrl).toBe("https://gateway.broods.app/status/one?agentId=agent_test");
-  });
-
   it("rejects per-request webhook callback config for direct API requests", async () => {
     const response = await routeIncomingEvent(createEvent({
       eventId: "one",
@@ -970,12 +928,7 @@ async function routeIncomingEvent(
       headers.authorization === "Bearer secret"
         ? { kind: "account", account: TEST_ACCOUNT }
         : null),
-    agentLoader: async (_accountId, agentId) =>
-      agentId === TEST_AGENT.agentId
-        ? TEST_AGENT
-        : agentId === TEST_AGENT_PRIVATE.agentId
-          ? TEST_AGENT_PRIVATE
-          : null,
+    agentLoader: async (_accountId, agentId) => agentId === TEST_AGENT.agentId ? TEST_AGENT : null,
     directApiEnabled: options.directApiEnabled,
   });
 

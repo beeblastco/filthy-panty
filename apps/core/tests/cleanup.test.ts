@@ -13,6 +13,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { dynamo, toAttributeValue } from "../functions/_shared/storage/dynamo/client.ts";
 import type { AccountRecord } from "../functions/_shared/storage/index.ts";
+import { artifactStagingAccountPrefix } from "../functions/_shared/storage/index.ts";
 import { normalizeFilesystemNamespace } from "../functions/_shared/runtime-keys.ts";
 
 let mockDeleteS3PrefixResult = 0;
@@ -72,8 +73,41 @@ describe("deleteAccountRuntimeData", () => {
       asyncAgentResultDeleted: 0,
       asyncToolResultDeleted: 0,
       filesystemObjectsDeleted: 0,
+      artifactRecordsDeleted: 0,
+      artifactStagingObjectsDeleted: 0,
       reservedSandboxesReleased: 0,
     });
+  });
+
+  it("deletes account artifact records and the hashed staging prefix", async () => {
+    process.env.ARTIFACTS_TABLE_NAME = "artifacts";
+    process.env.ARTIFACT_STAGING_BUCKET_NAME = "artifact-staging";
+    mockDeleteS3PrefixResult = 2;
+    dynamo.send = sendMock as never;
+    const { deleteAccountRuntimeData } = await import("../functions/account-manage/cleanup.ts");
+
+    sendMock.mockImplementation(async (command: unknown) => {
+      if (command instanceof QueryCommand && command.input.TableName === "artifacts") {
+        return {
+          Items: [
+            { accountId: { S: "acct_test" }, artifactId: { S: "art_1" } },
+            { accountId: { S: "acct_test" }, artifactId: { S: "art_2" } },
+          ],
+        };
+      }
+      if (command instanceof ScanCommand) return { Items: [] };
+      if (command instanceof BatchWriteItemCommand) return {};
+      throw new Error(`unexpected command: ${command}`);
+    });
+
+    const summary = await deleteAccountRuntimeData(testAccount);
+
+    expect(summary.artifactRecordsDeleted).toBe(2);
+    expect(summary.artifactStagingObjectsDeleted).toBe(2);
+    expect(mockDeleteS3PrefixCalls).toContainEqual([
+      "artifact-staging",
+      artifactStagingAccountPrefix("acct_test"),
+    ]);
   });
 
   it("deletes conversations across paginated scan results", async () => {
@@ -486,7 +520,7 @@ describe("deleteAccountRuntimeData", () => {
     const summary = await deleteAccountRuntimeData(testAccount);
 
     expect(summary.filesystemObjectsDeleted).toBe(4);
-    expect(mockDeleteS3PrefixCalls).toEqual([
+    expect(mockDeleteS3PrefixCalls.filter(([bucket]) => bucket === "test-bucket")).toEqual([
       ["test-bucket", `${workspaceNamespacePrefix(workspaceNamespace("acct_test", "ws_personal"))}/`],
       ["test-bucket", `${workspaceNamespacePrefix(workspaceNamespace("acct_test", "ws_team"))}/`],
     ]);
@@ -609,6 +643,8 @@ describe("deleteAccountRuntimeData", () => {
       asyncAgentResultDeleted: 0,
       asyncToolResultDeleted: 0,
       filesystemObjectsDeleted: 0,
+      artifactRecordsDeleted: 0,
+      artifactStagingObjectsDeleted: 0,
       reservedSandboxesReleased: 0,
     });
   });

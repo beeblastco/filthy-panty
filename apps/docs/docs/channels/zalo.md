@@ -4,27 +4,16 @@ Zalo integration allows your agent to answer direct text messages through the of
 
 ## Configuration
 
-Define a Zalo channel with `defineZaloChannel` and attach it to an agent:
-
-```ts title="broods/index.ts"
-import {
-  defineAgent,
-  defineZaloChannel,
-  env,
-} from "broods";
-
-export const zalo = defineZaloChannel({
-  botToken: env.ZALO_BOT_TOKEN,
-  webhookSecret: env.ZALO_WEBHOOK_SECRET,
-  allowedUserIds: ["123456789"],
-});
-
-export const myAgent = defineAgent({
-  name: "my-agent",
-  config: {
-    channels: [zalo],
-  },
-});
+```json
+{
+  "channels": {
+    "zalo": {
+      "botToken": "your-zalo-bot-token",
+      "webhookSecret": "your-webhook-secret",
+      "allowedUserIds": ["123456789"]
+    }
+  }
+}
 ```
 
 - `botToken` (Required): Bot token from Zalo Bot Platform.
@@ -61,3 +50,4 @@ flowchart TD
 - Typing indicators use `sendChatAction`.
 - Group messages, media, stickers, unsupported message types, bot-originated messages, and unknown senders are ignored.
 - Reactions are not supported by the official Zalo Bot API adapter.
+- Model-initiated attachment sends are not supported, so Zalo has no `actions` or `mediaMaxMb` configuration.

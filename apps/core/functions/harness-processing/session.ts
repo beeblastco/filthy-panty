@@ -7,12 +7,13 @@ import {
   DeleteItemCommand,
   PutItemCommand,
   QueryCommand,
-  UpdateItemCommand,
   type AttributeValue,
   type QueryCommandOutput,
 } from "@aws-sdk/client-dynamodb";
 import type {
   AssistantModelMessage,
+  FilePart,
+  ImagePart,
   ModelMessage,
   SystemModelMessage,
   ToolModelMessage,
@@ -75,17 +76,6 @@ export interface TurnContextSnapshot {
   ephemeralSystem: SystemModelMessage[];
   // Cursor-backed system context that prepareStep can refresh incrementally mid-run.
   systemContextSnapshot: SystemContextSnapshot;
-  // Wall-clock windows for the work that precedes the model run, so the harness
-  // can surface them as trace phase spans. Absent for in-memory ephemeral turns.
-  timings?: TurnContextTimings;
-}
-
-export interface TurnContextTimings {
-  // Whole createTurnContext span (load + project + system prompt + prune).
-  prepareStartedMs: number;
-  prepareEndedMs: number;
-  // Present only when compaction actually produced a summary this turn.
-  compaction?: { startedMs: number; endedMs: number };
 }
 
 export interface SystemContextSnapshot {
@@ -146,6 +136,7 @@ export class Session {
   private messageSequence = 0;
   private hasLoggedMissingMemoryFile = false;
   private loadedSkillPrompts: SystemModelMessage[] = [];
+  private pendingIngressMedia = new Map<string, Array<ImagePart | FilePart>>();
   private subagentMetadataPromise: Promise<SubagentMetadata[]> | undefined;
   // Resolved sandbox + workspace records (from the agent's `sandbox`/`workspaces`
   // refs). Resolved once per session at turn-context construction; the sync
@@ -164,15 +155,6 @@ export class Session {
     // originating chat channel or WebSocket connection; absent for plain
     // direct/async API turns, which fall back to status polling.
     public readonly delivery?: AsyncToolDelivery,
-    // Per-deployment id from the runtime key that authorized this turn. Present
-    // for deployment-key traffic and resolved channel integrations.
-    // Used to scope realtime telemetry to the dashboard's deployment view.
-    public readonly endpointId?: string,
-    // Project and environment slugs from the runtime key scope. Present for
-    // deployment-key traffic and resolved channel integrations. Used to build
-    // NATS observability subjects (tracesSubject, logsSubject) for live streaming.
-    public readonly projectSlug?: string,
-    public readonly environmentSlug?: string,
   ) { }
 
   async claim(): Promise<boolean> {
@@ -251,57 +233,6 @@ export class Session {
     }
   }
 
-  /**
-   * Buffer ingress events for a conversation whose turn is already in progress so
-   * the lease holder can answer them after its current reply, instead of dropping
-   * them. Stored as a JSON-encoded list under a per-conversation key; the atomic
-   * `list_append` lets concurrent webhooks queue without clobbering each other.
-   */
-  async enqueuePendingIngress(events: ConversationIngressEvent[]): Promise<void> {
-    if (events.length === 0) {
-      return;
-    }
-    const ttl = Math.floor(Date.now() / 1000) + CONVERSATION_LEASE_TTL_SECONDS;
-    await dynamo.send(new UpdateItemCommand({
-      TableName: PROCESSED_EVENTS_TABLE_NAME,
-      Key: { eventId: { S: this.pendingIngressKey() } },
-      UpdateExpression: "SET queued = list_append(if_not_exists(queued, :empty), :events), expiresAt = :ttl",
-      ExpressionAttributeValues: {
-        ":events": { L: events.map((event) => ({ S: JSON.stringify(event) })) },
-        ":empty": { L: [] },
-        ":ttl": { N: String(ttl) },
-      },
-    }));
-  }
-
-  /**
-   * Atomically remove and return every buffered ingress event for this
-   * conversation. The delete-with-ALL_OLD is a single op, so a webhook enqueuing
-   * concurrently either lands in this batch or in the next item (picked up on the
-   * next drain) — nothing is lost or double-read.
-   */
-  async takePendingIngress(): Promise<ConversationIngressEvent[]> {
-    const result = await dynamo.send(new DeleteItemCommand({
-      TableName: PROCESSED_EVENTS_TABLE_NAME,
-      Key: { eventId: { S: this.pendingIngressKey() } },
-      ReturnValues: "ALL_OLD",
-    }));
-    const queued = result.Attributes?.queued?.L ?? [];
-    const events: ConversationIngressEvent[] = [];
-    for (const item of queued) {
-      if (typeof item.S !== "string") {
-        continue;
-      }
-      try {
-        events.push(JSON.parse(item.S) as ConversationIngressEvent);
-      } catch {
-        // Skip a malformed entry rather than failing the whole drain.
-      }
-    }
-
-    return events;
-  }
-
   async appendIngressEvents(events: ConversationIngressEvent[]): Promise<SystemModelMessage[]> {
     const ephemeralSystem: SystemModelMessage[] = [];
     const persistedMessages: ModelMessage[] = [];
@@ -323,6 +254,17 @@ export class Session {
       }
 
       persistedMessages.push(event);
+      if (event.role === "user" && Array.isArray(event.content)) {
+        const media = event.content.filter(
+          (part): part is ImagePart | FilePart => part.type === "image" || part.type === "file",
+        );
+        if (media.length > 0) {
+          this.pendingIngressMedia.set(this.eventId, [
+            ...(this.pendingIngressMedia.get(this.eventId) ?? []),
+            ...media,
+          ]);
+        }
+      }
     }
 
     await this.persistModelMessages(persistedMessages);
@@ -345,7 +287,6 @@ export class Session {
   }
 
   async createTurnContext(ephemeralSystem: SystemModelMessage[] = []): Promise<TurnContextSnapshot> {
-    const prepareStartedMs = Date.now();
     await this.ensureResolvedRuntime();
     const entries = await this.loadConversationEntries();
     const activeEntries = projectActiveConversationEntries(entries);
@@ -353,10 +294,9 @@ export class Session {
     // harness passes this through prepareStep so long-running tool loops can
     // refresh system prompt parts without duplicating old system rows.
     const systemContextSnapshot = createSystemContextSnapshot(entries);
-    let messages = projectEntriesToMessages(activeEntries);
+    let messages = projectEntriesToMessages(activeEntries, this.pendingIngressMedia);
     const system = await this.buildSystemPromptParts(systemContextSnapshot.messages, ephemeralSystem);
 
-    const compactionStartedMs = Date.now();
     const compactionSummary = await compactSessionContext({
       conversationKey: this.conversationKey,
       system,
@@ -370,7 +310,6 @@ export class Session {
       });
       return null;
     });
-    const compactionEndedMs = Date.now();
 
     if (compactionSummary) {
       const [summaryCursor] = await this.persistModelMessages([compactionSummary]);
@@ -387,30 +326,22 @@ export class Session {
         system: await this.buildSystemPromptParts(compactedSystemContextSnapshot.messages, ephemeralSystem),
         ephemeralSystem: ephemeralSystem,
         systemContextSnapshot: compactedSystemContextSnapshot,
-        timings: {
-          prepareStartedMs,
-          prepareEndedMs: Date.now(),
-          compaction: { startedMs: compactionStartedMs, endedMs: compactionEndedMs },
-        },
       };
     }
 
-    const prunedMessageCount = messages.length;
     messages = pruneSessionMessages(messages, this.agentConfig);
-    logInfo("Session context pruned", {
-      conversationKey: this.conversationKey,
-      eventId: this.eventId,
-      beforeCount: prunedMessageCount,
-      afterCount: messages.length,
-    });
 
     return {
       messages,
       system,
       ephemeralSystem,
       systemContextSnapshot,
-      timings: { prepareStartedMs, prepareEndedMs: Date.now() },
     };
+  }
+
+  /** Resolves and caches workspace/sandbox routing before ingress artifact handling. */
+  async prepareRuntime(): Promise<ResolvedAgentRuntime> {
+    return this.ensureResolvedRuntime();
   }
 
   async createEphemeralTurnContext(
@@ -631,11 +562,6 @@ export class Session {
     return conversationLeaseKey(this.conversationKey);
   }
 
-  /** Key for the per-conversation buffer of messages queued while a turn ran. */
-  private pendingIngressKey(): string {
-    return `pending:${conversationLeaseKey(this.conversationKey)}`;
-  }
-
   // Namespace of the default (first) workspace, used for memory/skill staging
   // S3 reads. Empty string when no workspace is attached.
   filesystemNamespace(): string {
@@ -849,11 +775,11 @@ function createStoredEventFromModelMessage(
 
   switch (message.role) {
     case "user":
-      return toStoredConversationEvent(sanitizeUserMessage(message), sourceEventId);
+      return toStoredConversationEvent(sanitizeUserMessageForPersistence(message), sourceEventId);
     case "assistant":
-      return toStoredConversationEvent(sanitizeAssistantMessage(message), sourceEventId);
+      return toStoredConversationEvent(sanitizeAssistantMessageForPersistence(message), sourceEventId);
     case "tool":
-      return toStoredConversationEvent(sanitizeToolMessage(message), sourceEventId);
+      return toStoredConversationEvent(sanitizeToolMessageForPersistence(message), sourceEventId);
     case "system":
       return toStoredConversationEvent(systemModelMessageSchema.parse(message), sourceEventId);
     default:
@@ -873,17 +799,35 @@ function toStoredConversationEvent<TMessage extends StoredConversationEvent["mes
 }
 
 // Conversation projection.
-function projectEntriesToMessages(entries: StoredConversationEntry[]): ModelMessage[] {
-  return entries.flatMap(({ event }) => {
+function projectEntriesToMessages(
+  entries: StoredConversationEntry[],
+  pendingIngressMedia: ReadonlyMap<string, Array<ImagePart | FilePart>> = new Map(),
+): ModelMessage[] {
+  const messages: ModelMessage[] = [];
+  for (const { event } of entries) {
     switch (event.message.role) {
       case "system":
-        return [];
-      case "user":
+        break;
+      case "user": {
+        const media = pendingIngressMedia.get(event.sourceEventId);
+        if (!media?.length) {
+          messages.push(event.message);
+          break;
+        }
+        const content = typeof event.message.content === "string"
+          ? [{ type: "text" as const, text: event.message.content }, ...media]
+          : [...event.message.content, ...media];
+        messages.push({ ...event.message, content });
+        break;
+      }
       case "assistant":
       case "tool":
-        return [event.message];
+        messages.push(event.message);
+        break;
     }
-  });
+  }
+
+  return messages;
 }
 
 function projectSystemContextMessages(entries: StoredConversationEntry[]): SystemModelMessage[] {
@@ -964,7 +908,7 @@ function findLatestCompactionSummaryIndex(entries: StoredConversationEntry[]): n
 /**
  * Filters user message to only text content parts.
  */
-function sanitizeUserMessage(message: UserModelMessage): UserModelMessage | null {
+export function sanitizeUserMessageForPersistence(message: UserModelMessage): UserModelMessage | null {
   if (typeof message.content === "string") {
     return message;
   }
@@ -976,12 +920,14 @@ function sanitizeUserMessage(message: UserModelMessage): UserModelMessage | null
 /**
  * Filters assistant message to only persisted content parts.
  */
-function sanitizeAssistantMessage(message: AssistantModelMessage): AssistantModelMessage | null {
+export function sanitizeAssistantMessageForPersistence(message: AssistantModelMessage): AssistantModelMessage | null {
   if (typeof message.content === "string") {
     return message;
   }
 
-  const content = message.content.filter(isPersistedAssistantContentPart);
+  const content = message.content
+    .filter(isPersistedAssistantContentPart)
+    .map(redactArtifactToolResult);
 
   return content.length > 0 ? { ...message, content } : null;
 }
@@ -989,10 +935,22 @@ function sanitizeAssistantMessage(message: AssistantModelMessage): AssistantMode
 /**
  * Filters tool message to only persisted content parts.
  */
-function sanitizeToolMessage(message: ToolModelMessage): ToolModelMessage | null {
-  const content = message.content.filter(isPersistedToolContentPart);
+export function sanitizeToolMessageForPersistence(message: ToolModelMessage): ToolModelMessage | null {
+  const content = message.content
+    .filter(isPersistedToolContentPart)
+    .map(redactArtifactToolResult);
 
   return content.length > 0 ? { ...message, content } : null;
+}
+
+const PERSISTED_ARTIFACT_TOOL_OUTPUT = {
+  type: "text",
+  value: "Artifact content omitted from persisted conversation history. Use the artifact tool to read it again.",
+} as const;
+
+function redactArtifactToolResult<T extends { type: string }>(part: T): T {
+  if (part.type !== "tool-result" || !("toolName" in part) || part.toolName !== "artifact") return part;
+  return { ...part, output: PERSISTED_ARTIFACT_TOOL_OUTPUT };
 }
 
 /**

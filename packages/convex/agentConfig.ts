@@ -6,7 +6,6 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { ensureAgentsRowForConfig, pushEncryptedConfigToAgentRow, syncAgentRowFields } from "./model/agentSync";
-import { scheduleServiceLog } from "./observability";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
@@ -160,20 +159,11 @@ export const create = mutation({
             }
         }
 
-        // Provision the broods agents row so the harness can resolve
+        // Provision the filthy-panty agents row so the harness can resolve
         // this config by its public agentId. No-ops if the org isn't yet
-        // provisioned with a broods account.
+        // provisioned with a filthy-panty account.
         await ensureAgentsRowForConfig(ctx, configId, authUser.id);
         await pushEncryptedConfigToAgentRow(ctx, configId);
-        const created = await ctx.db.get(configId);
-        await scheduleServiceLog(ctx, {
-            projectId: projectId,
-            environmentId: environmentId,
-            eventType: "service.agent.created",
-            message: "Agent configuration created",
-            agentId: created?.agentId,
-            data: { configId: configId, name: trimmedName },
-        });
 
         return configId;
     },
@@ -231,7 +221,7 @@ export const update = mutation({
 
         await ctx.db.patch(configId, { ...patch, updatedAt: Date.now() });
 
-        // Keep the broods `agents` row aligned; this also provisions
+        // Keep the filthy-panty `agents` row aligned; this also provisions
         // the runtime row when an org account was created after the config.
         await ensureAgentsRowForConfig(ctx, configId, user.id);
         await syncAgentRowFields(ctx, configId, {
@@ -239,22 +229,13 @@ export const update = mutation({
             description: updates.description,
         });
         await pushEncryptedConfigToAgentRow(ctx, configId);
-        const updated = await ctx.db.get(configId);
-        await scheduleServiceLog(ctx, {
-            projectId: existing.projectId,
-            environmentId: existing.environmentId,
-            eventType: "service.agent.config.updated",
-            message: "Agent configuration updated",
-            agentId: updated?.agentId,
-            data: { configId: configId, changedFields: Object.keys(patch).sort() },
-        });
 
         return configId;
     },
 });
 
 /**
- * Updates the broods runtime resource references derived from the canvas graph.
+ * Updates the filthy-panty runtime resource references derived from the canvas graph.
  * This preserves unrelated extraConfig branches while replacing sandbox/workspaces.
  */
 export const updateRuntimeRefs = mutation({
@@ -289,7 +270,7 @@ export const updateRuntimeRefs = mutation({
         } else {
             delete extraConfig.workspaces;
         }
-        // Old nested AgentWorkspaceConfig is no longer part of broods's runtime contract.
+        // Old nested AgentWorkspaceConfig is no longer part of filthy-panty's runtime contract.
         delete extraConfig.workspace;
 
         await ctx.db.patch(configId, {
@@ -305,7 +286,7 @@ export const updateRuntimeRefs = mutation({
 });
 
 /**
- * Updates the broods `subagent.allowed` branch for one caller agent from the
+ * Updates the filthy-panty `subagent.allowed` branch for one caller agent from the
  * canvas's agent→agent edges. Resolves each callee config's linked `agentId`
  * (provisioning its `agents` row when missing) into the allow-list, enabling
  * subagent calls when non-empty and clearing the branch when empty.
@@ -330,7 +311,7 @@ export const updateSubagentRefs = mutation({
             throw new Error("Agent config not found.");
         }
 
-        // Map each callee config to its broods agents-row id, skipping
+        // Map each callee config to its filthy-panty agents-row id, skipping
         // self-calls and any config the caller doesn't own or can't provision.
         const allowed: string[] = [];
         for (const calleeId of calleeConfigIds) {
@@ -382,17 +363,17 @@ export const remove = mutation({
 
         // Code is the source of truth for CLI-managed agents: the dashboard may
         // edit them (changes are overwritten on the next sync) but must not delete
-        // them. Removal happens by deleting them from `broods/` and running
-        // `broods deploy --prune`.
+        // them. Removal happens by deleting them from `filthypanty/` and running
+        // `filthy-panty deploy --prune`.
         if (existing.managedBy === "cli") {
-            throw new Error("This agent is managed by code. Remove it from your project and run `broods deploy --prune` to delete it.");
+            throw new Error("This agent is managed by code. Remove it from your project and run `filthy-panty deploy --prune` to delete it.");
         }
 
         // Note: the environment's runtime API key is shared across all its agents
         // (env-scoped), so deleting one agent config must NOT delete it. The key is
         // only removed when the whole environment is deleted (see environment.ts).
 
-        // Clean up the linked broods `agents` row if present so the
+        // Clean up the linked filthy-panty `agents` row if present so the
         // harness side stays consistent with the dashboard's canvas.
         if (existing.agentId) {
             const normalized = ctx.db.normalizeId("agents", existing.agentId);
@@ -402,14 +383,6 @@ export const remove = mutation({
             }
         }
 
-        await scheduleServiceLog(ctx, {
-            projectId: existing.projectId,
-            environmentId: existing.environmentId,
-            eventType: "service.agent.deleted",
-            message: "Agent configuration deleted",
-            agentId: existing.agentId,
-            data: { configId: configId, name: existing.name },
-        });
         await ctx.db.delete(configId);
 
         return configId;
