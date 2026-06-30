@@ -52,12 +52,15 @@ export interface SlackSource {
   userId?: string;
 }
 
+type SlackUserNameResolver = (userId: string) => Promise<string | null>;
+
 export function createSlackChannel(
   botToken: string,
   signingSecret: string,
   allowedChannelIds: Set<string> | null,
   reactionEmoji = "eyes",
   apiUrl?: string,
+  userNameResolver?: SlackUserNameResolver,
 ): ChannelAdapter {
   const slack = new SlackAdapter({
     apiUrl,
@@ -86,7 +89,7 @@ export function createSlackChannel(
       }
     },
 
-    parse(req): ChannelParseResult {
+    parse(req): ChannelParseResult | Promise<ChannelParseResult> {
       const payload = parseSlackWebhookBody(req.body, { headers: req.headers });
 
       if (payload.kind === "url_verification") {
@@ -109,7 +112,7 @@ export function createSlackChannel(
         return { kind: "ignore", reason: `unsupported_slack_payload:${payload.kind}` };
       }
 
-      return parseEventCallback(req.body, allowedChannelIds);
+      return parseEventCallback(req.body, allowedChannelIds, userNameResolver ?? createSlackUserNameResolver(slack));
     },
 
     actions(msg): ChannelActions {
@@ -118,10 +121,11 @@ export function createSlackChannel(
   };
 }
 
-function parseEventCallback(
+async function parseEventCallback(
   body: string,
   allowedChannelIds: Set<string> | null,
-): ChannelParseResult {
+  resolveUserName: SlackUserNameResolver,
+): Promise<ChannelParseResult> {
   const payload = JSON.parse(body) as SlackEventEnvelope;
 
   if (payload.type === "url_verification" && typeof payload.challenge === "string") {
@@ -160,12 +164,16 @@ function parseEventCallback(
   }
 
   const isGroupChannel = payload.event.channel_type !== "im" && payload.event.channel_type !== "app_home";
-  const text = formatSlackMessageText(payload.event.text ?? "", payload.event.user, isGroupChannel);
-  const threadTs = payload.event.thread_ts ?? ts;
-  const replyThreadTs = getSlackReplyThreadTs(payload.event, ts);
   const runAgent = payload.event.type === "app_mention"
     || payload.event.channel_type === "im"
     || payload.event.channel_type === "app_home";
+  const botUserIds = runAgent ? getSlackBotUserIds(payload) : new Set<string>();
+  const rawText = payload.event.type === "app_mention" && botUserIds.size === 0
+    ? (payload.event.text ?? "").replace(/<@[^>]+>\s*/, "")
+    : payload.event.text ?? "";
+  const text = await formatSlackMessageText(rawText, payload.event.user, isGroupChannel, botUserIds, resolveUserName);
+  const threadTs = payload.event.thread_ts ?? ts;
+  const replyThreadTs = getSlackReplyThreadTs(payload.event, ts);
 
   return {
     kind: runAgent ? "message" : "context",
@@ -396,12 +404,28 @@ async function sendSlackWebhookResponse(
 }
 
 /**
- * Convert Slack mrkdwn mention syntax `<@U123>` into `@U123` so the LLM can
- * understand who was mentioned.  Preserves all mentions (including the bot's)
- * rather than stripping them.
+ * Convert Slack mrkdwn mention syntax into readable names for the model. Bot
+ * mentions that only target the app are removed from the user text.
  */
-function normalizeSlackMentions(text: string): string {
-  return text.replace(/<@([^>]+)>/g, "@$1").trim();
+async function normalizeSlackMentions(
+  text: string,
+  omittedUserIds: Set<string>,
+  resolveUserName: SlackUserNameResolver,
+): Promise<string> {
+  const mentionedUserIds = [...new Set([...text.matchAll(/<@([^>]+)>/g)]
+    .map((match) => match[1])
+    .filter((userId): userId is string => typeof userId === "string" && userId.length > 0))];
+  const names = new Map<string, string>();
+
+  await Promise.all(mentionedUserIds.map(async (userId) => {
+    if (omittedUserIds.has(userId)) return;
+    names.set(userId, await resolveSlackUserName(userId, resolveUserName));
+  }));
+
+  return cleanSlackText(text.replace(/<@([^>]+)>/g, (_match, userId: string) => {
+    if (omittedUserIds.has(userId)) return "";
+    return `@${names.get(userId) ?? userId}`;
+  }));
 }
 
 function hasSlackMention(text: string): boolean {
@@ -409,12 +433,7 @@ function hasSlackMention(text: string): boolean {
 }
 
 function mentionsSlackBot(text: string, payload: SlackEventEnvelope): boolean {
-  const botUserIds = new Set(
-    (payload.authorizations ?? [])
-      .filter((authorization) => authorization.is_bot !== false)
-      .map((authorization) => authorization.user_id)
-      .filter((userId): userId is string => typeof userId === "string" && userId.length > 0),
-  );
+  const botUserIds = getSlackBotUserIds(payload);
   if (botUserIds.size === 0 || !hasSlackMention(text)) {
     return false;
   }
@@ -433,12 +452,50 @@ function mentionsSlackBot(text: string, payload: SlackEventEnvelope): boolean {
  * agent knows who is talking when multiple users are in the conversation.
  * DMs and app_home messages are not prefixed because there is only one user.
  */
-function formatSlackMessageText(text: string, userId: string | undefined, isGroupChannel: boolean): string {
-  const normalized = normalizeSlackMentions(text);
+async function formatSlackMessageText(
+  text: string,
+  userId: string | undefined,
+  isGroupChannel: boolean,
+  omittedUserIds: Set<string>,
+  resolveUserName: SlackUserNameResolver,
+): Promise<string> {
+  const normalized = await normalizeSlackMentions(text, omittedUserIds, resolveUserName);
   if (!isGroupChannel || !userId || !normalized) {
     return normalized;
   }
-  return `@${userId}: ${normalized}`;
+  return `${await resolveSlackUserName(userId, resolveUserName)}: ${normalized}`;
+}
+
+function getSlackBotUserIds(payload: SlackEventEnvelope): Set<string> {
+  return new Set(
+    (payload.authorizations ?? [])
+      .filter((authorization) => authorization.is_bot !== false)
+      .map((authorization) => authorization.user_id)
+      .filter((userId): userId is string => typeof userId === "string" && userId.length > 0),
+  );
+}
+
+function createSlackUserNameResolver(slack: SlackAdapter): SlackUserNameResolver {
+  return async (userId) => {
+    const user = await slack.getUser(userId);
+    return user?.userName ?? user?.fullName ?? null;
+  };
+}
+
+async function resolveSlackUserName(userId: string, resolveUserName: SlackUserNameResolver): Promise<string> {
+  const resolved = await resolveUserName(userId);
+  return cleanSlackName(resolved) || userId;
+}
+
+function cleanSlackName(value: string | null): string {
+  return (value ?? "").replace(/^@+/, "").trim();
+}
+
+function cleanSlackText(value: string): string {
+  return value
+    .replace(/[ \t]+([,.!?;:])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
 }
 
 /**

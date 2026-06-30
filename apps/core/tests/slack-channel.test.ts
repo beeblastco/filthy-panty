@@ -17,7 +17,7 @@ describe("slack channel adapter", () => {
   });
 
   it("authenticates valid signatures and rejects stale timestamps", async () => {
-    const adapter = createSlackChannel("bot-token", "signing-secret", null);
+    const adapter = createTestSlackChannel(null);
     const request = createEventRequest({
       type: "event_callback",
       event_id: "evt-1",
@@ -44,7 +44,7 @@ describe("slack channel adapter", () => {
   });
 
   it("responds to url_verification challenges", async () => {
-    const adapter = createSlackChannel("bot-token", "signing-secret", null);
+    const adapter = createTestSlackChannel(null);
 
     const parsed = await adapter.parse(createEventRequest({
       type: "url_verification",
@@ -62,7 +62,7 @@ describe("slack channel adapter", () => {
   });
 
   it("stores public channel messages as channel-scoped context", async () => {
-    const adapter = createSlackChannel("bot-token", "signing-secret", null);
+    const adapter = createTestSlackChannel(null);
 
     const parsed = await adapter.parse(createEventRequest({
       type: "event_callback",
@@ -87,7 +87,7 @@ describe("slack channel adapter", () => {
     expect(parsed.message.conversationKey).toBe("slack:T1:C1");
     // Group-channel messages include the sender's user id so the agent knows
     // who is talking in a multi-user channel.
-    expect(parsed.message.content).toEqual([{ type: "text", text: "@U1: hello channel" }]);
+    expect(parsed.message.content).toEqual([{ type: "text", text: "Alex: hello channel" }]);
     expect(parsed.message.source).toEqual({
       teamId: "T1",
       channelId: "C1",
@@ -98,7 +98,7 @@ describe("slack channel adapter", () => {
   });
 
   it("stores generic message events with human mentions as context", async () => {
-    const adapter = createSlackChannel("bot-token", "signing-secret", null);
+    const adapter = createTestSlackChannel(null);
 
     const parsed = await adapter.parse(createEventRequest({
       type: "event_callback",
@@ -118,11 +118,11 @@ describe("slack channel adapter", () => {
     if (parsed.kind !== "context") {
       throw new Error("Expected human mentions to be preserved as channel context");
     }
-    expect(parsed.message.content).toEqual([{ type: "text", text: "@U1: Hey @U2 and @U3, what do you think?" }]);
+    expect(parsed.message.content).toEqual([{ type: "text", text: "Alex: Hey @Blair and @Casey, what do you think?" }]);
   });
 
   it("explains ignored Slack message subtypes", async () => {
-    const adapter = createSlackChannel("bot-token", "signing-secret", null);
+    const adapter = createTestSlackChannel(null);
 
     const parsed = await adapter.parse(createEventRequest({
       type: "event_callback",
@@ -147,11 +147,12 @@ describe("slack channel adapter", () => {
     expect(parsed.reason).toBe("unsupported_subtype:message_changed");
   });
 
-  it("normalizes app mentions into channel-scoped conversations and preserves mentions", async () => {
-    const adapter = createSlackChannel("bot-token", "signing-secret", new Set(["C1"]));
+  it("normalizes app mentions into channel-scoped conversations and strips the bot mention", async () => {
+    const adapter = createTestSlackChannel(new Set(["C1"]));
 
     const parsed = await adapter.parse(createEventRequest({
       type: "event_callback",
+      authorizations: [{ user_id: "BOT", is_bot: true }],
       event_id: "evt-2",
       team_id: "T1",
       event: {
@@ -174,7 +175,7 @@ describe("slack channel adapter", () => {
     // same ts, so using ts as the eventId lets session.claim() dedupe them.
     expect(parsed.message.eventId).toBe("slack:T1:C1:1713916800.000002");
     expect(parsed.message.conversationKey).toBe("slack:T1:C1");
-    expect(parsed.message.content).toEqual([{ type: "text", text: "@U1: @BOT hello there" }]);
+    expect(parsed.message.content).toEqual([{ type: "text", text: "Alex: hello there" }]);
     expect(parsed.message.source).toEqual({
       teamId: "T1",
       channelId: "C1",
@@ -185,7 +186,7 @@ describe("slack channel adapter", () => {
   });
 
   it("deduplicates app_mention and message events with the same ts", async () => {
-    const adapter = createSlackChannel("bot-token", "signing-secret", new Set(["C1"]));
+    const adapter = createTestSlackChannel(new Set(["C1"]));
 
     const mention = await adapter.parse(createEventRequest({
       type: "event_callback",
@@ -247,7 +248,7 @@ describe("slack channel adapter", () => {
   });
 
   it("keeps direct messages channel-scoped instead of thread-scoped", async () => {
-    const adapter = createSlackChannel("bot-token", "signing-secret", null);
+    const adapter = createTestSlackChannel(null);
 
     const parsed = await adapter.parse(createEventRequest({
       type: "event_callback",
@@ -281,7 +282,7 @@ describe("slack channel adapter", () => {
   });
 
   it("normalizes slash commands and carries the command token in source", async () => {
-    const adapter = createSlackChannel("bot-token", "signing-secret", new Set(["C1"]));
+    const adapter = createTestSlackChannel(new Set(["C1"]));
 
     const parsed = await adapter.parse(createSlashCommandRequest(
       "team_id=T1&channel_id=C1&command=%2Fnew&text=reset+context&user_id=U1&response_url=https%3A%2F%2Fslack.example%2Fresponse",
@@ -305,6 +306,24 @@ describe("slack channel adapter", () => {
     });
   });
 });
+
+function createTestSlackChannel(allowedChannelIds: Set<string> | null) {
+  const users = new Map([
+    ["U1", "Alex"],
+    ["U2", "Blair"],
+    ["U3", "Casey"],
+    ["BOT", "Broods"],
+  ]);
+
+  return createSlackChannel(
+    "bot-token",
+    "signing-secret",
+    allowedChannelIds,
+    "eyes",
+    undefined,
+    async (userId) => users.get(userId) ?? null,
+  );
+}
 
 function createEventRequest(
   payload: Record<string, unknown>,
