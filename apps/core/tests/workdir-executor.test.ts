@@ -206,6 +206,15 @@ describe("WorkdirSandboxExecutor.run", () => {
     expect(create.headers.Authorization).toBe("Bearer sk_test");
   });
 
+  it("omits cwd for stateless execs without a workspace namespace", async () => {
+    const executor = await newExecutor({ provider: "sandbox", options: { workdirUrl: BASE } });
+
+    await executor.run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
+
+    expect(execCalls()[0]!.body).toMatchObject({ cmd: "echo ok" });
+    expect(execCalls()[0]!.body).not.toHaveProperty("cwd");
+  });
+
   it("maps the predefined resource knobs onto the SDK's snake_case wire shape", async () => {
     const executor = await newExecutor({
       provider: "sandbox",

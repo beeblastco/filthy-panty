@@ -61,8 +61,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     try {
       if (this.#s3MountStrategy() === "exec") await this.#ensureS3Mount(sandbox, request);
       if (persistent) await this.#runLifecycle(sandbox, this.#workDir(sandboxReservationKey(request)!));
+      const cwd = request.namespace ? workspacePath(request, this.#workspaceRoot()) : undefined;
       const result = await sandbox.exec(request.code, {
-        cwd: workspacePath(request, this.#workspaceRoot()),
+        ...(cwd ? { cwd } : {}),
         env: { ...stringRecord(this.#config.envVars), ...(request.envVars ?? {}) },
       });
       const stdout = truncateText(result.stdout ?? "", request.outputLimitBytes);
