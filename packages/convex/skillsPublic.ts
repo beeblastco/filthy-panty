@@ -18,7 +18,7 @@ const MAX_BUNDLE_BYTES = 30 * 1024 * 1024;
 function accountManageUrl(): string {
     const url = process.env.BROODS_ACCOUNT_MANAGE_URL;
     if (!url) throw new Error("BROODS_ACCOUNT_MANAGE_URL is not configured");
-    return url.replace(/\/$/, "");
+    return url.replace(/\/+$/, "");
 }
 
 /** SHA-256 hex of the raw token — matches what the accounts table stores. */

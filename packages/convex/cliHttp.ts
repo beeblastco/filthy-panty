@@ -708,7 +708,7 @@ async function deleteCronByName(token: string, name: string): Promise<void> {
 async function accountManageFetch(token: string, path: string, init: RequestInit): Promise<Response> {
     const baseUrl = process.env.BROODS_ACCOUNT_MANAGE_URL;
     if (!baseUrl) throw new Error("BROODS_ACCOUNT_MANAGE_URL is required to sync cron jobs");
-    const response = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
+    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}${path}`, {
         ...init,
         headers: {
             "Content-Type": "application/json",
@@ -729,7 +729,7 @@ async function accountManageFetchWithServiceToken(accountId: string, path: strin
     if (!baseUrl || !token) {
         throw new Error("BROODS_ACCOUNT_MANAGE_URL and BROODS_SERVICE_AUTH_SECRET are required");
     }
-    const response = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
+    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}${path}`, {
         ...init,
         headers: {
             "Content-Type": "application/json",

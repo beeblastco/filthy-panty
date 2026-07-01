@@ -25,7 +25,7 @@ function getServiceEnv(): { url: string; secret: string } {
         );
     }
 
-    return { url: url, secret: secret };
+    return { url: url.replace(/\/+$/, ""), secret: secret };
 }
 
 /**

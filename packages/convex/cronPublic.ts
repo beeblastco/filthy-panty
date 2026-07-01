@@ -19,7 +19,7 @@ function getServiceEnv(): { url: string; secret: string } {
             "BROODS_ACCOUNT_MANAGE_URL or BROODS_SERVICE_AUTH_SECRET missing",
         );
     }
-    return { url: url, secret: secret };
+    return { url: url.replace(/\/+$/, ""), secret: secret };
 }
 
 function headers(accountId: string, secret: string): HeadersInit {
