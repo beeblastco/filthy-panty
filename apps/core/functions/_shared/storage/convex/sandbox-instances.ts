@@ -10,7 +10,7 @@
 const internal: any = require("@broods/convex/_generated/api").internal;
 import { getConvexClient } from "./client.ts";
 import { logError } from "../../log.ts";
-import type { SandboxControlPlane } from "../../sandbox-sizes.ts";
+import type { SandboxControlPlane, SandboxRunMetadata } from "../../sandbox-sizes.ts";
 import type { SandboxProvider } from "../sandbox-config.ts";
 
 /** Convex mode is active only when both env vars are present (see CLAUDE.md). */
@@ -30,6 +30,7 @@ export async function upsertSandboxInstance(
   provider: SandboxProvider,
   reservationKey: string,
   externalId: string,
+  metadata?: SandboxRunMetadata,
 ): Promise<void> {
   if (!controlPlane || !convexEnabled()) return;
   try {
@@ -46,6 +47,12 @@ export async function upsertSandboxInstance(
       ...(controlPlane.snapshotId ? { snapshotId: controlPlane.snapshotId } : {}),
       ...(controlPlane.egress ? { egress: controlPlane.egress } : {}),
       ...(controlPlane.permissionMode ? { permissionMode: controlPlane.permissionMode } : {}),
+      ...(metadata?.traceId ? { lastUsedTraceId: metadata.traceId, createdByTraceId: metadata.traceId } : {}),
+      ...(metadata?.taskId ? { lastUsedTaskId: metadata.taskId, createdByTaskId: metadata.taskId } : {}),
+      ...(metadata?.agentId ? { agentId: metadata.agentId } : {}),
+      ...(metadata?.conversationKey ? { conversationKey: metadata.conversationKey } : {}),
+      ...(metadata?.workspaceName ? { workspaceName: metadata.workspaceName } : {}),
+      ...(metadata?.workspaceId ? { workspaceId: metadata.workspaceId } : {}),
     });
   } catch (err) {
     logError("Sandbox instance upsert mirror failed (convex)", {

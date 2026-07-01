@@ -19,6 +19,7 @@ import { logWarn } from "../../_shared/log.ts";
 import type { Session } from "../session.ts";
 import type { ResolvedWorkspace } from "../../_shared/workspaces.ts";
 import type { SandboxCpuSample, SandboxExecutorConfig } from "../sandbox/types.ts";
+import type { SandboxRunMetadata } from "../../_shared/sandbox-sizes.ts";
 import type { AsyncToolModeMap, AsyncToolSource, RunAsyncToolDispatch } from "../async-tools.ts";
 import bashTool from "./bash.tool.ts";
 import readTool from "./read.tool.ts";
@@ -60,6 +61,7 @@ export interface ToolContext {
   // Reports each sandbox exec's CPU so the harness attributes usage per sandbox
   // (agent bash/fs => role "agent"; uploaded custom tools => role "tool").
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
+  sandboxMetadata?: SandboxRunMetadata;
 }
 
 type ToolFactory = (context: ToolContext) => ToolSet;

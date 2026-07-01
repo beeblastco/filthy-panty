@@ -20,7 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/ta
 import { api } from "@broods/convex/_generated/api";
 import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
-import { Camera } from "lucide-react";
+import { Camera, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { formatSpecs, instanceStatusBadge, relativeTime } from "./sandboxFormat";
 
@@ -43,12 +43,15 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 
 export function SandboxInstanceSheet({ instance, onClose }: Props) {
     const createSnapshot = useAction(api.sandboxPublic.createSnapshot);
+    const refresh = useAction(api.sandboxPublic.refreshSandbox);
     const terminate = useAction(api.sandboxPublic.terminateSandbox);
 
     const [snapName, setSnapName] = useState("");
     const [snapPending, setSnapPending] = useState(false);
     const [snapMessage, setSnapMessage] = useState<string | null>(null);
     const [terminating, setTerminating] = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
+    const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
     const [confirmOpen, setConfirmOpen] = useState(false);
 
     const controllable = Boolean(instance.sandboxConfigId);
@@ -89,6 +92,20 @@ export function SandboxInstanceSheet({ instance, onClose }: Props) {
         }
     }
 
+    async function handleRefresh() {
+        if (!instance.sandboxConfigId) return;
+        setRefreshing(true);
+        setRefreshMessage(null);
+        try {
+            await refresh({ sandboxId: instance.sandboxConfigId, reservationKey: instance.reservationKey });
+            setRefreshMessage("Status refreshed.");
+        } catch (err) {
+            setRefreshMessage(err instanceof Error ? err.message : "Refresh failed");
+        } finally {
+            setRefreshing(false);
+        }
+    }
+
     return (
         <Sheet open onOpenChange={(open) => !open && onClose()}>
             <SheetContent className="w-full overflow-y-auto sm:max-w-md">
@@ -113,10 +130,29 @@ export function SandboxInstanceSheet({ instance, onClose }: Props) {
                             <Field label="Size" value={formatSpecs(instance.specs)} />
                             <Field label="External ID" value={<code className="font-mono">{instance.externalId}</code>} />
                             <Field label="Reservation key" value={<code className="font-mono break-all">{instance.reservationKey}</code>} />
+                            {instance.agentId && <Field label="Agent" value={<code className="font-mono">{instance.agentId}</code>} />}
+                            {instance.conversationKey && <Field label="Conversation" value={<code className="font-mono break-all">{instance.conversationKey}</code>} />}
+                            {instance.workspaceName && <Field label="Workspace" value={instance.workspaceName} />}
+                            {instance.createdByTraceId && <Field label="Created trace" value={<code className="font-mono break-all">{instance.createdByTraceId}</code>} />}
+                            {instance.lastUsedTraceId && <Field label="Last trace" value={<code className="font-mono break-all">{instance.lastUsedTraceId}</code>} />}
                             {instance.snapshotId && <Field label="Snapshot" value={<code className="font-mono">{instance.snapshotId}</code>} />}
                             <Field label="Created" value={relativeTime(instance.createdAt)} />
                             <Field label="Last used" value={relativeTime(instance.lastUsedAt)} />
                             {instance.suspendedAt && <Field label="Suspended" value={relativeTime(instance.suspendedAt)} />}
+                        </div>
+
+                        <div className="mt-4">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                className="cursor-pointer disabled:cursor-not-allowed"
+                                disabled={!controllable || refreshing}
+                                onClick={handleRefresh}
+                            >
+                                <RefreshCw className="mr-1 size-3.5" />
+                                Refresh status
+                            </Button>
+                            {refreshMessage && <p className="mt-2 text-xs text-muted-foreground">{refreshMessage}</p>}
                         </div>
 
                         <div className="mt-5">

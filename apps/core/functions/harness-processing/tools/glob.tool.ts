@@ -10,6 +10,7 @@ import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   resolveWorkspace,
   runSandbox,
+  sandboxRunMetadata,
   s3Glob,
   toBase64,
   toWorkspaceRelative,
@@ -117,7 +118,7 @@ Usage notes:
           }
           const root = path ? toWorkspaceRelative(path) : ".";
           const code = globScript(toBase64(pattern), toBase64(root));
-          const result = await runSandbox(runner, ws.namespace, code);
+          const result = await runSandbox(runner, ws.namespace, code, { metadata: sandboxRunMetadata(context, ws) });
           if (!result.ok) {
             return toolError(`${result.stderr}${result.stdout}`.trim() || "Error: glob failed");
           }

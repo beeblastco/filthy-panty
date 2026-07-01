@@ -10,7 +10,7 @@
 
 import type { Readable } from "node:stream";
 import type { WorkspaceStorageConfig } from "../../_shared/storage/workspace-config.ts";
-import type { SandboxControlPlane, SandboxSize } from "../../_shared/sandbox-sizes.ts";
+import type { SandboxControlPlane, SandboxRunMetadata, SandboxSize } from "../../_shared/sandbox-sizes.ts";
 
 export type SandboxProvider = "sandbox" | "lambda" | "e2b" | "daytona" | "vercel";
 export type SandboxRuntime = "bash" | "python" | "node";
@@ -95,6 +95,7 @@ export interface SandboxRunRequest {
   // Per-call env vars merged over the account-configured envVars. Reserved runtime
   // vars always win and the host process.env is never inherited.
   envVars?: Record<string, string>;
+  metadata?: SandboxRunMetadata;
   // Background-only: the caller supplies the jobId (so the tracking row exists
   // before the job can finish) and an optional completion callback the detached
   // job POSTs when it exits.

@@ -23,7 +23,15 @@ const gatewayModelMock = mock((modelId: string) => ({ provider: "gateway", model
 const createGatewayMock = mock((_options: unknown) => gatewayModelMock);
 const minimaxModelMock = mock((modelId: string) => ({ provider: "minimax", modelId }));
 const createMinimaxMock = mock((_options: unknown) => minimaxModelMock);
-let streamTextScenario: "empty" | "error-then-empty" | "error-no-finish" | "hard-throw" | "approval-request" | "structured-output" | "tool-run" = "empty";
+let streamTextScenario:
+  | "empty"
+  | "error-then-empty"
+  | "error-no-finish"
+  | "hard-throw"
+  | "approval-request"
+  | "structured-output"
+  | "tool-run"
+  | "multi-step-text" = "empty";
 
 const streamTextMock = mock((options: {
   experimental_onStepStart?: (args: {
@@ -91,6 +99,8 @@ const streamTextMock = mock((options: {
     response: { messages: unknown[]; id: string; modelId: string; timestamp: Date; headers?: Record<string, string> };
     providerMetadata?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
+    text?: string;
+    reasoningText?: string;
   }): Promise<void>;
   output?: unknown;
   stopWhen?: unknown;
@@ -277,6 +287,63 @@ const streamTextMock = mock((options: {
           totalUsage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
           steps: [],
           toolCalls: [toolCall],
+        });
+        controller.enqueue({ type: "finish", finishReason: "stop" });
+        controller.close();
+        return;
+      }
+
+      if (streamTextScenario === "multi-step-text") {
+        await options.onStepFinish?.({
+          stepNumber: 0,
+          model: { provider: "google", modelId: "gemini-custom" },
+          finishReason: "tool-calls",
+          rawFinishReason: "TOOL_CALLS",
+          usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+          toolCalls: [],
+          toolResults: [],
+          warnings: [],
+          request: {},
+          response: {
+            messages: [{ role: "assistant", content: "Let me try again:" }],
+            id: "response-1",
+            modelId: "gemini-custom",
+            timestamp: new Date("2024-01-02T03:04:05.000Z"),
+          },
+          text: "Let me try again:",
+        });
+        await options.onStepFinish?.({
+          stepNumber: 1,
+          model: { provider: "google", modelId: "gemini-custom" },
+          finishReason: "stop",
+          rawFinishReason: "STOP",
+          usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+          toolCalls: [],
+          toolResults: [],
+          warnings: [],
+          request: {},
+          response: {
+            messages: [{ role: "assistant", content: "Final answer only." }],
+            id: "response-2",
+            modelId: "gemini-custom",
+            timestamp: new Date("2024-01-02T03:04:06.000Z"),
+          },
+          text: "Final answer only.",
+        });
+        await options.onFinish({
+          response: {
+            messages: [{ role: "assistant", content: "Let me try again:\n\nFinal answer only." }],
+            id: "response-2",
+            modelId: "gemini-custom",
+            timestamp: new Date("2024-01-02T03:04:06.000Z"),
+          },
+          text: "Let me try again:\n\nFinal answer only.",
+          finishReason: "stop",
+          rawFinishReason: "STOP",
+          usage: { inputTokens: 8, outputTokens: 12, totalTokens: 20 },
+          totalUsage: { inputTokens: 8, outputTokens: 12, totalTokens: 20 },
+          steps: [],
+          toolCalls: [],
         });
         controller.enqueue({ type: "finish", finishReason: "stop" });
         controller.close();
@@ -1034,6 +1101,52 @@ describe("runAgentLoop", () => {
     expect(stream.hasStructuredOutput()).toBe(true);
     expect(stream.finalResponse()).toEqual({ answer: "done" });
     expect(onFinalText).toHaveBeenCalledWith({ answer: "done" });
+  });
+
+  it("uses the last non-empty step text for final channel output", async () => {
+    streamTextScenario = "multi-step-text";
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../functions/harness-processing/harness.ts");
+    const onFinalText = mock(async (_response: unknown) => { });
+
+    const stream = await runAgentLoop({
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      statelessSandbox: () => undefined,
+      statelessPermissionMode: () => "ask",
+      persistModelMessages: async () => { },
+      loadRefreshedSystemPromptParts: async () => ({
+        systemContextSnapshot: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never, {
+      messages: [{ role: "user", content: "hello" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    }, {
+      provider: {
+        google: {
+          apiKey: "google-key",
+        },
+      },
+      model: {
+        provider: "google",
+        modelId: "gemini-custom",
+      },
+    }, {
+      onFinalText,
+      onErrorText: async (error) => {
+        throw new Error(error);
+      },
+    });
+
+    await stream.consumeStream();
+
+    expect(stream.finalResponse()).toBe("Final answer only.");
+    expect(onFinalText).toHaveBeenCalledWith("Final answer only.");
   });
 
   it("emits structured CloudWatch telemetry for model invocations and steps", async () => {

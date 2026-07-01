@@ -15,6 +15,7 @@ import {
   runtimeDescription,
   runSandbox,
   runSandboxBackground,
+  sandboxRunMetadata,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
   toolError,
@@ -153,6 +154,7 @@ async function dispatchBackground(
   try {
     await runSandboxBackground(ws.sandbox, ws.namespace, command, {
       jobId,
+      metadata: sandboxRunMetadata(context, ws),
       ...(callback ? { callback } : {}),
     });
   } catch (cause) {
@@ -209,6 +211,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           logInfo("bash tool command", { namespace: ws?.namespace, commandLength: trimmed.length });
           return toolText(formatRunText(await runSandbox(sandbox, ws?.namespace, trimmed, {
             onSandboxCpu: context.onSandboxCpu,
+            metadata: sandboxRunMetadata(context, ws),
           })));
         } catch (cause) {
           return toolError(cause instanceof Error ? cause.message : String(cause));

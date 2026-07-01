@@ -304,7 +304,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       try {
         const sandbox = await this.#reconnect(externalId);
         await saveSandboxInstance("sandbox", ns, externalId).catch(() => {});
-        await upsertSandboxInstance(this.#config.controlPlane, "sandbox", ns, externalId);
+        await upsertSandboxInstance(this.#config.controlPlane, "sandbox", ns, externalId, "metadata" in request ? request.metadata : undefined);
         return sandbox;
       } catch {
         await deleteSandboxInstance("sandbox", ns).catch(() => {});
@@ -312,7 +312,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     }
     const created = await this.#client.sandboxes.create(this.#createOptions(request, true));
     if (await claimSandboxInstance("sandbox", ns, created.id)) {
-      await upsertSandboxInstance(this.#config.controlPlane, "sandbox", ns, created.id);
+      await upsertSandboxInstance(this.#config.controlPlane, "sandbox", ns, created.id, "metadata" in request ? request.metadata : undefined);
       return created;
     }
     // Lost a concurrent create race: discard our duplicate and reconnect to the

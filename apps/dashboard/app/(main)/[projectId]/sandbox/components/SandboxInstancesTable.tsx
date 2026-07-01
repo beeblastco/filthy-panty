@@ -65,6 +65,8 @@ export function SandboxInstancesTable({ instances }: Props) {
                 instance.name.toLowerCase().includes(needle)
                 || instance.externalId.toLowerCase().includes(needle)
                 || instance.provider.toLowerCase().includes(needle)
+                || (instance.conversationKey?.toLowerCase().includes(needle) ?? false)
+                || (instance.lastUsedTraceId?.toLowerCase().includes(needle) ?? false)
             );
         });
     }, [instances, search, status]);

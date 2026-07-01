@@ -253,14 +253,14 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       const reconnected = await this.#reconnect(existing).catch(() => null);
       if (reconnected) {
         await saveSandboxInstance(PROVIDER, key, existing).catch(() => {});
-        await upsertSandboxInstance(this.#config.controlPlane, PROVIDER, key, existing);
+        await upsertSandboxInstance(this.#config.controlPlane, PROVIDER, key, existing, request.metadata);
         return reconnected;
       }
       await deleteSandboxInstance(PROVIDER, key).catch(() => {});
     }
     const created = await this.#runMicrovm(request);
     if (await claimSandboxInstance(PROVIDER, key, created.microvmId)) {
-      await upsertSandboxInstance(this.#config.controlPlane, PROVIDER, key, created.microvmId);
+      await upsertSandboxInstance(this.#config.controlPlane, PROVIDER, key, created.microvmId, request.metadata);
       return created;
     }
     // Lost a concurrent create race: discard our duplicate and reconnect to the winner.

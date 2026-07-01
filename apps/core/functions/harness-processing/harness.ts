@@ -336,6 +336,12 @@ export async function runAgentLoop(
       session: session,
       dispatchAsyncTools: options.dispatchAsyncTools,
       onSandboxCpu: recordSandboxCpu,
+      sandboxMetadata: {
+        traceId: traceId,
+        taskId: session.eventId,
+        ...(session.agentId ? { agentId: session.agentId } : {}),
+        conversationKey: session.conversationKey,
+      },
       // The handler owns subagent lifecycle, so the loop only forwards the
       // dispatcher into the tool registry for this one model run. Ephemeral
       // system messages are request-local, so pass the current turn copy into
@@ -354,6 +360,7 @@ export async function runAgentLoop(
   const providerOptions = providerOptionsFromModelConfig(agentConfig);
   let approvalSummaries: ToolApprovalSummary[] = [];
   let finalResponse: JSONValue | undefined;
+  let lastStepText = "";
 
   // Child OTel spans remain open until the corresponding AI SDK finish hook.
   // Their real OTel IDs are reused in the live NATS trace rows.
@@ -744,18 +751,20 @@ export async function runAgentLoop(
         { "tool.name": toolCall.toolName, "tool.call_id": toolCall.toolCallId },
       );
       const toolDurationMs = toolEndMs - tracked.startTimeMs;
-      const errorText = success ? undefined : redactSensitiveText(
-        errorMessage(error),
+      const outputErrorText = toolOutputErrorText(output);
+      const toolSucceeded = success && !outputErrorText;
+      const errorText = toolSucceeded ? undefined : redactSensitiveText(
+        outputErrorText ?? errorMessage(error),
         getObservabilityContext()?.secretValues,
       );
       tracked.otelSpan.setAttributes({
         "tool.duration_ms": toolDurationMs,
-        "tool.success": success,
-        "tool.state": success ? "completed" : "failed",
+        "tool.success": toolSucceeded,
+        "tool.state": toolSucceeded ? "completed" : "failed",
         "tool.input": traceAttribute(toolCall.input),
-        ...(success ? { "tool.output": traceAttribute(output) } : {}),
+        ...(toolSucceeded ? { "tool.output": traceAttribute(output) } : {}),
       });
-      if (success) {
+      if (toolSucceeded) {
         tracked.otelSpan.setStatus({ code: SpanStatusCode.OK });
       } else {
         const spanError = new Error(errorText);
@@ -772,16 +781,16 @@ export async function runAgentLoop(
         startTimeMs: tracked.startTimeMs,
         endTimeMs: toolEndMs,
         durationMs: toolDurationMs,
-        status: success ? "ok" : "error",
+        status: toolSucceeded ? "ok" : "error",
         endpointId: session.endpointId,
         agentId: session.agentId,
         conversationKey: session.conversationKey,
         attributes: {
           "tool.name": toolCall.toolName,
           "tool.call_id": toolCall.toolCallId,
-          "tool.state": success ? "completed" : "failed",
+          "tool.state": toolSucceeded ? "completed" : "failed",
           "tool.input": traceAttribute(toolCall.input),
-          ...(success ? { "tool.output": traceAttribute(output) } : {}),
+          ...(toolSucceeded ? { "tool.output": traceAttribute(output) } : {}),
           ...(stepNumber !== undefined ? { "agent.step_number": stepNumber } : {}),
         },
         ...(errorText ? { error: errorText } : {}),
@@ -789,16 +798,16 @@ export async function runAgentLoop(
       publishSpan(toolSpanRow);
       toolSpans.delete(toolCall.toolCallId);
 
-      recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber, durationMs, success });
+      recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber, durationMs, success: toolSucceeded });
       await lifecycle.emit("tool.call.finished", {
         stepNumber: stepNumber,
         toolCall: toLifecycleValue(toolCall),
         durationMs: durationMs,
-        success: success,
-        ...(success ? {} : { error: errorMessage(error) }),
+        success: toolSucceeded,
+        ...(toolSucceeded ? {} : { error: errorText ?? errorMessage(error) }),
       });
       const details = {
-        eventType: success ? "tool.call.finished" : "tool.call.failed",
+        eventType: toolSucceeded ? "tool.call.finished" : "tool.call.failed",
         ...logContext,
         stepNumber: stepNumber,
         toolName: toolCall.toolName,
@@ -806,14 +815,14 @@ export async function runAgentLoop(
         durationMs: durationMs,
       };
 
-      if (success) {
+      if (toolSucceeded) {
         logInfo("Tool call finished", details);
         return;
       }
 
       logError("Tool call failed", {
         ...details,
-        error: errorMessage(error),
+        error: errorText ?? errorMessage(error),
         errorDetails: serializeError(error),
       });
     },
@@ -833,6 +842,10 @@ export async function runAgentLoop(
       const startedAt = stepStartedAt.get(stepNumber);
       const durationMs = startedAt === undefined ? undefined : Date.now() - startedAt;
       stepStartedAt.delete(stepNumber);
+      const stepText = (text ?? "").trim();
+      if (stepText) {
+        lastStepText = stepText;
+      }
       for (const toolCall of toolCalls) {
         recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber });
       }
@@ -1031,7 +1044,7 @@ export async function runAgentLoop(
         recordToolCallSummary(toolCallSummaries, toolCall, {});
       }
 
-      const finalText = text.trim();
+      const finalText = (lastStepText || text).trim();
       const stepCount = steps.length;
       const toolCallCount = toolCalls.length;
       finishObserved = true;
@@ -1226,11 +1239,22 @@ export async function runAgentLoop(
     approvalSummaries: () => approvalSummaries,
     hasStructuredOutput: () => Boolean(modelOutput),
     finalResponse: () => finalResponse,
+    traceId: () => traceId,
   });
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function toolOutputErrorText(output: unknown): string | undefined {
+  if (!output || typeof output !== "object" || Array.isArray(output)) {
+    return undefined;
+  }
+  const maybeOutput = output as { type?: unknown; value?: unknown };
+  return maybeOutput.type === "error-text" && typeof maybeOutput.value === "string"
+    ? maybeOutput.value
+    : undefined;
 }
 
 function extractApprovalRequests(steps: Array<StepResult<ToolSet>>): ApprovalRequestOutput[] {

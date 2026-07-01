@@ -9,6 +9,7 @@ import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   resolveWorkspace,
   runSandbox,
+  sandboxRunMetadata,
   s3ReadNumbered,
   shellQuote,
   toWorkspaceRelative,
@@ -73,7 +74,7 @@ Usage notes:
           const code =
             `if [ ! -f ${q} ]; then printf 'Error: file not found: %s\\n' ${q} >&2; exit 1; fi; ` +
             `sed -n '${start},${end}p' -- ${q} | nl -ba -v ${start}`;
-          const result = await runSandbox(runner, ws.namespace, code);
+          const result = await runSandbox(runner, ws.namespace, code, { metadata: sandboxRunMetadata(context, ws) });
           if (!result.ok) {
             return toolError(`${result.stderr}${result.stdout}`.trim() || "Error: read failed");
           }

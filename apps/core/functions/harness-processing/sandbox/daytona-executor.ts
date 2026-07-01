@@ -144,7 +144,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     return `${this.#workspaceRoot()}/.fp-jobs/${reservationKey}`;
   }
 
-  async #acquire(request: { namespace?: string; reservationKey?: string; envVars?: Record<string, string> }): Promise<Sandbox> {
+  async #acquire(request: SandboxRunRequest): Promise<Sandbox> {
     const client = new Daytona(daytonaClientOptions(this.#config));
     if (!this.#persistent(request)) {
       return this.#create(client, await daytonaCreateOptions(this.#config, request, false));
@@ -155,7 +155,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       try {
         const sandbox = await this.#reconnect(client, externalId);
         await saveSandboxInstance("daytona", ns, externalId).catch(() => {});
-        await upsertSandboxInstance(this.#config.controlPlane, "daytona", ns, externalId);
+        await upsertSandboxInstance(this.#config.controlPlane, "daytona", ns, externalId, request.metadata);
         return sandbox;
       } catch {
         await deleteSandboxInstance("daytona", ns).catch(() => {});
@@ -163,7 +163,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     }
     const sandbox = await this.#create(client, await daytonaCreateOptions(this.#config, request, true));
     if (await claimSandboxInstance("daytona", ns, sandbox.id)) {
-      await upsertSandboxInstance(this.#config.controlPlane, "daytona", ns, sandbox.id);
+      await upsertSandboxInstance(this.#config.controlPlane, "daytona", ns, sandbox.id, request.metadata);
       return sandbox;
     }
     // Lost a concurrent create race: discard our duplicate and reconnect to the

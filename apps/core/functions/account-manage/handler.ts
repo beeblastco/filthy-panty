@@ -180,7 +180,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
             return await handleToolRoute(method, account.accountId, selfToolMatch?.[1], event);
         }
 
-        const selfSandboxLifecycleMatch = rawPath.match(/^\/accounts\/me\/sandboxes\/([^/]+)\/(suspend|resume|terminate|snapshot)$/);
+        const selfSandboxLifecycleMatch = rawPath.match(/^\/accounts\/me\/sandboxes\/([^/]+)\/(suspend|resume|terminate|snapshot|refresh)$/);
         if (selfSandboxLifecycleMatch?.[1] && selfSandboxLifecycleMatch[2]) {
             // Driven by the dashboard via the sandboxPublic Convex actions, which
             // authenticate with the shared service token.
@@ -189,7 +189,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaResp
                 method,
                 account.accountId,
                 selfSandboxLifecycleMatch[1],
-                selfSandboxLifecycleMatch[2] as "suspend" | "resume" | "terminate" | "snapshot",
+                selfSandboxLifecycleMatch[2] as "suspend" | "resume" | "terminate" | "snapshot" | "refresh",
                 event,
             );
         }
@@ -668,7 +668,7 @@ async function handleSandboxLifecycle(
     method: string,
     accountId: string,
     rawSandboxId: string,
-    action: "suspend" | "resume" | "terminate" | "snapshot",
+    action: "suspend" | "resume" | "terminate" | "snapshot" | "refresh",
     event: LambdaFunctionURLEvent,
 ): Promise<LambdaResponse> {
     if (method !== "POST") {
@@ -692,6 +692,20 @@ async function handleSandboxLifecycle(
     const executor = createSandboxExecutor(record.config);
     const ref = { reservationKey: reservationKey };
     const provider = record.config.provider;
+
+    if (action === "refresh") {
+        if (!executor.getInstanceInfo) {
+            return errorResponse(409, `provider ${provider} does not support instance status refresh`);
+        }
+        const info = await executor.getInstanceInfo(ref);
+        if (!info || info.state === "terminating") {
+            await removeSandboxInstance(accountId, reservationKey);
+            return jsonResponse(200, { status: "terminated" });
+        }
+        const status = info.state === "unknown" ? "error" : info.state;
+        await setSandboxInstanceStatus(accountId, reservationKey, status);
+        return jsonResponse(200, { status, externalId: info.externalId });
+    }
 
     if (action === "suspend") {
         if (!executor.suspend) {

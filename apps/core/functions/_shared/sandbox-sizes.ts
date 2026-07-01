@@ -22,6 +22,16 @@ export interface SandboxSpecs {
   storageGb: number;
 }
 
+/** Non-secret execution ownership metadata mirrored for dashboard diagnostics. */
+export interface SandboxRunMetadata {
+  traceId?: string;
+  taskId?: string;
+  agentId?: string;
+  conversationKey?: string;
+  workspaceName?: string;
+  workspaceId?: string;
+}
+
 /**
  * Canonical size catalog. Free tier = `tiny` + `xsmall` (quota enforcement is a
  * later usage workstream); `small`+ are paid. Disk is fixed per size to stay valid

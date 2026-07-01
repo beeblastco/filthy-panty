@@ -17,6 +17,7 @@ import { isMissingS3Error, listS3Prefix, readS3Text } from "../../_shared/s3.ts"
 import { resolveS3ReadTarget, workspaceReadContext } from "../sandbox/s3-mount.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
 import type { SandboxCpuSample, SandboxExecutorConfig, SandboxJobCallback, SandboxJobHandle, SandboxRunResult, SandboxRuntime } from "../sandbox/types.ts";
+import type { SandboxRunMetadata } from "../../_shared/sandbox-sizes.ts";
 import type { ResolvedWorkspace } from "../../_shared/workspaces.ts";
 import type { SandboxPermissionMode } from "../../_shared/storage/index.ts";
 import type { AsyncToolDelivery } from "../async-tool-result.ts";
@@ -26,8 +27,18 @@ export const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 // Model-facing tool result shape (matches the AI SDK toModelOutput contract).
 export type ToolModelResult = Awaited<ReturnType<NonNullable<Tool<Record<string, unknown>, unknown>["toModelOutput"]>>>;
 export const toolText = (value: string): ToolModelResult => ({ type: "text", value });
-export const toolError = (value: string): ToolModelResult => ({ type: "error-text", value });
+export const toolError = (value: string): ToolModelResult => {
+  if (isSandboxResourceLimitError(value)) {
+    throw new Error(`Sandbox resource limit reached: ${value}`);
+  }
+
+  return { type: "error-text", value };
+};
 export const toolJson = (value: JSONObject): ToolModelResult => ({ type: "json", value });
+
+function isSandboxResourceLimitError(value: string): boolean {
+  return /base maximum allocated memory limit|allocated memory limit|resource limit|quota exceeded/i.test(value);
+}
 
 // Per-tool runtime context. `workspaces` is the (registry-filtered) set this tool
 // may operate on. `statelessSandbox` is only set for `bash` when there are no
@@ -45,6 +56,7 @@ export interface SandboxToolContext {
   // Reports each sandbox exec's CPU so the harness can attribute usage per
   // sandbox type. The agent's bash/fs tools always report role "agent".
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
+  sandboxMetadata?: SandboxRunMetadata;
 }
 
 export function workspaceRootFor(config: SandboxExecutorConfig): string {
@@ -100,11 +112,25 @@ export function workspaceParamSchema(workspaces: ResolvedWorkspace[]) {
   };
 }
 
+export function sandboxRunMetadata(
+  context: SandboxToolContext,
+  workspace?: ResolvedWorkspace,
+): SandboxRunMetadata | undefined {
+  if (!context.sandboxMetadata) {
+    return undefined;
+  }
+
+  return {
+    ...context.sandboxMetadata,
+    ...(workspace ? { workspaceName: workspace.name, workspaceId: workspace.workspaceId } : {}),
+  };
+}
+
 export async function runSandbox(
   config: SandboxExecutorConfig,
   namespace: string | undefined,
   code: string,
-  options?: { onSandboxCpu?: (sample: SandboxCpuSample) => void },
+  options?: { onSandboxCpu?: (sample: SandboxCpuSample) => void; metadata?: SandboxRunMetadata },
 ): Promise<SandboxRunResult> {
   const executor = createSandboxExecutor(config);
   const limits = workspaceSandboxLimits(config.provider);
@@ -113,6 +139,7 @@ export async function runSandbox(
     code,
     ...(namespace ? { namespace, workspaceRoot: workspaceRootFor(config) } : {}),
     ...(reservationKey ? { reservationKey, workspaceRoot: workspaceRootFor(config) } : {}),
+    ...(options?.metadata ? { metadata: options.metadata } : {}),
     timeoutSeconds: boundedInteger(config.timeout, limits.defaultTimeoutSeconds, limits.maxTimeoutSeconds),
     outputLimitBytes: boundedInteger(config.outputLimitBytes, limits.defaultOutputLimitBytes, limits.maxOutputLimitBytes),
   });
@@ -132,7 +159,7 @@ export async function runSandboxBackground(
   config: SandboxExecutorConfig,
   namespace: string,
   code: string,
-  options: { jobId: string; callback?: SandboxJobCallback },
+  options: { jobId: string; callback?: SandboxJobCallback; metadata?: SandboxRunMetadata },
 ): Promise<SandboxJobHandle> {
   const executor = createSandboxExecutor(config);
   if (!executor.runBackground) {
@@ -144,6 +171,7 @@ export async function runSandboxBackground(
     namespace,
     jobId: options.jobId,
     ...(options.callback ? { callback: options.callback } : {}),
+    ...(options.metadata ? { metadata: options.metadata } : {}),
     workspaceRoot: workspaceRootFor(config),
     timeoutSeconds: boundedInteger(config.timeout, limits.defaultTimeoutSeconds, limits.maxTimeoutSeconds),
     outputLimitBytes: boundedInteger(config.outputLimitBytes, limits.defaultOutputLimitBytes, limits.maxOutputLimitBytes),

@@ -167,7 +167,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           ...vercelAuthOptions(this.#config),
         });
         await saveSandboxInstance("vercel", key, storedName).catch(() => {});
-        await upsertSandboxInstance(this.#config.controlPlane, "vercel", key, storedName);
+        await upsertSandboxInstance(this.#config.controlPlane, "vercel", key, storedName, request.metadata);
         return sandbox;
       } catch {
         await deleteSandboxInstance("vercel", key).catch(() => {});
@@ -180,7 +180,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       name,
     });
     if (await claimSandboxInstance("vercel", key, name)) {
-      await upsertSandboxInstance(this.#config.controlPlane, "vercel", key, name);
+      await upsertSandboxInstance(this.#config.controlPlane, "vercel", key, name, request.metadata);
       return sandbox;
     }
     const winner = await getSandboxExternalId("vercel", key);

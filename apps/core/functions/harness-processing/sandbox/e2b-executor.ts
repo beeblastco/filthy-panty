@@ -104,7 +104,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       try {
         const sandbox = await Sandbox.connect(externalId, e2bApiOptions(this.#config));
         await saveSandboxInstance("e2b", ns, externalId).catch(() => {});
-        await upsertSandboxInstance(this.#config.controlPlane, "e2b", ns, externalId);
+        await upsertSandboxInstance(this.#config.controlPlane, "e2b", ns, externalId, request.metadata);
         return sandbox;
       } catch {
         await deleteSandboxInstance("e2b", ns).catch(() => {});
@@ -112,7 +112,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     }
     const created = await Sandbox.create(e2bCreateOptions(this.#config, true));
     if (await claimSandboxInstance("e2b", ns, created.sandboxId)) {
-      await upsertSandboxInstance(this.#config.controlPlane, "e2b", ns, created.sandboxId);
+      await upsertSandboxInstance(this.#config.controlPlane, "e2b", ns, created.sandboxId, request.metadata);
       return created;
     }
     // Lost a concurrent create race: discard our duplicate and reconnect to the

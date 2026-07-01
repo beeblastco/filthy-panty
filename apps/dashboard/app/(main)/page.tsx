@@ -50,11 +50,21 @@ export default function HomePage() {
                         environment: params.get("env") ?? undefined,
                     });
                     if (target) {
-                        router.replace(
-                            target.environmentId
-                                ? `/${target.projectId}?env=${target.environmentId}`
-                                : `/${target.projectId}`,
-                        );
+                        const next = new URLSearchParams();
+                        if (target.environmentId) {
+                            next.set("env", target.environmentId);
+                        }
+                        const tab = params.get("tab");
+                        const trace = params.get("trace");
+                        if (tab) {
+                            next.set("tab", tab);
+                        }
+                        if (trace) {
+                            next.set("trace", trace);
+                        }
+                        const query = next.toString();
+                        const segment = tab ? "dashboard" : "";
+                        router.replace(`/${target.projectId}${segment ? `/${segment}` : ""}${query ? `?${query}` : ""}`);
                         return;
                     }
                 }

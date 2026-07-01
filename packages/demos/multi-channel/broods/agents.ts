@@ -5,8 +5,8 @@ import path from "path";
 const __dirname = new URL(".", import.meta.url).pathname;
 const instructions = fs.readFileSync(path.join(__dirname, "instructions.md"), "utf-8").trim();
 const setupGitDevEnvironment = fs.readFileSync(path.join(__dirname, "hooks/setup-github-dev.sh"), "utf-8").trim();
-const githubGitUserName = process.env.GITHUB_GIT_USER_NAME ?? process.env.GITHUB_BOT_USERNAME ?? "Broods Agent";
-const githubGitUserEmail = process.env.GITHUB_GIT_USER_EMAIL ?? "broods-agent@users.noreply.github.com";
+const githubGitUserName = process.env.GITHUB_BOT_USERNAME;
+const githubGitUserEmail = process.env.GITHUB_GIT_USER_EMAIL;
 const optionalSandboxGithubEnv = {
   ...(process.env.GITHUB_INSTALLATION_ID ? { GITHUB_INSTALLATION_ID: env("GITHUB_INSTALLATION_ID") } : {}),
 };

@@ -65,6 +65,7 @@ const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
 const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
 const LAMBDA_TIMEOUT_SAFETY_MS = 5 * 60 * 1000;
 const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
+const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const textEncoder = new TextEncoder();
 const lambda = new LambdaClient({ region: process.env.AWS_REGION });
 
@@ -93,6 +94,7 @@ interface ParentContinuationResult {
   didFail: boolean;
   failureText: string | null;
   finalResponse?: JSONValue;
+  traceId?: string;
   approvals: ToolApprovalSummary[];
   hasDetachedCallbacks: boolean;
 }
@@ -461,7 +463,7 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
     let result: Awaited<ReturnType<typeof runAgentLoopUntilSubagentsIdle>>;
     try {
       result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig, context, {
-        onFinalText: async (response) => {
+        onFinalText: async (response, traceId) => {
           didSettle = true;
           await Promise.all(asyncResultEventIds(event).map((eventId) =>
             markAsyncAgentResultCompleted({
@@ -472,15 +474,19 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Lam
           if (event.cronRun) {
             await getStorage().crons.completeRun(event.accountId, event.cronRun.cronId, event.cronRun.runId, response);
           }
-          await pushReplyToChannel(event, typeof response === "string" ? response : JSON.stringify(response, null, 2));
+          await pushReplyToChannel(event, formatChannelFinalText(
+            typeof response === "string" ? response : JSON.stringify(response, null, 2),
+            traceId,
+            event,
+          ));
         },
-        onErrorText: async (error) => {
+        onErrorText: async (error, traceId) => {
           didSettle = true;
           await settleAsyncFailure(event, error);
           if (event.cronRun) {
             await getStorage().crons.failRun(event.accountId, event.cronRun.cronId, event.cronRun.runId, error);
           }
-          await pushReplyToChannel(event, formatChannelErrorText(error));
+          await pushReplyToChannel(event, formatChannelFinalText(formatChannelErrorText(error), traceId, event));
         },
         onApprovalRequired: async (approvals) => {
           await Promise.all(asyncResultEventIds(event).map((eventId) =>
@@ -818,11 +824,15 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
             },
           }
           : {}),
-        onFinalText: async (response) => {
+        onFinalText: async (response, traceId) => {
           if (streamed && typeof response === "string") {
             return;
           }
-          const text = typeof response === "string" ? response : JSON.stringify(response, null, 2);
+          const text = formatChannelFinalText(
+            typeof response === "string" ? response : JSON.stringify(response, null, 2),
+            traceId,
+            event,
+          );
           logInfo("Channel reply sending", {
             channel: event.channelName,
             accountId: event.accountId,
@@ -840,8 +850,8 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Lambda
             conversationKey: session.conversationKey,
           });
         },
-        onErrorText: async (error) => {
-          const text = formatChannelErrorText(error);
+        onErrorText: async (error, traceId) => {
+          const text = formatChannelFinalText(formatChannelErrorText(error), traceId, event);
           logInfo("Channel error reply sending", {
             channel: event.channelName,
             accountId: event.accountId,
@@ -1021,6 +1031,38 @@ async function settleAsyncFailure(event: DirectInboundEvent, error: string): Pro
       error,
     })
   ));
+}
+
+function formatChannelFinalText(
+  text: string,
+  traceId: string | undefined,
+  event: Pick<DirectInboundEvent | ChannelInboundEvent, "projectSlug" | "environmentSlug">,
+): string {
+  const link = dashboardTraceUrl(traceId, event);
+  if (!link) {
+    return text;
+  }
+
+  return `${text.trim()}\n\nTrace: ${link}`;
+}
+
+function dashboardTraceUrl(
+  traceId: string | undefined,
+  event: Pick<DirectInboundEvent | ChannelInboundEvent, "projectSlug" | "environmentSlug">,
+): string | null {
+  if (!traceId || !event.projectSlug || !event.environmentSlug) {
+    return null;
+  }
+  const dashboardUrl = (process.env.BROODS_DASHBOARD_URL ?? process.env.DASHBOARD_URL ?? DEFAULT_DASHBOARD_URL)
+    .replace(/\/+$/, "");
+  const params = new URLSearchParams({
+    project: event.projectSlug,
+    env: event.environmentSlug,
+    tab: "tracing",
+    trace: traceId,
+  });
+
+  return `${dashboardUrl}?${params.toString()}`;
 }
 
 /**
@@ -1297,12 +1339,12 @@ async function runAgentLoopUntilSubagentsIdle(
   agentConfig: DirectInboundEvent["agentConfig"],
   context: LambdaInvocation | undefined,
   reply: {
-    onFinalText(response: JSONValue): Promise<void>;
-    onErrorText(error: string): Promise<void>;
+    onFinalText(response: JSONValue, traceId?: string): Promise<void>;
+    onErrorText(error: string, traceId?: string): Promise<void>;
     onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
     streamMessage?(stream: AgentLoopStream): Promise<void>;
   },
-): Promise<{ didFail: boolean; failureText: string | null; hasDetachedCallbacks: boolean }> {
+): Promise<{ didFail: boolean; failureText: string | null; hasDetachedCallbacks: boolean; traceId?: string }> {
   const subagentCoordinator = new SubagentCoordinator(session, agentConfig, waitUntilMs(context));
   const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context), session.delivery ?? { kind: "async" });
   const result = await runParentContinuationLoop({
@@ -1322,23 +1364,23 @@ async function runAgentLoopUntilSubagentsIdle(
 
   if (result.approvals.length > 0) {
     await reply.onApprovalRequired?.(result.approvals);
-    return { didFail: false, failureText: null, hasDetachedCallbacks };
+    return { didFail: false, failureText: null, hasDetachedCallbacks, ...(result.traceId ? { traceId: result.traceId } : {}) };
   }
 
   if (result.didFail) {
-    await reply.onErrorText(result.failureText ?? AGENT_PROCESSING_FAILED);
-    return { didFail: true, failureText: result.failureText, hasDetachedCallbacks };
+    await reply.onErrorText(result.failureText ?? AGENT_PROCESSING_FAILED, result.traceId);
+    return { didFail: true, failureText: result.failureText, hasDetachedCallbacks, ...(result.traceId ? { traceId: result.traceId } : {}) };
   }
 
   if (hasDetachedCallbacks) {
-    return { didFail: false, failureText: null, hasDetachedCallbacks };
+    return { didFail: false, failureText: null, hasDetachedCallbacks, ...(result.traceId ? { traceId: result.traceId } : {}) };
   }
 
   if (result.finalResponse !== undefined) {
-    await reply.onFinalText(result.finalResponse);
+    await reply.onFinalText(result.finalResponse, result.traceId);
   }
 
-  return { didFail: false, failureText: null, hasDetachedCallbacks };
+  return { didFail: false, failureText: null, hasDetachedCallbacks, ...(result.traceId ? { traceId: result.traceId } : {}) };
 }
 
 /**
@@ -1362,6 +1404,7 @@ async function runParentContinuationLoop(options: {
 }): Promise<ParentContinuationResult> {
   let turnContext = options.initialTurnContext;
   let finalResponse: JSONValue | undefined;
+  let traceId: string | undefined;
 
   while (true) {
     let approvals: ToolApprovalSummary[] = [];
@@ -1380,6 +1423,7 @@ async function runParentContinuationLoop(options: {
       dispatchSubagents: options.subagentCoordinator.dispatch,
       dispatchAsyncTools: options.asyncToolCoordinator.dispatch,
     });
+    traceId = stream.traceId();
 
     await options.consumeStream(stream);
     if (approvals.length > 0) {
@@ -1387,6 +1431,7 @@ async function runParentContinuationLoop(options: {
         didFail: false,
         failureText: null,
         ...(finalResponse !== undefined ? { finalResponse } : {}),
+        ...(traceId ? { traceId } : {}),
         approvals,
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
@@ -1407,6 +1452,7 @@ async function runParentContinuationLoop(options: {
         didFail: true,
         failureText: stream.failureText(),
         ...(finalResponse !== undefined ? { finalResponse } : {}),
+        ...(traceId ? { traceId } : {}),
         approvals: [],
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
@@ -1421,6 +1467,7 @@ async function runParentContinuationLoop(options: {
         didFail: false,
         failureText: null,
         ...(finalResponse !== undefined ? { finalResponse } : {}),
+        ...(traceId ? { traceId } : {}),
         approvals: [],
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
@@ -1432,6 +1479,7 @@ async function runParentContinuationLoop(options: {
         didFail: false,
         failureText: null,
         ...(finalResponse !== undefined ? { finalResponse } : {}),
+        ...(traceId ? { traceId } : {}),
         approvals: [],
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
@@ -1559,6 +1607,9 @@ async function pipeAgentNatsStream(
   }
 }
 
+// Native channel SDKs consume async iterables, while the AI SDK exposes a Web
+// ReadableStream. This adapter also finalizes tracing/usage when the channel
+// drains the stream directly instead of calling stream.consumeStream().
 async function* readAgentFullStream(stream: AgentLoopStream): AsyncIterable<unknown> {
   const reader = stream.fullStream.getReader();
   try {

@@ -9,6 +9,7 @@ import {
   editNeedsApproval,
   resolveWorkspace,
   runSandbox,
+  sandboxRunMetadata,
   shellQuote,
   toBase64,
   toWorkspaceRelative,
@@ -69,7 +70,10 @@ Usage notes:
             `mkdir -p "$(dirname -- ${q})" && printf '%s' ${shellQuote(b64)} | base64 -d > ${q} && ` +
             `sync ${q} && ` +
             `printf 'Wrote %s (%s bytes)\\n' ${q} "$(wc -c < ${q})"`;
-          const result = await runSandbox(ws.sandbox, ws.namespace, code, { onSandboxCpu: context.onSandboxCpu });
+          const result = await runSandbox(ws.sandbox, ws.namespace, code, {
+            onSandboxCpu: context.onSandboxCpu,
+            metadata: sandboxRunMetadata(context, ws),
+          });
           if (!result.ok) {
             return toolError(`${result.stderr}${result.stdout}`.trim() || "Error: write failed");
           }

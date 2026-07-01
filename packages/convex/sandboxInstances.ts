@@ -76,6 +76,14 @@ export const upsert = internalMutation({
         snapshotId: v.optional(v.string()),
         egress: sandboxInstancesFields.egress,
         permissionMode: sandboxInstancesFields.permissionMode,
+        createdByTraceId: sandboxInstancesFields.createdByTraceId,
+        createdByTaskId: sandboxInstancesFields.createdByTaskId,
+        lastUsedTraceId: sandboxInstancesFields.lastUsedTraceId,
+        lastUsedTaskId: sandboxInstancesFields.lastUsedTaskId,
+        agentId: sandboxInstancesFields.agentId,
+        conversationKey: sandboxInstancesFields.conversationKey,
+        workspaceName: sandboxInstancesFields.workspaceName,
+        workspaceId: sandboxInstancesFields.workspaceId,
     },
     returns: v.null(),
     handler: async (ctx, args) => {
@@ -98,9 +106,19 @@ export const upsert = internalMutation({
             ...(args.snapshotId ? { snapshotId: args.snapshotId } : {}),
             ...(args.egress ? { egress: args.egress } : {}),
             ...(args.permissionMode ? { permissionMode: args.permissionMode } : {}),
+            ...(args.lastUsedTraceId ? { lastUsedTraceId: args.lastUsedTraceId } : {}),
+            ...(args.lastUsedTaskId ? { lastUsedTaskId: args.lastUsedTaskId } : {}),
+            ...(args.agentId ? { agentId: args.agentId } : {}),
+            ...(args.conversationKey ? { conversationKey: args.conversationKey } : {}),
+            ...(args.workspaceName ? { workspaceName: args.workspaceName } : {}),
+            ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
         };
         if (existing) {
-            await ctx.db.patch(existing._id, fields);
+            await ctx.db.patch(existing._id, {
+                ...fields,
+                ...(!existing.createdByTraceId && args.createdByTraceId ? { createdByTraceId: args.createdByTraceId } : {}),
+                ...(!existing.createdByTaskId && args.createdByTaskId ? { createdByTaskId: args.createdByTaskId } : {}),
+            });
 
             return null;
         }
@@ -112,6 +130,8 @@ export const upsert = internalMutation({
             provider: args.provider,
             reservationKey: args.reservationKey,
             createdAt: now,
+            ...(args.createdByTraceId ? { createdByTraceId: args.createdByTraceId } : {}),
+            ...(args.createdByTaskId ? { createdByTaskId: args.createdByTaskId } : {}),
             ...fields,
         });
 

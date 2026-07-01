@@ -54,7 +54,7 @@ async function callLifecycle(
     ctx: ActionCtx,
     sandboxId: string,
     reservationKey: string,
-    op: "suspend" | "resume" | "terminate" | "snapshot",
+    op: "suspend" | "resume" | "terminate" | "snapshot" | "refresh",
     extra?: Record<string, unknown>,
 ): Promise<void> {
     const account = await ctx.runQuery(api.org.getActiveAccount, {});
@@ -121,6 +121,17 @@ export const createSnapshot = action({
     returns: v.null(),
     handler: async (ctx, args) => {
         await callLifecycle(ctx, args.sandboxId, args.reservationKey, "snapshot", { name: args.name });
+
+        return null;
+    },
+});
+
+/** Refreshes the mirrored instance state from the provider control plane. */
+export const refreshSandbox = action({
+    args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
+    returns: v.null(),
+    handler: async (ctx, args) => {
+        await callLifecycle(ctx, args.sandboxId, args.reservationKey, "refresh");
 
         return null;
     },

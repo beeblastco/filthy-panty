@@ -8,6 +8,7 @@ import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   resolveWorkspace,
   runSandbox,
+  sandboxRunMetadata,
   shellQuote,
   toWorkspaceRelative,
   toolError,
@@ -83,7 +84,10 @@ Usage notes:
           if (path) args.push("--", toWorkspaceRelative(path));
 
           const code = args.map(shellQuote).join(" ");
-          const result = await runSandbox(ws.sandbox, ws.namespace, code, { onSandboxCpu: context.onSandboxCpu });
+          const result = await runSandbox(ws.sandbox, ws.namespace, code, {
+            onSandboxCpu: context.onSandboxCpu,
+            metadata: sandboxRunMetadata(context, ws),
+          });
           // ripgrep: exit 0 = matches, 1 = no matches (not an error), >=2 = error.
           if (result.exitCode === 1 && result.stderr.trim().length === 0) {
             return toolText("No matches found");
