@@ -41,7 +41,7 @@ import {
     releaseReservedSandboxes,
     releaseSandboxConfigInstances,
 } from "./cleanup.ts";
-import { workspaceNamespace } from "../_shared/workspaces.ts";
+import { workspaceNamespace, workspaceNamespaceOwnsReservationKey } from "../_shared/workspaces.ts";
 import { isPlainObject } from "../_shared/object.ts";
 import {
     createOrReplaceSkill,
@@ -769,7 +769,9 @@ async function sandboxReservationBelongsToAccount(
     }
 
     const workspaces = await getStorage().workspaceConfigs.list(accountId);
-    return workspaces.some((workspace) => workspaceNamespace(accountId, workspace.workspaceId) === reservationKey);
+    return workspaces.some((workspace) =>
+        workspaceNamespaceOwnsReservationKey(workspaceNamespace(accountId, workspace.workspaceId), reservationKey)
+    );
 }
 
 async function handleToolRoute(

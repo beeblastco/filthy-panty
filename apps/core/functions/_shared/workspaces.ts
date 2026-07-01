@@ -71,6 +71,10 @@ export function workspaceNamespace(accountId: string | undefined, workspaceId: s
   return normalizeFilesystemNamespace(scope);
 }
 
+export function workspaceNamespaceOwnsReservationKey(namespace: string, reservationKey: string): boolean {
+  return reservationKey === namespace || reservationKey.startsWith(`${namespace}/`);
+}
+
 export function isolatedWorkspaceNamespace(
   baseNamespace: string,
   isolation: boolean | undefined,

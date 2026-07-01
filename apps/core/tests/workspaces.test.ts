@@ -9,6 +9,7 @@ import {
   isolatedWorkspaceNamespace,
   resolveAgentRuntime,
   workspaceNamespace,
+  workspaceNamespaceOwnsReservationKey,
 } from "../functions/_shared/workspaces.ts";
 import { setStorageForTests } from "../functions/_shared/storage/index.ts";
 
@@ -79,6 +80,16 @@ describe("workspaceNamespace", () => {
     expect(isolatedWorkspaceNamespace(base, true, firstIssue)).not.toBe(
       isolatedWorkspaceNamespace(base, true, secondIssue),
     );
+  });
+
+  it("matches dashboard lifecycle reservations at the workspace root or below it", () => {
+    const base = workspaceNamespace("acct_1", "ws_a");
+    const child = `${base}/support/${normalizeFilesystemNamespace("gh:owner/repo:issue:123")}`;
+
+    expect(workspaceNamespaceOwnsReservationKey(base, base)).toBe(true);
+    expect(workspaceNamespaceOwnsReservationKey(base, child)).toBe(true);
+    expect(workspaceNamespaceOwnsReservationKey(base, `${base}-not-a-child`)).toBe(false);
+    expect(workspaceNamespaceOwnsReservationKey(base, workspaceNamespace("acct_1", "ws_b"))).toBe(false);
   });
 });
 
