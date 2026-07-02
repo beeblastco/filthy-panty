@@ -635,6 +635,13 @@ export default $config({
           assumeRolePolicy: microvmRoleTrustPolicy,
         })
       : null;
+    const microvmLogGroupName = `/broods/${stage}/microvms`;
+    if (enableMicrovmPrereqs) {
+      new aws.cloudwatch.LogGroup("MicrovmRuntimeLogGroup", {
+        name: microvmLogGroupName,
+        retentionInDays: 30,
+      });
+    }
 
     if (microvmExecutionRole) {
       new aws.iam.RolePolicy("MicrovmExecutionRolePolicy", {
@@ -646,7 +653,10 @@ export default $config({
               Sid: "WriteMicrovmRuntimeLogs",
               Effect: "Allow",
               Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
-              Resource: [`arn:aws:logs:${region}:${AWS_ACCOUNT_ID}:log-group:/aws/lambda-microvms/*`],
+              Resource: [
+                `arn:aws:logs:${region}:${AWS_ACCOUNT_ID}:log-group:${microvmLogGroupName}`,
+                `arn:aws:logs:${region}:${AWS_ACCOUNT_ID}:log-group:${microvmLogGroupName}:*`,
+              ],
             },
           ],
         }),
@@ -799,6 +809,7 @@ export default $config({
               MICROVM_ARTIFACTS_BUCKET_NAME: names.microvmArtifacts,
               MICROVM_BUILD_ROLE_ARN: microvmBuildRole.arn,
               MICROVM_EXECUTION_ROLE_ARN: microvmExecutionRole.arn,
+              MICROVM_LOG_GROUP_NAME: microvmLogGroupName,
               // The "lambda" sandbox provider (MicrovmSandboxExecutor) runs MicroVMs from
               // this image. The ARN is name-based and deterministic, so it is valid before
               // the image exists; the lambda-sanbdox microvm-image CI publishes the image

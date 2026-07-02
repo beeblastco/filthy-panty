@@ -208,6 +208,7 @@ beforeEach(() => {
   process.env.PERSISTENT_SANDBOX_INSTANCE_TABLE_NAME = "persistent-sandbox-instance";
   process.env.MICROVM_IMAGE_IDENTIFIER = "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox";
   process.env.MICROVM_EXECUTION_ROLE_ARN = "arn:aws:iam::123456789012:role/microvm-execution";
+  process.env.MICROVM_LOG_GROUP_NAME = "/broods/dev/microvms";
   process.env.MICROVM_EGRESS_NETWORK_CONNECTOR_ARN = "arn:aws:lambda:us-east-1:123456789012:network-connector:vpc-egress";
   globalThis.fetch = microvmFetchMock as unknown as typeof fetch;
   e2bRunMock.mockClear();
@@ -282,6 +283,7 @@ describe("createSandboxExecutor", () => {
     const runInput = microvmRunInput();
     expect(runInput.imageIdentifier).toBe("arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox");
     expect(runInput.executionRoleArn).toBe("arn:aws:iam::123456789012:role/microvm-execution");
+    expect(runInput.logging).toEqual({ cloudWatch: { logGroup: "/broods/dev/microvms" } });
     const payload = JSON.parse(runInput.runHookPayload as string);
     expect(payload.workspace).toMatchObject({ namespace: NS, root: "/mnt/workspaces" });
     expect(payload.workspace.mount).toMatchObject({

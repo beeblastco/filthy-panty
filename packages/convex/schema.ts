@@ -386,6 +386,50 @@ export const sandboxSnapshotsFields = {
     lastUsedAt: v.number(),
 };
 
+/** Sandbox lifecycle action names recorded in the operator audit trail. */
+export const sandboxAuditActionValidator = v.union(
+    v.literal("reserve"),
+    v.literal("suspend"),
+    v.literal("resume"),
+    v.literal("terminate"),
+    v.literal("snapshot"),
+    v.literal("refresh"),
+    v.literal("exec"),
+    v.literal("terminal"),
+);
+
+/**
+ * Operator audit trail for sandbox lifecycle actions. Stores metadata only:
+ * never command text, provider secrets, or terminal credentials.
+ */
+export const sandboxAuditEventsFields = {
+    accountId: v.id("accounts"),
+    projectId: v.optional(v.id("projects")),
+    environmentId: v.optional(v.id("environments")),
+    sandboxConfigId: v.optional(v.id("sandboxConfigs")),
+    reservationKey: v.string(),
+    provider: sandboxProviderValidator,
+    action: sandboxAuditActionValidator,
+    result: v.union(v.literal("ok"), v.literal("error")),
+    status: v.optional(sandboxInstancesFields.status),
+    actorSource: v.union(
+        v.literal("dashboard"),
+        v.literal("agent"),
+        v.literal("service"),
+        v.literal("unknown"),
+    ),
+    actorId: v.optional(v.string()),
+    actorEmail: v.optional(v.string()),
+    actorName: v.optional(v.string()),
+    traceId: v.optional(v.string()),
+    taskId: v.optional(v.string()),
+    errorMessage: v.optional(v.string()),
+    exitCode: v.optional(v.number()),
+    durationMs: v.optional(v.number()),
+    truncated: v.optional(v.boolean()),
+    createdAt: v.number(),
+};
+
 /**
  * Account-scoped workspace config (persistent S3-backed filesystem), referenced
  * by agents via the encrypted agent config. Holds no secrets, so the config
@@ -703,6 +747,15 @@ export default defineSchema({
     sandboxSnapshots: defineTable(sandboxSnapshotsFields)
         .index("by_accountId", ["accountId"])
         .index("by_accountId_and_name", ["accountId", "name"]),
+    sandboxAuditEvents: defineTable(sandboxAuditEventsFields)
+        .index("by_accountId", ["accountId"])
+        .index("by_accountId_and_reservationKey_and_createdAt", ["accountId", "reservationKey", "createdAt"])
+        .index("by_accountId_projectId_environmentId_and_createdAt", [
+            "accountId",
+            "projectId",
+            "environmentId",
+            "createdAt",
+        ]),
     environmentVariables: defineTable(environmentVariablesFields)
         .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
         .index("by_environmentId_and_name", ["environmentId", "name"]),

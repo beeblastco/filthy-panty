@@ -12,6 +12,7 @@ import { getConvexClient } from "./client.ts";
 import { logError } from "../../log.ts";
 import type { SandboxControlPlane, SandboxRunMetadata } from "../../sandbox-sizes.ts";
 import type { SandboxProvider } from "../sandbox-config.ts";
+import { recordSandboxAuditEvent } from "./sandbox-audit-events.ts";
 
 /** Convex mode is active only when both env vars are present (see CLAUDE.md). */
 function convexEnabled(): boolean {
@@ -53,6 +54,21 @@ export async function upsertSandboxInstance(
       ...(metadata?.conversationKey ? { conversationKey: metadata.conversationKey } : {}),
       ...(metadata?.workspaceName ? { workspaceName: metadata.workspaceName } : {}),
       ...(metadata?.workspaceId ? { workspaceId: metadata.workspaceId } : {}),
+    });
+    await recordSandboxAuditEvent({
+      accountId: controlPlane.accountId,
+      ...(controlPlane.sandboxConfigId ? { sandboxConfigId: controlPlane.sandboxConfigId } : {}),
+      reservationKey,
+      provider,
+      action: "reserve",
+      result: "ok",
+      status: "running",
+      actor: {
+        source: metadata?.agentId ? "agent" : "service",
+        ...(metadata?.agentId ? { id: metadata.agentId } : {}),
+      },
+      ...(metadata?.traceId ? { traceId: metadata.traceId } : {}),
+      ...(metadata?.taskId ? { taskId: metadata.taskId } : {}),
     });
   } catch (err) {
     logError("Sandbox instance upsert mirror failed (convex)", {

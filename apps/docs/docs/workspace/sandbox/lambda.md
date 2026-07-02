@@ -195,9 +195,11 @@ runtime invocations, but a general VM cannot make this a hard isolation boundary
 ## Sizes & logging
 
 MicroVM sizes range from **0.5 GB / 0.25 vCPU** up to **8 GB / 4 vCPU** (fixed disk per size);
-the predefined size catalog is service-managed. Build + runtime logs go to CloudWatch under
-`/aws/lambda/microvms/<image>` (stream = `microvmId`) and are routed into the cluster
-Loki/Tempo stack.
+the predefined size catalog is service-managed. Build logs stay in the service-managed
+CloudWatch log groups. Runtime logs are configured at launch with
+`MICROVM_LOG_GROUP_NAME` (defaulted by SST to `/broods/<stage>/microvms`, stream =
+`microvmId`) so a single CloudWatch subscription can forward sandbox output into Loki
+when the sandbox log bridge is deployed.
 
 ## Security
 

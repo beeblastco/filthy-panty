@@ -39,6 +39,7 @@ import { getSandboxExternalId } from "../harness-processing/sandbox/instance-sto
 import { sealTerminalTicket, TERMINAL_TICKET_TTL_MS, TERMINAL_WEBSOCKET_PATH } from "../_shared/terminal-ticket.ts";
 import { requireEnv } from "../_shared/env.ts";
 import { removeSandboxInstance, setSandboxInstanceStatus } from "../_shared/storage/convex/sandbox-instances.ts";
+import { recordSandboxAuditEvent, type SandboxAuditActor } from "../_shared/storage/convex/sandbox-audit-events.ts";
 import { upsertSandboxSnapshot } from "../_shared/storage/convex/sandbox-snapshots.ts";
 import { workspaceSandboxLimits } from "../_shared/sandbox.ts";
 import {
@@ -700,26 +701,60 @@ async function handleSandboxLifecycle(
     const executor = createSandboxExecutor(record.config);
     const ref = { reservationKey: reservationKey };
     const provider = record.config.provider;
+    const actor = sandboxAuditActor(body.actor);
+    const audit = async (
+        result: "ok" | "error",
+        details: {
+            status?: "running" | "suspended" | "terminating" | "error";
+            errorMessage?: string;
+            exitCode?: number | null;
+            durationMs?: number;
+            truncated?: boolean;
+        } = {},
+    ) => recordSandboxAuditEvent({
+        accountId,
+        sandboxConfigId: sandboxId,
+        reservationKey,
+        provider,
+        action,
+        result,
+        actor,
+        ...details,
+    });
 
     if (action === "exec") {
         const code = typeof body.code === "string" ? body.code : "";
         if (!code.trim()) {
+            await audit("error", { errorMessage: "code is required" });
             return errorResponse(400, "code is required");
         }
         if (code.length > 20_000) {
+            await audit("error", { errorMessage: "code must be 20000 characters or less" });
             return errorResponse(400, "code must be 20000 characters or less");
         }
 
         const limits = workspaceSandboxLimits(provider);
         const timeoutSeconds = boundedInteger(body.timeoutSeconds, record.config.timeout ?? limits.defaultTimeoutSeconds, limits.maxTimeoutSeconds);
         const outputLimitBytes = boundedInteger(body.outputLimitBytes, record.config.outputLimitBytes ?? limits.defaultOutputLimitBytes, limits.maxOutputLimitBytes);
-        const result = await executor.run({
-            code,
-            reservationKey,
-            timeoutSeconds,
-            outputLimitBytes,
-        });
+        let result;
+        try {
+            result = await executor.run({
+                code,
+                reservationKey,
+                timeoutSeconds,
+                outputLimitBytes,
+            });
+        } catch (err) {
+            await audit("error", { errorMessage: err instanceof Error ? err.message : String(err) });
+            throw err;
+        }
         await setSandboxInstanceStatus(accountId, reservationKey, "running");
+        await audit(result.ok ? "ok" : "error", {
+            status: "running",
+            exitCode: result.exitCode,
+            durationMs: result.durationMs,
+            truncated: result.truncated === true,
+        });
 
         return jsonResponse(200, {
             ok: result.ok,
@@ -738,10 +773,12 @@ async function handleSandboxLifecycle(
         // shell endpoint (SHELL_INGRESS). Other providers keep the bounded `exec`
         // terminal.
         if (provider !== "sandbox" && provider !== "lambda") {
+            await audit("error", { errorMessage: `provider ${provider} does not support a live terminal` });
             return errorResponse(409, `provider ${provider} does not support a live terminal`);
         }
         const externalId = await getSandboxExternalId(provider, reservationKey);
         if (!externalId) {
+            await audit("error", { errorMessage: "No reserved sandbox instance for this reservation key" });
             return errorResponse(404, "No reserved sandbox instance for this reservation key");
         }
         // The PTY endpoint requires a running guest, so opening a terminal
@@ -749,7 +786,12 @@ async function handleSandboxLifecycle(
         if (executor.getInstanceInfo && executor.resume) {
             const info = await executor.getInstanceInfo(ref);
             if (info?.state === "suspended") {
-                await executor.resume(ref);
+                try {
+                    await executor.resume(ref);
+                } catch (err) {
+                    await audit("error", { errorMessage: err instanceof Error ? err.message : String(err) });
+                    throw err;
+                }
                 await setSandboxInstanceStatus(accountId, reservationKey, "running");
             }
         }
@@ -762,6 +804,7 @@ async function handleSandboxLifecycle(
                 // Most likely a VM launched before SHELL_INGRESS was attached at
                 // RunMicrovm; connectors cannot be added to a live VM.
                 const message = error instanceof Error ? error.message : String(error);
+                await audit("error", { errorMessage: message });
                 return errorResponse(409, `MicroVM shell access unavailable (${message}); terminate and re-reserve the instance to enable the live terminal`);
             }
         } else {
@@ -770,49 +813,81 @@ async function handleSandboxLifecycle(
         }
         const expiresAt = Date.now() + TERMINAL_TICKET_TTL_MS;
         const token = sealTerminalTicket({ ...target, accountId, expiresAt }, requireEnv("SERVICE_AUTH_SECRET"));
+        await audit("ok", { status: "running" });
 
         return jsonResponse(200, { token, expiresAt, websocketPath: TERMINAL_WEBSOCKET_PATH });
     }
 
     if (action === "refresh") {
         if (!executor.getInstanceInfo) {
+            await audit("error", { errorMessage: `provider ${provider} does not support instance status refresh` });
             return errorResponse(409, `provider ${provider} does not support instance status refresh`);
         }
-        const info = await executor.getInstanceInfo(ref);
+        let info;
+        try {
+            info = await executor.getInstanceInfo(ref);
+        } catch (err) {
+            await audit("error", { errorMessage: err instanceof Error ? err.message : String(err) });
+            throw err;
+        }
         if (!info || info.state === "terminating") {
             await removeSandboxInstance(accountId, reservationKey);
+            await audit("ok", { status: "terminating" });
             return jsonResponse(200, { status: "terminated" });
         }
         const status = info.state === "unknown" ? "error" : info.state;
         await setSandboxInstanceStatus(accountId, reservationKey, status);
+        await audit(status === "error" ? "error" : "ok", { status });
         return jsonResponse(200, { status, externalId: info.externalId });
     }
 
     if (action === "suspend") {
         if (!executor.suspend) {
+            await audit("error", { errorMessage: `provider ${provider} does not support suspend` });
             return errorResponse(409, `provider ${provider} does not support suspend`);
         }
-        await executor.suspend(ref);
+        try {
+            await executor.suspend(ref);
+        } catch (err) {
+            await audit("error", { errorMessage: err instanceof Error ? err.message : String(err) });
+            throw err;
+        }
         await setSandboxInstanceStatus(accountId, reservationKey, "suspended");
+        await audit("ok", { status: "suspended" });
         return jsonResponse(200, { status: "suspended" });
     }
     if (action === "resume") {
         if (!executor.resume) {
+            await audit("error", { errorMessage: `provider ${provider} does not support resume` });
             return errorResponse(409, `provider ${provider} does not support resume`);
         }
-        await executor.resume(ref);
+        try {
+            await executor.resume(ref);
+        } catch (err) {
+            await audit("error", { errorMessage: err instanceof Error ? err.message : String(err) });
+            throw err;
+        }
         await setSandboxInstanceStatus(accountId, reservationKey, "running");
+        await audit("ok", { status: "running" });
         return jsonResponse(200, { status: "running" });
     }
     if (action === "snapshot") {
         if (!executor.snapshot) {
+            await audit("error", { errorMessage: `provider ${provider} does not support snapshot` });
             return errorResponse(409, `provider ${provider} does not support snapshot`);
         }
         const name = typeof body.name === "string" ? body.name.trim() : "";
         if (!name) {
+            await audit("error", { errorMessage: "name is required" });
             return errorResponse(400, "name is required");
         }
-        const result = await executor.snapshot(ref);
+        let result;
+        try {
+            result = await executor.snapshot(ref);
+        } catch (err) {
+            await audit("error", { errorMessage: err instanceof Error ? err.message : String(err) });
+            throw err;
+        }
         const externalImageId = result.externalImageId ?? result.snapshotId;
         await upsertSandboxSnapshot({
             accountId,
@@ -822,13 +897,21 @@ async function handleSandboxLifecycle(
             externalImageId,
             status: "active",
         });
+        await audit("ok", { status: "running" });
         return jsonResponse(200, { status: "active", snapshotId: result.snapshotId, externalImageId });
     }
     if (!executor.release) {
+        await audit("error", { errorMessage: `provider ${provider} does not support terminate` });
         return errorResponse(409, `provider ${provider} does not support terminate`);
     }
-    await executor.release(ref);
+    try {
+        await executor.release(ref);
+    } catch (err) {
+        await audit("error", { errorMessage: err instanceof Error ? err.message : String(err) });
+        throw err;
+    }
     await removeSandboxInstance(accountId, reservationKey);
+    await audit("ok", { status: "terminating" });
 
     return jsonResponse(200, { status: "terminated" });
 }
@@ -843,6 +926,22 @@ function boundedInteger(value: unknown, defaultValue: number, max: number): numb
     }
 
     return parsed;
+}
+
+function sandboxAuditActor(value: unknown): SandboxAuditActor {
+    if (!isPlainObject(value)) {
+        return { source: "unknown" };
+    }
+    const source = value.source === "dashboard" || value.source === "agent" || value.source === "service"
+        ? value.source
+        : "unknown";
+
+    return {
+        source,
+        ...(typeof value.id === "string" && value.id.trim() ? { id: value.id.trim() } : {}),
+        ...(typeof value.email === "string" && value.email.trim() ? { email: value.email.trim() } : {}),
+        ...(typeof value.name === "string" && value.name.trim() ? { name: value.name.trim() } : {}),
+    };
 }
 
 /**

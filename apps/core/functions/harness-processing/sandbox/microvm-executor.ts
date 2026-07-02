@@ -323,6 +323,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const imageIdentifier = this.#requireImageIdentifier();
     const imageVersion = this.#optionOrEnv("imageVersion", "MICROVM_IMAGE_VERSION");
     const executionRoleArn = this.#optionOrEnv("executionRoleArn", "MICROVM_EXECUTION_ROLE_ARN");
+    const logGroup = this.#optionOrEnv("logGroup", "MICROVM_LOG_GROUP_NAME");
     const persistent = this.#persistent(request);
     const lifecycle = resolveSandboxLifecycle(this.#config.lifecycle);
     const runHookPayload = await this.#runHookPayload(request);
@@ -330,6 +331,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       imageIdentifier,
       ...(imageVersion ? { imageVersion } : {}),
       ...(executionRoleArn ? { executionRoleArn } : {}),
+      ...(logGroup ? { logging: { cloudWatch: { logGroup } } } : {}),
       ...(persistent
         ? {
           idlePolicy: {

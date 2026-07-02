@@ -21,7 +21,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
-import { useAction } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { Camera, ExternalLink, Play, RefreshCw, Terminal } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -55,6 +55,8 @@ type TerminalEntry = {
     error?: string;
 };
 
+type SandboxAuditEvent = Doc<"sandboxAuditEvents">;
+
 /** One label/value detail row. */
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
     return (
@@ -82,6 +84,10 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
     const refresh = useAction(api.sandboxPublic.refreshSandbox);
     const runCommand = useAction(api.sandboxPublic.runSandboxCommand);
     const terminate = useAction(api.sandboxPublic.terminateSandbox);
+    const auditEvents = useQuery(api.sandboxAuditEvents.listForInstance, {
+        reservationKey: instance.reservationKey,
+        limit: 12,
+    });
     const searchParams = useSearchParams();
 
     const [snapName, setSnapName] = useState("");
@@ -183,6 +189,22 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
         }
     }
 
+    function actorLabel(event: SandboxAuditEvent): string {
+        if (event.actorEmail) return event.actorEmail;
+        if (event.actorName) return event.actorName;
+        if (event.actorId) return event.actorId;
+
+        return event.actorSource;
+    }
+
+    function auditDetail(event: SandboxAuditEvent): string {
+        if (event.result === "error") return event.errorMessage ?? "failed";
+        if (event.action === "exec" && event.exitCode !== undefined) return `exit ${event.exitCode}`;
+        if (event.status) return event.status;
+
+        return "ok";
+    }
+
     return (
         <Sheet open onOpenChange={(open) => !open && onClose()}>
             <SheetContent className="w-full overflow-y-auto sm:max-w-md">
@@ -230,6 +252,30 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
                                 Refresh status
                             </Button>
                             {refreshMessage && <p className="mt-2 text-xs text-muted-foreground">{refreshMessage}</p>}
+                        </div>
+
+                        <div className="mt-5">
+                            <h4 className="text-sm font-medium text-foreground">Activity</h4>
+                            <div className="mt-2 rounded-lg border border-border bg-card">
+                                {auditEvents === undefined ? (
+                                    <div className="px-3 py-4 text-xs text-muted-foreground">Loading activity...</div>
+                                ) : auditEvents.length === 0 ? (
+                                    <div className="px-3 py-4 text-xs text-muted-foreground">No activity recorded.</div>
+                                ) : auditEvents.map((event) => (
+                                    <div key={event._id} className="flex items-start justify-between gap-3 border-b border-border px-3 py-2 last:border-0">
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs font-medium text-foreground">{event.action}</span>
+                                                <span className={event.result === "ok" ? "text-xs text-emerald-500" : "text-xs text-red-500"}>
+                                                    {auditDetail(event)}
+                                                </span>
+                                            </div>
+                                            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{actorLabel(event)}</p>
+                                        </div>
+                                        <span className="shrink-0 text-[11px] text-muted-foreground">{relativeTime(event.createdAt)}</span>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
 
                         <div className="mt-5">

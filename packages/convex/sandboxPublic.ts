@@ -10,6 +10,7 @@
 import { v } from "convex/values";
 import { action, type ActionCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
+import { authKit } from "./auth";
 
 /**
  * Reads the broods account-manage base URL + service-auth secret from the env.
@@ -39,6 +40,25 @@ function headers(accountId: string, secret: string): HeadersInit {
         Authorization: `Bearer ${secret}`,
         "X-Account-Id": accountId,
         "Content-Type": "application/json",
+    };
+}
+
+/**
+ * Actor metadata carried through the service-auth hop for lifecycle audit rows.
+ * @param ctx the action context.
+ * @returns the current dashboard user, or an unknown dashboard actor.
+ */
+async function actor(ctx: ActionCtx): Promise<Record<string, string>> {
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+        return { source: "dashboard" };
+    }
+
+    return {
+        source: "dashboard",
+        id: user.id,
+        ...(user.email ? { email: user.email } : {}),
+        ...(user.name ? { name: user.name } : {}),
     };
 }
 
@@ -73,7 +93,7 @@ async function callLifecycle(
     const res = await fetch(`${url}/accounts/me/sandboxes/${encodeURIComponent(sandboxId)}/${op}`, {
         method: "POST",
         headers: headers(account.accountId, secret),
-        body: JSON.stringify({ reservationKey: reservationKey, ...extra }),
+        body: JSON.stringify({ reservationKey: reservationKey, actor: await actor(ctx), ...extra }),
     });
     if (res.status === 404 && op === "refresh") {
         // The sandbox config behind this instance row was deleted, so broods can
